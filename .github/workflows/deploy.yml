@@ -1,0 +1,55 @@
+name: Build & Deploy til Vercel
+
+# Bygger Flutter web (med --wasm) og deployer til Vercel production —
+# samme flow som deploy.ps1, bare kørt automatisk ved push til main.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {} # gør det muligt at trigge manuelt fra GitHub-UI'et
+
+# Annullér en igangværende deploy hvis der pushes igen hurtigt efter.
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      # Identifikatorer for Vercel-projektet (ikke hemmelige — fra .vercel/project.json).
+      VERCEL_ORG_ID: team_KtwZqi1ZklBMwvqqrNKBhZjM
+      VERCEL_PROJECT_ID: prj_GZqBPalwcTJ8az4nMuwTNFTUd4Qm
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # dart_defines.json er gitignored (Supabase-nøgler), så vi gendanner den
+      # fra en GitHub Secret før build.
+      - name: Gendan dart_defines.json fra secret
+        run: printf '%s' "$DART_DEFINES_JSON" > dart_defines.json
+        env:
+          DART_DEFINES_JSON: ${{ secrets.DART_DEFINES_JSON }}
+
+      - name: Opsæt Flutter (stable)
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Hent dependencies
+        run: flutter pub get
+
+      - name: Byg web-release (WebAssembly)
+        run: flutter build web --release --wasm --dart-define-from-file=dart_defines.json
+
+      # Sørg for at HTTP cache-headers følger med i deploy-output (som i deploy.ps1).
+      - name: Kopiér vercel.json ind i build-output
+        run: cp web/vercel.json build/web/vercel.json
+
+      - name: Installér Vercel CLI
+        run: npm install -g vercel
+
+      - name: Deploy til Vercel (production)
+        run: vercel deploy build/web --prod --yes --token="$VERCEL_TOKEN"
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}

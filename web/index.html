@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <!--
+    If you are serving your web app in a path other than the root, change the
+    href value below to reflect the base path you are serving from.
+
+    The path provided below has to start and end with a slash "/" in order for
+    it to work correctly.
+
+    For more details:
+    * https://developer.mozilla.org/en-US/docs/Web/HTML/Element/base
+
+    This is a placeholder for base href that will be replaced by the value of
+    the `--base-href` argument provided to `flutter build`.
+  -->
+  <base href="$FLUTTER_BASE_HREF">
+
+  <meta charset="UTF-8">
+  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <!-- Korrekt skalering på mobil + safe-area-insets til iOS standalone-PWA -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <!-- Flutters engine overskriver viewport-metaen og fjerner viewport-fit=cover.
+       Denne observer gen-påfører det, så iOS-safe-area-insets forbliver aktive. -->
+  <script>
+    (function () {
+      function ensureViewportFit() {
+        var v = document.querySelector('meta[name="viewport"]');
+        if (v && v.getAttribute('content').indexOf('viewport-fit') === -1) {
+          v.setAttribute('content',
+            v.getAttribute('content') + ', viewport-fit=cover');
+        }
+      }
+      ensureViewportFit();
+      new MutationObserver(ensureViewportFit).observe(document.documentElement, {
+        childList: true, subtree: true, attributes: true, attributeFilter: ['content'],
+      });
+      window.addEventListener('flutter-first-frame', ensureViewportFit);
+    })();
+  </script>
+  <meta name="description" content="Padelklubben De Talentløse Hjørring — træninger, afstemninger og bødekasse.">
+  <meta name="theme-color" content="#121110">
+
+  <!-- iOS / PWA meta tags & icons -->
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="apple-mobile-web-app-title" content="De Talentløse">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+
+  <!-- Favicon -->
+  <link rel="icon" type="image/png" href="favicon.png"/>
+
+  <title>De Talentløse</title>
+  <link rel="manifest" href="manifest.json">
+
+  <!-- ── OneSignal Web SDK (PWA-push på web) ──────────────────────────────────
+       Egen service-worker-scope (/push/onesignal/) så den ikke kolliderer med
+       Flutters egen service worker i roden. Worker-filen ligger i
+       web/push/onesignal/OneSignalSDKWorker.js.
+       HUSK at udskifte App-ID'et nedenfor med jeres rigtige (samme som i
+       lib/services/notification_service.dart). -->
+  <script src="https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js" defer></script>
+  <script>
+    window.OneSignalDeferred = window.OneSignalDeferred || [];
+    window.OneSignalDeferred.push(async function (OneSignal) {
+      await OneSignal.init({
+        appId: "b404a88c-5684-4650-bff4-a72d84892a00",
+        serviceWorkerParam: { scope: "/push/onesignal/" },
+        serviceWorkerPath: "push/onesignal/OneSignalSDKWorker.js",
+        allowLocalhostAsSecureOrigin: true, // tillader test på localhost
+      });
+    });
+
+    // Knytter brugeren til OneSignal (external_id) UDEN prompt — så vi kan
+    // sende målrettet push. Kaldes fra Flutter ved login.
+    window.osIdentify = function (externalId) {
+      if (!externalId) return;
+      window.OneSignalDeferred.push(async function (OneSignal) {
+        try { await OneSignal.login(externalId); } catch (e) {}
+      });
+    };
+
+    // Flutter (platform_io_web.dart) starter prompten via osStartPrompt() og
+    // poller så window.osPushResult. status: 'pending' → 'done'; id er
+    // subscription-id'et eller null hvis brugeren afviste / det fejlede.
+    window.osPushResult = { status: 'idle', id: null };
+    window.osStartPrompt = function (externalId) {
+      window.osPushResult = { status: 'pending', id: null };
+      window.OneSignalDeferred.push(async function (OneSignal) {
+        try {
+          if (externalId) {
+            try { await OneSignal.login(externalId); } catch (e) {}
+          }
+          await OneSignal.Notifications.requestPermission();
+          if (!OneSignal.Notifications.permission) {
+            window.osPushResult = { status: 'done', id: null };
+            return;
+          }
+          try { await OneSignal.User.PushSubscription.optIn(); } catch (e) {}
+          // id'et er ikke altid klar straks — vent lidt på registrering.
+          var id = null;
+          for (var i = 0; i < 12; i++) {
+            id = OneSignal.User.PushSubscription.id || null;
+            if (id) break;
+            await new Promise(function (r) { setTimeout(r, 500); });
+          }
+          window.osPushResult = { status: 'done', id: id };
+        } catch (e) {
+          window.osPushResult = { status: 'done', id: null };
+        }
+      });
+    };
+  </script>
+</head>
+<body>
+  <!--
+    You can customize the "flutter_bootstrap.js" script.
+    This is useful to provide a custom configuration to the Flutter loader
+    or to give the user feedback during the initialization process.
+
+    For more details:
+    * https://docs.flutter.dev/platform-integration/web/initialization
+  -->
+  <!-- PWA: fang Androids installations-event så appen selv kan trigge dialogen -->
+  <script>
+    window._deferredPrompt = null;
+    window.addEventListener('beforeinstallprompt', function (e) {
+      e.preventDefault();
+      window._deferredPrompt = e;
+    });
+    window.triggerInstall = function () {
+      var p = window._deferredPrompt;
+      if (!p) return;
+      p.prompt();
+      if (p.userChoice) {
+        p.userChoice.then(function () { window._deferredPrompt = null; });
+      }
+    };
+  </script>
+
+  <!-- Auto-opdatering: viser et banner når en ny version er deployet -->
+  <style>
+    #update-banner {
+      position: fixed; left: 0; right: 0; bottom: 0; z-index: 2147483647;
+      display: flex; align-items: center; gap: 12px;
+      background: #D95D39; color: #fff;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      padding: 14px 16px calc(14px + env(safe-area-inset-bottom)) 16px;
+      box-shadow: 0 -2px 14px rgba(0, 0, 0, .35);
+      transform: translateY(110%); transition: transform .25s ease;
+    }
+    #update-banner.show { transform: translateY(0); }
+    #update-banner span { flex: 1; font-weight: 600; line-height: 1.3; }
+    #update-banner button {
+      background: #fff; color: #D95D39; border: none; border-radius: 8px;
+      padding: 8px 18px; font-weight: 700; font-size: 15px; white-space: nowrap;
+    }
+  </style>
+  <div id="update-banner">
+    <span>Opdaterer til nyeste version… 🎾</span>
+  </div>
+  <script>
+    (function () {
+      if (!('serviceWorker' in navigator)) return;
+      var reloaded = false;
+
+      // Aktiverer den nye version AUTOMATISK (ingen bruger-handling nødvendig):
+      // viser en kort "opdaterer…"-besked og beder den ventende SW overtage.
+      function activate(worker) {
+        if (!worker) return;
+        var b = document.getElementById('update-banner');
+        if (b) b.classList.add('show');
+        worker.postMessage('skipWaiting');
+      }
+
+      navigator.serviceWorker.ready.then(function (reg) {
+        // Allerede en ny version klar ved opstart?
+        if (reg.waiting && navigator.serviceWorker.controller) activate(reg.waiting);
+        // Ny version fundet under kørsel?
+        reg.addEventListener('updatefound', function () {
+          var nw = reg.installing;
+          if (!nw) return;
+          nw.addEventListener('statechange', function () {
+            if (nw.state === 'installed' && navigator.serviceWorker.controller) {
+              activate(nw);
+            }
+          });
+        });
+        // Tjek aktivt for ny udrulning: ved opstart, når appen åbnes igen,
+        // og hvert minut. (HTTP no-cache på SW-filen, se vercel.json, gør at
+        // browseren faktisk opdager den nye version.)
+        var check = function () { reg.update().catch(function () {}); };
+        check();
+        document.addEventListener('visibilitychange', function () {
+          if (document.visibilityState === 'visible') check();
+        });
+        setInterval(check, 60 * 1000);
+      }).catch(function () {});
+
+      // Når den nye SW overtager → genindlæs automatisk til frisk version.
+      navigator.serviceWorker.addEventListener('controllerchange', function () {
+        if (reloaded) return;
+        reloaded = true;
+        window.location.reload();
+      });
+    })();
+  </script>
+
+  <!-- Måler iPhonens faktiske safe-area-inset-bottom (kræver viewport-fit=cover)
+       og udstiller den til Flutter, så bund-navigationen kan tvinge luften ind. -->
+  <div id="sai-probe" aria-hidden="true"
+       style="position:fixed; left:0; bottom:0; width:0; height:0;
+              padding-bottom:env(safe-area-inset-bottom);
+              visibility:hidden; pointer-events:none;"></div>
+  <script>
+    (function () {
+      function measureSAI() {
+        var el = document.getElementById('sai-probe');
+        if (!el) return;
+        var pb = window.getComputedStyle(el).paddingBottom;
+        window.__safeAreaInsetBottom = parseFloat(pb) || 0;
+      }
+      measureSAI();
+      window.addEventListener('resize', measureSAI);
+      window.addEventListener('orientationchange', measureSAI);
+      window.addEventListener('flutter-first-frame', measureSAI);
+      setInterval(measureSAI, 2000);
+    })();
+  </script>
+
+  <script src="flutter_bootstrap.js" async></script>
+</body>
+</html>

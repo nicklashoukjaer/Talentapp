@@ -312,30 +312,41 @@
         working('Tilmelder til notifikationer…');
         window.OneSignalDeferred = window.OneSignalDeferred || [];
         window.OneSignalDeferred.push(async function (OneSignal) {
+          var token = null, optedIn = null;
           try {
-            try { await OneSignal.User.PushSubscription.optIn(); } catch (e) {}
+            // Fire optIn/login UDEN at blokere — await'et kan fryse på iOS og
+            // efterlade kortet hængende i "Tilmelder…".
+            try { OneSignal.User.PushSubscription.optIn(); } catch (e) {}
             if (window.__osExternalId) {
-              try { await OneSignal.login(window.__osExternalId); } catch (e) {}
+              try { OneSignal.login(window.__osExternalId); } catch (e) {}
             }
             var id = null;
-            for (var i = 0; i < 30; i++) {
-              try { id = OneSignal.User.PushSubscription.id || null; } catch (e) {}
+            for (var i = 0; i < 40; i++) {
+              try {
+                id      = OneSignal.User.PushSubscription.id || null;
+                token   = OneSignal.User.PushSubscription.token || null;
+                optedIn = OneSignal.User.PushSubscription.optedIn;
+              } catch (e) {}
               if (id) break;
               await new Promise(function (r) { setTimeout(r, 500); });
             }
             if (id) {
               hide();
               window.osPushResult = { status: 'done', id: id };
-            } else {
-              // Tilladelse givet, men OneSignal kunne ikke oprette abonnementet
-              // → typisk en opsætningsfejl (Web Push-platform i OneSignal).
-              fail('Tilladelsen blev givet ✅, men tilmeldingen til push-tjenesten ' +
-                   'fejlede. Det peger på en <b>opsætningsfejl i OneSignal</b> ' +
-                   '(Web Push for domænet), ikke din telefon. Vis denne besked til supporten.');
+              return;
             }
           } catch (e) {
             fail('Teknisk fejl efter tilladelse: ' + ((e && e.message) || 'ukendt') + '.');
+            return;
           }
+          // Tilladelse givet, men intet subscription-id → OneSignal fuldførte
+          // ikke tilmeldingen. Vis teknisk tilstand så vi kan diagnosticere.
+          var perm = ('Notification' in window) ? Notification.permission : '?';
+          fail('Tilladelsen blev givet ✅, men OneSignal kunne ikke fuldføre ' +
+               'tilmeldingen.<br><br>Teknisk: <b>perm=' + perm +
+               ', optedIn=' + optedIn + ', token=' + (token ? 'ja' : 'nej') +
+               '</b><br><br>Det peger på OneSignal-opsætningen (Web Push / Site ' +
+               'URL for domænet) — ikke din telefon. Vis denne besked til supporten.');
         });
       }
 

@@ -89,11 +89,14 @@ void platformOneSignalIdentify(String externalId) {
 Future<String?> platformOneSignalPromptAndGetId(String externalId) async {
   try {
     js.context.callMethod('osStartPrompt', [externalId]);
-    // Vent op til ~25s (12 forsøg på id'et á 500ms i JS + lidt margin her).
-    for (var i = 0; i < 50; i++) {
+    // Vent op til ~90s: brugeren skal nå at trykke "Tillad" i overlayet OG
+    // svare på iOS' egen native popup, før id'et registreres. Terminér ved
+    // 'done' (svar afgivet) eller 'blocked' (browseren har blokeret).
+    for (var i = 0; i < 180; i++) {
       await Future<void>.delayed(const Duration(milliseconds: 500));
       final res = js.context['osPushResult'];
-      if (res != null && res['status'] == 'done') {
+      final status = res == null ? null : res['status'];
+      if (status == 'done' || status == 'blocked') {
         final id = res['id'];
         return (id is String && id.isNotEmpty) ? id : null;
       }

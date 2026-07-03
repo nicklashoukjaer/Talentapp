@@ -82,39 +82,11 @@
     };
 
     // Flutter (platform_io_web.dart) starter prompten via osStartPrompt() og
-    // poller så window.osPushResult. status: 'pending' → 'done'; id er
-    // subscription-id'et eller null hvis brugeren afviste / det fejlede.
+    // poller window.osPushResult. Selve osStartPrompt defineres i <body> sammen
+    // med tilladelses-overlayet — iOS viser kun sin native prompt hvis den
+    // udløses fra et ægte DOM-klik (et Flutter-canvas-tap mister "user
+    // activation"). Her sættes kun starttilstanden.
     window.osPushResult = { status: 'idle', id: null };
-    window.osStartPrompt = function (externalId) {
-      window.osPushResult = { status: 'pending', id: null };
-      window.OneSignalDeferred.push(async function (OneSignal) {
-        try {
-          // iOS-krav: bed om tilladelse ALLERFØRST, mens brugerens tryk stadig
-          // "tæller" (transient user-activation). Login/opt-in er netværkskald
-          // der bruger aktiveringen op — så på iPhone dukker prompten aldrig op,
-          // og tilladelsen forbliver 'denied'. Derfor: permission → så resten.
-          await OneSignal.Notifications.requestPermission();
-          if (!OneSignal.Notifications.permission) {
-            window.osPushResult = { status: 'done', id: null };
-            return;
-          }
-          try { await OneSignal.User.PushSubscription.optIn(); } catch (e) {}
-          if (externalId) {
-            try { await OneSignal.login(externalId); } catch (e) {}
-          }
-          // id'et er ikke altid klar straks — vent lidt på registrering.
-          var id = null;
-          for (var i = 0; i < 12; i++) {
-            id = OneSignal.User.PushSubscription.id || null;
-            if (id) break;
-            await new Promise(function (r) { setTimeout(r, 500); });
-          }
-          window.osPushResult = { status: 'done', id: id };
-        } catch (e) {
-          window.osPushResult = { status: 'done', id: null };
-        }
-      });
-    };
   </script>
 </head>
 <body>
@@ -230,6 +202,114 @@
       window.addEventListener('orientationchange', measureSAI);
       window.addEventListener('flutter-first-frame', measureSAI);
       setInterval(measureSAI, 2000);
+    })();
+  </script>
+
+  <!-- ── Notifikations-tilladelse (ægte DOM-knap) ────────────────────────────
+       iOS viser kun sin native "tillad meddelelser"-popup hvis requestPermission
+       kaldes fra et rigtigt DOM-klik. Et Flutter-canvas-tap mister aktiveringen
+       på vejen til JS, så prompten kom aldrig frem. Dette overlay giver en ægte
+       knap; osStartPrompt (kaldt fra Flutter) viser bare overlayet. -->
+  <div id="push-overlay" aria-hidden="true" style="
+       display:none; position:fixed; inset:0; z-index:2147483646;
+       background:rgba(0,0,0,.6); align-items:center; justify-content:center;
+       padding:24px; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+    <div style="max-width:360px; width:100%; box-sizing:border-box; background:#211A16;
+                border:1px solid rgba(255,255,255,.08); border-radius:20px; padding:24px;
+                text-align:center; color:#F3ECE4; box-shadow:0 30px 60px -25px rgba(0,0,0,.8);">
+      <div style="font-size:40px; margin-bottom:8px;">🎾</div>
+      <div id="push-title" style="font-size:19px; font-weight:800; margin-bottom:8px;">Aktivér notifikationer</div>
+      <div id="push-text" style="font-size:14px; line-height:1.5; color:#A2968B; margin-bottom:20px;">
+        Få besked om nye træninger, kampe, afstemninger og bøder direkte på telefonen.
+      </div>
+      <button id="push-allow" style="width:100%; background:#E8622C; color:#fff; border:none;
+              border-radius:12px; padding:14px; font-size:16px; font-weight:700; cursor:pointer;">
+        Tillad notifikationer</button>
+      <button id="push-cancel" style="width:100%; background:transparent; color:#A2968B; border:none;
+              margin-top:8px; padding:10px; font-size:14px; cursor:pointer;">Ikke nu</button>
+    </div>
+  </div>
+  <script>
+    (function () {
+      var overlay = document.getElementById('push-overlay');
+      var titleEl = document.getElementById('push-title');
+      var textEl  = document.getElementById('push-text');
+      var allowEl = document.getElementById('push-allow');
+      var cancelEl= document.getElementById('push-cancel');
+      function show() { overlay.style.display = 'flex'; }
+      function hide() { overlay.style.display = 'none'; }
+
+      // Kaldes fra Flutter (platform_io_web.dart) via js-interop.
+      window.osStartPrompt = function (externalId) {
+        window.osPushResult = { status: 'pending', id: null };
+        window.__osExternalId = externalId || null;
+        var perm = ('Notification' in window) ? Notification.permission : 'default';
+        if (perm === 'granted') { finishAfterGrant(); return; }
+        if (perm === 'denied') {
+          titleEl.textContent = 'Notifikationer er blokeret';
+          textEl.innerHTML =
+            'Din iPhone har blokeret notifikationer for appen. Sådan nulstiller du:' +
+            '<br><br>1) Hold på app-ikonet → <b>Fjern app</b> → <b>Slet</b>.' +
+            '<br>2) Åbn siden i Safari → Del → <b>Føj til hjemmeskærm</b>.' +
+            '<br>3) Åbn fra ikonet og prøv igen.';
+          allowEl.textContent = 'OK';
+          cancelEl.style.display = 'none';
+          allowEl.onclick = function () { hide(); window.osPushResult = { status: 'blocked', id: null }; };
+          show();
+          return;
+        }
+        // 'default' → vis knap der udløser den native prompt
+        titleEl.textContent = 'Aktivér notifikationer';
+        textEl.textContent = 'Få besked om nye træninger, kampe, afstemninger og bøder direkte på telefonen.';
+        allowEl.textContent = 'Tillad notifikationer';
+        cancelEl.style.display = 'block';
+        allowEl.onclick = onAllow;
+        show();
+      };
+
+      function onAllow() {
+        hide();
+        // SYNKRONT i klik-handleren: iOS ser et gyldigt bruger-gesture og viser
+        // sin native popup. (Må ikke wrappes i await/deferred før dette kald.)
+        var os = window.OneSignal;
+        var p;
+        try {
+          p = (os && os.Notifications && os.Notifications.requestPermission)
+                ? os.Notifications.requestPermission()
+                : Notification.requestPermission();
+        } catch (e) {
+          try { p = Notification.requestPermission(); } catch (e2) { p = Promise.reject(); }
+        }
+        Promise.resolve(p).then(finishAfterGrant)
+                          .catch(function () { window.osPushResult = { status: 'done', id: null }; });
+      }
+
+      function finishAfterGrant() {
+        window.OneSignalDeferred = window.OneSignalDeferred || [];
+        window.OneSignalDeferred.push(async function (OneSignal) {
+          try {
+            if (!OneSignal.Notifications.permission) {
+              window.osPushResult = { status: 'done', id: null };
+              return;
+            }
+            try { await OneSignal.User.PushSubscription.optIn(); } catch (e) {}
+            if (window.__osExternalId) {
+              try { await OneSignal.login(window.__osExternalId); } catch (e) {}
+            }
+            var id = null;
+            for (var i = 0; i < 20; i++) {
+              id = OneSignal.User.PushSubscription.id || null;
+              if (id) break;
+              await new Promise(function (r) { setTimeout(r, 500); });
+            }
+            window.osPushResult = { status: 'done', id: id };
+          } catch (e) {
+            window.osPushResult = { status: 'done', id: null };
+          }
+        });
+      }
+
+      cancelEl.onclick = function () { hide(); window.osPushResult = { status: 'done', id: null }; };
     })();
   </script>
 

@@ -267,44 +267,74 @@
         show();
       };
 
+      // Viser en "vent"-tilstand mens vi arbejder.
+      function working(msg) {
+        titleEl.textContent = 'Vent et øjeblik…';
+        textEl.textContent = msg || 'Bekræft i iPhones popup, hvis den kommer frem.';
+        allowEl.style.display = 'none';
+        cancelEl.style.display = 'none';
+      }
+
+      // Viser en fejl/diagnostik i kortet OG afslutter Flutter-pollingen, så
+      // brugeren kan læse den præcise årsag op (i stedet for kun en rød besked).
+      function fail(msg) {
+        titleEl.textContent = 'Det lykkedes ikke';
+        textEl.innerHTML = msg;
+        allowEl.style.display = 'block';
+        allowEl.textContent = 'Luk';
+        allowEl.onclick = hide;
+        cancelEl.style.display = 'none';
+        window.osPushResult = { status: 'done', id: null };
+      }
+
       function onAllow() {
-        hide();
-        // SYNKRONT i klik-handleren: iOS ser et gyldigt bruger-gesture og viser
-        // sin native popup. (Må ikke wrappes i await/deferred før dette kald.)
-        var os = window.OneSignal;
+        working();
+        // Kald iPhones NATIVE prompt direkte og synkront her i klik-handleren.
+        // (OneSignals egen requestPermission laver async-arbejde først og taber
+        //  user-activation på iOS, så popup'en aldrig kommer frem.)
         var p;
-        try {
-          p = (os && os.Notifications && os.Notifications.requestPermission)
-                ? os.Notifications.requestPermission()
-                : Notification.requestPermission();
-        } catch (e) {
-          try { p = Notification.requestPermission(); } catch (e2) { p = Promise.reject(); }
-        }
-        Promise.resolve(p).then(finishAfterGrant)
-                          .catch(function () { window.osPushResult = { status: 'done', id: null }; });
+        try { p = Notification.requestPermission(); }
+        catch (e) { p = Promise.reject(e); }
+        Promise.resolve(p).then(function (perm) {
+          if (perm === 'granted') {
+            finishAfterGrant();
+          } else {
+            fail('iPhone gav ikke tilladelse (status: <b>' + perm + '</b>).<br><br>' +
+                 'Nulstil sådan: hold på app-ikonet → <b>Fjern app</b> → <b>Slet</b>. ' +
+                 'Åbn siden i Safari → Del → <b>Føj til hjemmeskærm</b>. Åbn fra ikonet og prøv igen.');
+          }
+        }).catch(function (e) {
+          fail('Popup kunne ikke vises (' + ((e && e.message) || 'ukendt fejl') + ').');
+        });
       }
 
       function finishAfterGrant() {
+        working('Tilmelder til notifikationer…');
         window.OneSignalDeferred = window.OneSignalDeferred || [];
         window.OneSignalDeferred.push(async function (OneSignal) {
           try {
-            if (!OneSignal.Notifications.permission) {
-              window.osPushResult = { status: 'done', id: null };
-              return;
-            }
             try { await OneSignal.User.PushSubscription.optIn(); } catch (e) {}
             if (window.__osExternalId) {
               try { await OneSignal.login(window.__osExternalId); } catch (e) {}
             }
             var id = null;
-            for (var i = 0; i < 20; i++) {
-              id = OneSignal.User.PushSubscription.id || null;
+            for (var i = 0; i < 30; i++) {
+              try { id = OneSignal.User.PushSubscription.id || null; } catch (e) {}
               if (id) break;
               await new Promise(function (r) { setTimeout(r, 500); });
             }
-            window.osPushResult = { status: 'done', id: id };
+            if (id) {
+              hide();
+              window.osPushResult = { status: 'done', id: id };
+            } else {
+              // Tilladelse givet, men OneSignal kunne ikke oprette abonnementet
+              // → typisk en opsætningsfejl (Web Push-platform i OneSignal).
+              fail('Tilladelsen blev givet ✅, men tilmeldingen til push-tjenesten ' +
+                   'fejlede. Det peger på en <b>opsætningsfejl i OneSignal</b> ' +
+                   '(Web Push for domænet), ikke din telefon. Vis denne besked til supporten.');
+            }
           } catch (e) {
-            window.osPushResult = { status: 'done', id: null };
+            fail('Teknisk fejl efter tilladelse: ' + ((e && e.message) || 'ukendt') + '.');
           }
         });
       }

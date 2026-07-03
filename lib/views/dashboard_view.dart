@@ -2105,11 +2105,13 @@ class _CreateTrainingDialogState extends State<CreateTrainingDialog> {
 
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
-    if (_start == null || _slut == null) {
-      _snack(context, 'Vælg dato + tid for start og slut', Colors.orange);
+    if (_start == null) {
+      _snack(context, 'Vælg dato + tid for start', Colors.orange);
       return;
     }
-    if (!_slut!.isAfter(_start!)) {
+    // Slut er valgfri: hvis den ikke er sat, bruges start + 1,5 time.
+    final effectiveSlut = _slut ?? _start!.add(const Duration(minutes: 90));
+    if (!effectiveSlut.isAfter(_start!)) {
       _snack(context, 'Sluttidspunkt skal være efter start', Colors.orange);
       return;
     }
@@ -2133,7 +2135,7 @@ class _CreateTrainingDialogState extends State<CreateTrainingDialog> {
       final delta = Duration(days: 7 * i);
       return _buildRow(
         start:    _start!.add(delta),
-        slut:     _slut!.add(delta),
+        slut:     effectiveSlut.add(delta),
         deadline: effectiveDeadline.add(delta),
         maxVal:   maxVal,
         adresseVal: adresseVal,
@@ -2232,7 +2234,7 @@ class _CreateTrainingDialogState extends State<CreateTrainingDialog> {
                 ),
                 const SizedBox(height: 12),
                 _QuickDateTimeField(
-                  label: 'Slut',
+                  label: 'Slut (valgfri – ellers +1½ time)',
                   value: _slut,
                   fallbackDate: _start,
                   onChanged: (v) => setState(() => _slut = v),

@@ -79,7 +79,7 @@ Deno.serve(async (req) => {
       const titel = (rec.titel as string) ?? "Ny begivenhed";
       const when = rec.start_tid ? ` — ${daDateTime(rec.start_tid as string)}` : "";
       result = await sendPush({
-        included_segments: ["Subscribed Users"],
+        included_segments: ["Total Subscriptions"],
         headings: { en: "Ny begivenhed 🎾", da: "Ny begivenhed 🎾" },
         contents: { en: `${titel}${when}`, da: `${titel}${when}` },
       });
@@ -88,7 +88,7 @@ Deno.serve(async (req) => {
     case "polls": {
       const titel = (rec.titel as string) ?? "Ny afstemning";
       result = await sendPush({
-        included_segments: ["Subscribed Users"],
+        included_segments: ["Total Subscriptions"],
         headings: { en: "Ny afstemning 🗳️", da: "Ny afstemning 🗳️" },
         contents: { en: titel, da: titel },
       });

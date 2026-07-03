@@ -1308,45 +1308,78 @@ class _CreateFineTypeCard extends StatefulWidget {
 }
 
 class _CreateFineTypeCardState extends State<_CreateFineTypeCard> {
-  final _titel = TextEditingController();
-  final _krCtrl = TextEditingController();
-  bool _saving = false;
+  String? _busyId; // id på den type der lige nu slettes (spinner)
 
-  @override
-  void dispose() {
-    _titel.dispose();
-    _krCtrl.dispose();
-    super.dispose();
-  }
-
-  Future<void> _create() async {
-    final titel = _titel.text.trim();
-    final kr = int.tryParse(_krCtrl.text.trim());
-    if (titel.isEmpty || kr == null || kr <= 0) {
-      _snack(context, 'Indtast titel og beløb i hele kroner', Colors.orange);
-      return;
-    }
-    setState(() => _saving = true);
+  /// Opret eller redigér via dialog.
+  Future<void> _openEditor({Map<String, dynamic>? existing}) async {
+    final result = await showDialog<({String titel, int kr})>(
+      context: context,
+      builder: (_) => _FineTypeDialog(existing: existing),
+    );
+    if (result == null) return;
     try {
-      await supabase.from('fine_types').insert({
-        'titel':      titel,
-        'belob_oere': kr * 100,  // kr → øre
-      });
-      if (!mounted) return;
-      _snack(context, 'Bødetype "$titel" oprettet', Colors.green);
-      _titel.clear();
-      _krCtrl.clear();
+      if (existing == null) {
+        await supabase.from('fine_types').insert({
+          'titel':      result.titel,
+          'belob_oere': result.kr * 100,
+        });
+        if (mounted) _snack(context, 'Bødetype "${result.titel}" oprettet', _success);
+      } else {
+        await supabase.from('fine_types').update({
+          'titel':      result.titel,
+          'belob_oere': result.kr * 100,
+        }).eq('id', existing['id']);
+        if (mounted) _snack(context, 'Bødetype opdateret', _success);
+      }
       widget.onCreated();
     } on PostgrestException catch (e) {
-      if (mounted) _snack(context, e.message, Colors.red);
+      if (mounted) _snack(context, e.message, _danger);
+    }
+  }
+
+  Future<void> _delete(Map<String, dynamic> type) async {
+    final titel = type['titel'] as String;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Slet bødetype?'),
+        content: Text('"$titel" fjernes fra listen. Allerede uddelte bøder '
+            'påvirkes ikke.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Annullér')),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(backgroundColor: _danger),
+            child: const Text('Slet'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    setState(() => _busyId = type['id'] as String);
+    try {
+      await supabase.from('fine_types').delete().eq('id', type['id']);
+      if (mounted) _snack(context, 'Bødetype slettet', _textSecondary);
+      widget.onCreated();
+    } on PostgrestException {
+      // Typisk FK-fejl hvis typen er i brug på eksisterende bøder.
+      if (mounted) {
+        _snack(context,
+            'Kunne ikke slette "$titel" — den er sandsynligvis i brug på '
+            'eksisterende bøder.',
+            _danger);
+      }
     } finally {
-      if (mounted) setState(() => _saving = false);
+      if (mounted) setState(() => _busyId = null);
     }
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final types = widget.existingTypes;
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -1355,81 +1388,202 @@ class _CreateFineTypeCardState extends State<_CreateFineTypeCard> {
           children: [
             Row(
               children: [
-                Icon(Icons.style_outlined, color: theme.colorScheme.primary),
+                const Icon(Icons.style_outlined, color: _neon),
                 const SizedBox(width: 8),
                 Text('Bødetyper', style: theme.textTheme.titleMedium),
                 const Spacer(),
-                Text('${widget.existingTypes.length} typer',
-                    style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.onSurfaceVariant)),
+                Text('${types.length} ${types.length == 1 ? "type" : "typer"}',
+                    style: _body(size: 12, color: _textSecondary)),
               ],
             ),
-            if (widget.existingTypes.isNotEmpty) ...[
-              const SizedBox(height: 10),
-              Wrap(
-                spacing: 6, runSpacing: 6,
-                children: widget.existingTypes.map((t) {
-                  final aktiv = t['aktiv'] == true;
-                  return Chip(
-                    label: Text(
-                      '${t['titel']} · ${_fmtKr((t['belob_oere'] as num).toInt())}',
-                      style: TextStyle(
-                          fontSize: 12,
-                          color: aktiv ? null : Colors.grey),
-                    ),
-                    backgroundColor: aktiv
-                        ? theme.colorScheme.surfaceContainerHighest
-                        : theme.colorScheme.surfaceContainerLow,
-                    visualDensity: VisualDensity.compact,
-                    side: BorderSide.none,
-                  );
-                }).toList(),
+            const SizedBox(height: 12),
+            if (types.isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                child: Text('Ingen bødetyper endnu — opret den første nedenfor.',
+                    style: _body(size: 13, color: _textMuted)),
+              )
+            else
+              Container(
+                decoration: BoxDecoration(
+                  color: _bgBlack,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: _borderSubtle),
+                ),
+                child: Column(
+                  children: [
+                    for (var i = 0; i < types.length; i++)
+                      _FineTypeRow(
+                        type: types[i],
+                        isFirst: i == 0,
+                        deleting: _busyId == types[i]['id'],
+                        onEdit: () => _openEditor(existing: types[i]),
+                        onDelete: () => _delete(types[i]),
+                      ),
+                  ],
+                ),
               ),
-            ],
-            const SizedBox(height: 16),
-            Row(
-              children: [
-                Expanded(
-                  flex: 3,
-                  child: TextField(
-                    controller: _titel,
-                    textInputAction: TextInputAction.next,
-                    onSubmitted: (_) => FocusScope.of(context).nextFocus(),
-                    decoration: const InputDecoration(
-                      labelText: 'Titel',
-                      hintText: 'F.eks. "Hul i battet"',
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: TextField(
-                    controller: _krCtrl,
-                    keyboardType: TextInputType.number,
-                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                    textInputAction: TextInputAction.done,
-                    onSubmitted: (_) => _create(),
-                    decoration: const InputDecoration(
-                      labelText: 'Beløb (kr)',
-                      hintText: '100',
-                      suffixText: 'kr',
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                FilledButton.icon(
-                  onPressed: _saving ? null : _create,
-                  icon: _saving
-                      ? const SizedBox(width: 16, height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                      : const Icon(Icons.add),
-                  label: const Text('Opret type'),
-                ),
-              ],
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: () => _openEditor(),
+                icon: const Icon(Icons.add, size: 18),
+                label: const Text('Ny bødetype'),
+              ),
             ),
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Én bødetype i listen — titel, beløb, redigér og slet.
+class _FineTypeRow extends StatelessWidget {
+  final Map<String, dynamic> type;
+  final bool isFirst;
+  final bool deleting;
+  final VoidCallback onEdit;
+  final VoidCallback onDelete;
+  const _FineTypeRow({
+    required this.type,
+    required this.isFirst,
+    required this.deleting,
+    required this.onEdit,
+    required this.onDelete,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final titel = type['titel'] as String;
+    final oere  = (type['belob_oere'] as num).toInt();
+    return Container(
+      decoration: BoxDecoration(
+        border: Border(
+          top: isFirst
+              ? BorderSide.none
+              : const BorderSide(color: _borderSubtle),
+        ),
+      ),
+      padding: const EdgeInsets.fromLTRB(14, 6, 6, 6),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(titel,
+                style: theme.textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w600),
+                maxLines: 1, overflow: TextOverflow.ellipsis),
+          ),
+          const SizedBox(width: 8),
+          Text(_fmtKr(oere),
+              style: _cond(size: 17, weight: FontWeight.w800, color: _neon)),
+          const SizedBox(width: 4),
+          IconButton(
+            onPressed: onEdit,
+            icon: const Icon(Icons.edit_outlined, size: 19),
+            tooltip: 'Redigér',
+            color: _textSecondary,
+            visualDensity: VisualDensity.compact,
+          ),
+          deleting
+              ? const Padding(
+                  padding: EdgeInsets.all(10),
+                  child: SizedBox(
+                      width: 18, height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: _danger)),
+                )
+              : IconButton(
+                  onPressed: onDelete,
+                  icon: const Icon(Icons.delete_outline, size: 19),
+                  tooltip: 'Slet',
+                  color: _danger,
+                  visualDensity: VisualDensity.compact,
+                ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Dialog til at oprette/redigere en bødetype.
+class _FineTypeDialog extends StatefulWidget {
+  final Map<String, dynamic>? existing;
+  const _FineTypeDialog({this.existing});
+  @override
+  State<_FineTypeDialog> createState() => _FineTypeDialogState();
+}
+
+class _FineTypeDialogState extends State<_FineTypeDialog> {
+  late final TextEditingController _titel;
+  late final TextEditingController _krCtrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _titel = TextEditingController(text: widget.existing?['titel'] as String? ?? '');
+    final oere = (widget.existing?['belob_oere'] as num?)?.toInt();
+    _krCtrl = TextEditingController(text: oere == null ? '' : '${oere ~/ 100}');
+  }
+
+  @override
+  void dispose() {
+    _titel.dispose();
+    _krCtrl.dispose();
+    super.dispose();
+  }
+
+  void _save() {
+    final titel = _titel.text.trim();
+    final kr = int.tryParse(_krCtrl.text.trim());
+    if (titel.isEmpty || kr == null || kr <= 0) {
+      _snack(context, 'Indtast titel og beløb i hele kroner', _gold);
+      return;
+    }
+    Navigator.pop(context, (titel: titel, kr: kr));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isEdit = widget.existing != null;
+    return AlertDialog(
+      title: Text(isEdit ? 'Redigér bødetype' : 'Ny bødetype'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextField(
+            controller: _titel,
+            autofocus: true,
+            textInputAction: TextInputAction.next,
+            decoration: const InputDecoration(
+              labelText: 'Titel',
+              hintText: 'F.eks. "Hul i battet"',
+            ),
+          ),
+          const SizedBox(height: 14),
+          TextField(
+            controller: _krCtrl,
+            keyboardType: TextInputType.number,
+            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+            textInputAction: TextInputAction.done,
+            onSubmitted: (_) => _save(),
+            decoration: const InputDecoration(
+              labelText: 'Beløb',
+              hintText: '100',
+              suffixText: 'kr',
+            ),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Annullér')),
+        FilledButton(
+          onPressed: _save,
+          child: Text(isEdit ? 'Gem' : 'Opret'),
+        ),
+      ],
     );
   }
 }

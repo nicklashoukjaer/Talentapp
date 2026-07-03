@@ -523,6 +523,46 @@ class _FineHistoryScreenState extends State<FineHistoryScreen> {
     }
   }
 
+  /// Sletter en bøde permanent (fx hvis den er givet forkert).
+  Future<void> _delete(Map<String, dynamic> fine) async {
+    final titel = fine['titel'] as String? ?? 'bøde';
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Slet bøde?'),
+        content: Text('"$titel" fjernes permanent. Brug dette hvis bøden '
+            'er givet ved en fejl.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Annullér')),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(backgroundColor: _danger),
+            child: const Text('Slet'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    try {
+      final deleted =
+          await supabase.from('fines').delete().eq('id', fine['id']).select();
+      if (!mounted) return;
+      _snack(
+        context,
+        (deleted as List).isEmpty
+            ? 'Kunne ikke slette — mangler du rettigheder?'
+            : 'Bøde slettet',
+        (deleted).isEmpty ? _danger : _textSecondary,
+      );
+      await _load();
+    } on PostgrestException catch (e) {
+      if (mounted) _snack(context, e.message, _danger);
+      await _load();
+    }
+  }
+
   /// Åbner MobilePay med det skyldige beløb forudfyldt (øre → kroner).
   Future<void> _payWithMobilePay(int oere) async {
     var box = ClubConfig.cachedBox;
@@ -647,6 +687,7 @@ class _FineHistoryScreenState extends State<FineHistoryScreen> {
                                 fine: f,
                                 isAdmin: widget.isAdmin,
                                 onApprove: () => _approve(f),
+                                onDelete: widget.isAdmin ? () => _delete(f) : null,
                               )),
                           ],
                         ),
@@ -662,10 +703,12 @@ class _FineHistoryRow extends StatelessWidget {
   final Map<String, dynamic> fine;
   final bool isAdmin;
   final VoidCallback onApprove;
+  final VoidCallback? onDelete;
   const _FineHistoryRow({
     required this.fine,
     required this.isAdmin,
     required this.onApprove,
+    this.onDelete,
   });
 
   @override
@@ -722,17 +765,25 @@ class _FineHistoryRow extends StatelessWidget {
                         visualDensity: VisualDensity.compact,
                         side: BorderSide.none,
                       ),
-                      if (isAdmin && !isPaid) ...[
+                      if (isAdmin) ...[
                         const Spacer(),
-                        FilledButton.icon(
-                          onPressed: onApprove,
-                          icon: const Icon(Icons.check, size: 16),
-                          label: const Text('Godkend betaling'),
-                          style: FilledButton.styleFrom(
-                            backgroundColor: Colors.green.shade700,
-                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        if (!isPaid)
+                          FilledButton.icon(
+                            onPressed: onApprove,
+                            icon: const Icon(Icons.check, size: 16),
+                            label: const Text('Godkend'),
+                            style: FilledButton.styleFrom(
+                              backgroundColor: Colors.green.shade700,
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                            ),
                           ),
-                        ),
+                        if (onDelete != null)
+                          IconButton(
+                            onPressed: onDelete,
+                            icon: const Icon(Icons.delete_outline, size: 20, color: _danger),
+                            tooltip: 'Slet bøde',
+                            visualDensity: VisualDensity.compact,
+                          ),
                       ],
                     ],
                   ),

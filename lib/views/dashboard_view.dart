@@ -162,6 +162,45 @@ class DashboardTabState extends State<DashboardTab> {
     }
   }
 
+  Future<void> _deleteFine(String fineId) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Slet bøde?'),
+        content: const Text('Bøden fjernes permanent. Brug dette hvis den '
+            'er givet ved en fejl.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Annullér')),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(backgroundColor: _danger),
+            child: const Text('Slet'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    try {
+      final deleted =
+          await supabase.from('fines').delete().eq('id', fineId).select();
+      if (mounted) {
+        _snack(
+          context,
+          (deleted as List).isEmpty
+              ? 'Kunne ikke slette — mangler du rettigheder?'
+              : 'Bøde slettet',
+          (deleted).isEmpty ? _danger : _textSecondary,
+        );
+      }
+      await reloadFines();
+    } on PostgrestException catch (e) {
+      if (mounted) _snack(context, e.message, _danger);
+      await reloadFines();
+    }
+  }
+
   Future<void> _approveSuggestion(String id, int kr) async {
     try {
       await supabase.from('fine_types').update({
@@ -467,6 +506,7 @@ class DashboardTabState extends State<DashboardTab> {
           _PendingFinesCard(
             fines: _pendingFines,
             onApprove: _approvePayment,
+            onDelete: _deleteFine,
           ),
           const SizedBox(height: 16),
           _PendingSuggestionsCard(
@@ -1209,7 +1249,12 @@ class _GiveFineCardState extends State<_GiveFineCard> {
 class _PendingFinesCard extends StatelessWidget {
   final List<Map<String, dynamic>> fines;
   final Future<void> Function(String fineId) onApprove;
-  const _PendingFinesCard({required this.fines, required this.onApprove});
+  final Future<void> Function(String fineId) onDelete;
+  const _PendingFinesCard({
+    required this.fines,
+    required this.onApprove,
+    required this.onDelete,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -1287,6 +1332,12 @@ class _PendingFinesCard extends StatelessWidget {
                           foregroundColor: _onSuccess,
                           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                         ),
+                      ),
+                      IconButton(
+                        onPressed: () => onDelete(f['id'] as String),
+                        icon: const Icon(Icons.delete_outline, size: 20, color: _danger),
+                        tooltip: 'Slet bøde (givet forkert)',
+                        visualDensity: VisualDensity.compact,
                       ),
                     ],
                   ),

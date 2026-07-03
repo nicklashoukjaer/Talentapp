@@ -253,6 +253,77 @@ class _OversigtTabState extends State<OversigtTab> {
     }
   }
 
+  Future<bool> _confirmDelete(String hvad, String navn) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Slet $hvad?'),
+        content: Text('"$navn" fjernes permanent for alle. Det kan ikke fortrydes.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Annullér')),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(backgroundColor: _danger),
+            child: const Text('Slet'),
+          ),
+        ],
+      ),
+    );
+    return ok == true;
+  }
+
+  Future<void> _deleteTraining(_TrainingFeedItem item) async {
+    final id = item.training['id'] as String;
+    final titel = item.training['titel'] as String;
+    if (!await _confirmDelete('begivenhed', titel)) return;
+    try {
+      // Fjern tilmeldinger først (hvis FK ikke sletter dem automatisk).
+      await supabase.from('training_participants').delete().eq('training_id', id);
+      final deleted = await supabase.from('trainings').delete().eq('id', id).select();
+      if (!mounted) return;
+      _snack(
+        context,
+        (deleted as List).isEmpty
+            ? 'Kunne ikke slette — mangler du rettigheder?'
+            : 'Begivenhed slettet',
+        (deleted).isEmpty ? _danger : _textSecondary,
+      );
+      await reload();
+    } on PostgrestException catch (e) {
+      if (mounted) _snack(context, e.message, _danger);
+      await reload();
+    }
+  }
+
+  Future<void> _deletePoll(_PollFeedItem item) async {
+    final id = item.poll['id'] as String;
+    final titel = item.poll['titel'] as String;
+    if (!await _confirmDelete('afstemning', titel)) return;
+    try {
+      final opts = await supabase.from('poll_options').select('id').eq('poll_id', id);
+      final optIds = (opts as List).map((o) => o['id'] as String).toList();
+      if (optIds.isNotEmpty) {
+        await supabase.from('poll_responses').delete().inFilter('poll_option_id', optIds);
+      }
+      await supabase.from('poll_options').delete().eq('poll_id', id);
+      final deleted = await supabase.from('polls').delete().eq('id', id).select();
+      if (!mounted) return;
+      _snack(
+        context,
+        (deleted as List).isEmpty
+            ? 'Kunne ikke slette — mangler du rettigheder?'
+            : 'Afstemning slettet',
+        (deleted).isEmpty ? _danger : _textSecondary,
+      );
+      await reload();
+    } on PostgrestException catch (e) {
+      if (mounted) _snack(context, e.message, _danger);
+      await reload();
+    }
+  }
+
 
   Future<void> _vote(_PollFeedItem item, String optionId, bool svar) async {
     final originalVote = item.myVotes[optionId];
@@ -555,6 +626,7 @@ class _OversigtTabState extends State<OversigtTab> {
                           isAdmin: widget.isAdmin,
                           onSignUp:  () => _signUp(t),
                           onDecline: () => _decline(t),
+                          onDelete: widget.isAdmin ? () => _deleteTraining(t) : null,
                           onOpenBoard: widget.isAdmin
                               ? () => Navigator.of(context).push(
                                   MaterialPageRoute(
@@ -568,6 +640,7 @@ class _OversigtTabState extends State<OversigtTab> {
                           item: p,
                           isAdmin: widget.isAdmin,
                           onVote: (optionId, svar) => _vote(p, optionId, svar),
+                          onDelete: widget.isAdmin ? () => _deletePoll(p) : null,
                           onOpenSynergy: widget.isAdmin
                               ? () => Navigator.of(context).push(
                                   MaterialPageRoute(
@@ -598,12 +671,14 @@ class _FeedTrainingCard extends StatefulWidget {
   final VoidCallback onSignUp;
   final VoidCallback onDecline;
   final VoidCallback? onOpenBoard;
+  final VoidCallback? onDelete;
   const _FeedTrainingCard({
     required this.item,
     required this.isAdmin,
     required this.onSignUp,
     required this.onDecline,
     this.onOpenBoard,
+    this.onDelete,
   });
   @override
   State<_FeedTrainingCard> createState() => _FeedTrainingCardState();
@@ -673,6 +748,18 @@ class _FeedTrainingCardState extends State<_FeedTrainingCard> {
                           onPressed: widget.onOpenBoard,
                           icon: const Icon(Icons.view_kanban_outlined,
                               size: 20, color: _neon),
+                          visualDensity: VisualDensity.compact,
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                        ),
+                      ),
+                    if (widget.onDelete != null)
+                      Tooltip(
+                        message: 'Slet begivenhed',
+                        child: IconButton(
+                          onPressed: widget.onDelete,
+                          icon: const Icon(Icons.delete_outline,
+                              size: 20, color: _danger),
                           visualDensity: VisualDensity.compact,
                           padding: EdgeInsets.zero,
                           constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
@@ -1130,11 +1217,13 @@ class _FeedPollCard extends StatefulWidget {
   final bool isAdmin;
   final void Function(String optionId, bool svar) onVote;
   final VoidCallback? onOpenSynergy;
+  final VoidCallback? onDelete;
   const _FeedPollCard({
     required this.item,
     required this.isAdmin,
     required this.onVote,
     this.onOpenSynergy,
+    this.onDelete,
   });
   @override
   State<_FeedPollCard> createState() => _FeedPollCardState();
@@ -1213,6 +1302,18 @@ class _FeedPollCardState extends State<_FeedPollCard> {
                           onPressed: widget.onOpenSynergy,
                           icon: const Icon(Icons.insights,
                               size: 20, color: _neon),
+                          visualDensity: VisualDensity.compact,
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                        ),
+                      ),
+                    if (widget.onDelete != null)
+                      Tooltip(
+                        message: 'Slet afstemning',
+                        child: IconButton(
+                          onPressed: widget.onDelete,
+                          icon: const Icon(Icons.delete_outline,
+                              size: 20, color: _danger),
                           visualDensity: VisualDensity.compact,
                           padding: EdgeInsets.zero,
                           constraints: const BoxConstraints(minWidth: 32, minHeight: 32),

@@ -338,6 +338,16 @@ class _HomeShellState extends State<HomeShell> {
           ],
         );
       }(),
+      // Hurtig-opret på Oversigten (kun trænere/admins) — nemt fra telefonen.
+      floatingActionButton:
+          (_isStaff && _selectedIndex.clamp(0, pages.length - 1) == _tabOversigt)
+              ? _CreateSpeedDial(
+                  isAdmin: _isAdmin,
+                  onNewTraining: _openCreateTraining,
+                  onNewPoll: _openCreatePoll,
+                  onNewFine: _openGiveFineDialog,
+                )
+              : null,
       bottomNavigationBar: MediaQuery.of(context).size.width >= 700
           ? null
           // Baggrund dækker helt ned i bunden; SafeArea skubber selve nav-baren
@@ -530,6 +540,102 @@ class _Kbd extends StatelessWidget {
       child: Text(label, style: const TextStyle(
         fontSize: 11, fontFamily: 'monospace', fontWeight: FontWeight.w600,
       )),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Hurtig-opret FAB (speed-dial) — Oversigten, kun trænere/admins
+// ─────────────────────────────────────────────────────────────────────────────
+class _CreateSpeedDial extends StatefulWidget {
+  final bool isAdmin; // fuld admin → må uddele lyn-bøde
+  final VoidCallback onNewTraining;
+  final VoidCallback onNewPoll;
+  final VoidCallback onNewFine;
+  const _CreateSpeedDial({
+    required this.isAdmin,
+    required this.onNewTraining,
+    required this.onNewPoll,
+    required this.onNewFine,
+  });
+  @override
+  State<_CreateSpeedDial> createState() => _CreateSpeedDialState();
+}
+
+class _CreateSpeedDialState extends State<_CreateSpeedDial> {
+  bool _open = false;
+
+  void _run(VoidCallback action) {
+    setState(() => _open = false);
+    action();
+  }
+
+  Widget _action(String label, IconData icon, VoidCallback onTap) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: _surfaceDark,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: _borderSubtle),
+              boxShadow: const [
+                BoxShadow(color: Colors.black45, blurRadius: 8, offset: Offset(0, 2)),
+              ],
+            ),
+            child: Text(label,
+                style: const TextStyle(
+                    color: _textPrimary, fontWeight: FontWeight.w600, fontSize: 13)),
+          ),
+          const SizedBox(width: 12),
+          FloatingActionButton.small(
+            heroTag: 'sd_$label',
+            backgroundColor: _surfaceElevated,
+            foregroundColor: _neon,
+            elevation: 2,
+            onPressed: () => _run(onTap),
+            child: Icon(icon),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        AnimatedSize(
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOut,
+          child: _open
+              ? Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    _action('Ny træning / kamp', Icons.event, widget.onNewTraining),
+                    _action('Ny afstemning', Icons.how_to_vote, widget.onNewPoll),
+                    if (widget.isAdmin)
+                      _action('Lyn-bøde', Icons.gavel, widget.onNewFine),
+                  ],
+                )
+              : const SizedBox.shrink(),
+        ),
+        FloatingActionButton(
+          heroTag: 'sd_main',
+          onPressed: () => setState(() => _open = !_open),
+          child: AnimatedRotation(
+            turns: _open ? 0.125 : 0,
+            duration: const Duration(milliseconds: 180),
+            child: const Icon(Icons.add),
+          ),
+        ),
+      ],
     );
   }
 }

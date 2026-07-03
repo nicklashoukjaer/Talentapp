@@ -38,6 +38,8 @@ dependencies:
   url_launcher: ^6.3.0
   # Native push (Android/iOS). På web bruges OneSignal Web SDK i web/index.html.
   onesignal_flutter: ^5.3.0
+  # Barlow + Barlow Condensed (klubbens typografi). Hentes og caches automatisk.
+  google_fonts: ^6.2.1
 
 dev_dependencies:
   flutter_test:

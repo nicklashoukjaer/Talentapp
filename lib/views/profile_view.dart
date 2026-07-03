@@ -381,42 +381,64 @@ class _ProfileCard extends StatelessWidget {
     final rolle = profile['rolle'] as String;
     final isAdmin = rolle == 'admin';
 
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Row(
-          children: [
-            CircleAvatar(
-              radius: 32,
-              backgroundColor: theme.colorScheme.primaryContainer,
-              child: Text(
-                navn.isNotEmpty ? navn[0].toUpperCase() : '?',
-                style: TextStyle(fontSize: 28, color: theme.colorScheme.onPrimaryContainer),
-              ),
-            ),
-            const SizedBox(width: 20),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(navn, style: theme.textTheme.headlineSmall),
-                  const SizedBox(height: 2),
-                  Text(email, style: theme.textTheme.bodyMedium?.copyWith(
-                      color: theme.colorScheme.onSurfaceVariant)),
-                  const SizedBox(height: 8),
-                  Chip(
-                    label: Text(isAdmin ? 'Admin' : 'Medlem'),
-                    visualDensity: VisualDensity.compact,
-                    backgroundColor: isAdmin
-                        ? Colors.amber.shade100
-                        : theme.colorScheme.surfaceContainerHighest,
-                    side: BorderSide.none,
-                  ),
-                ],
-              ),
-            ),
-          ],
+    return Container(
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [_surfaceElevated, _surfaceDark],
         ),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: _borderSubtle),
+      ),
+      padding: const EdgeInsets.all(20),
+      child: Row(
+        children: [
+          Container(
+            width: 56, height: 56,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: _neon,
+              shape: BoxShape.circle,
+              boxShadow: [
+                BoxShadow(color: _neon.withValues(alpha: 0.35), blurRadius: 14),
+              ],
+            ),
+            child: Text(
+              navn.isNotEmpty ? navn[0].toUpperCase() : '?',
+              style: _cond(size: 26, weight: FontWeight.w800, color: Colors.white),
+            ),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(navn.toUpperCase(),
+                    style: theme.textTheme.titleLarge,
+                    maxLines: 1, overflow: TextOverflow.ellipsis),
+                const SizedBox(height: 2),
+                Text(email,
+                    style: theme.textTheme.bodyMedium?.copyWith(color: _textSecondary),
+                    maxLines: 1, overflow: TextOverflow.ellipsis),
+                const SizedBox(height: 10),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: isAdmin ? _gold : _surfaceElevated,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(isAdmin ? 'ADMIN' : 'MEDLEM',
+                      style: _body(
+                          size: 10,
+                          weight: FontWeight.w800,
+                          spacing: 0.8,
+                          color: isAdmin ? _onGold : _textSecondary)),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

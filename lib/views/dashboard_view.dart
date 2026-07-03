@@ -28,6 +28,9 @@ class DashboardTabState extends State<DashboardTab> {
   bool _loadingFines = true;
   String? _finesError;
 
+  // Aktiv sektion-fane: 0 = Bøder, 1 = Medlemmer, 2 = Betaling
+  int _dashSection = 0;
+
   @override
   void initState() {
     super.initState();
@@ -204,15 +207,21 @@ class DashboardTabState extends State<DashboardTab> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     _buildHero(),
-                    const SizedBox(height: 24),
+                    const SizedBox(height: 20),
                     _buildQuickActions(),
                     if (widget.isFullAdmin) ...[
-                      const SizedBox(height: 32),
-                      _buildFineSection(),
-                      const SizedBox(height: 32),
-                      _buildMembersSection(),
-                      const SizedBox(height: 32),
-                      const _MobilePayConfigCard(),
+                      const SizedBox(height: 28),
+                      _SectionPills(
+                        active: _dashSection,
+                        pendingCount: _pendingFines.length,
+                        onChanged: (i) => setState(() => _dashSection = i),
+                      ),
+                      const SizedBox(height: 20),
+                      switch (_dashSection) {
+                        1 => _buildMembersSection(),
+                        2 => const _MobilePayConfigCard(),
+                        _ => _buildFineSection(),
+                      },
                     ],
                     const SizedBox(height: 32),
                   ],
@@ -266,53 +275,60 @@ class DashboardTabState extends State<DashboardTab> {
   }
 
   Widget _buildQuickActions() {
+    final tiles = <Widget>[
+      _ActionTile(
+        icon: Icons.add_circle_outline,
+        label: 'Ny begivenhed',
+        hint:  'Enkelt eller serie',
+        onTap: _openCreateTraining,
+      ),
+      _ActionTile(
+        icon: Icons.bar_chart,
+        label: 'Ny afstemning',
+        hint:  'Multi-dato + synergi',
+        onTap: _openCreatePoll,
+      ),
+      if (widget.isFullAdmin)
+        _ActionTile(
+          icon: Icons.gavel,
+          label: 'Lyn-bøde',
+          hint:  'Spiller + type',
+          onTap: () async {
+            final ok = await showDialog<bool>(
+              context: context,
+              builder: (_) => const GiveFineDialog(),
+            );
+            if (ok == true) reloadFines();
+          },
+        ),
+      if (widget.isFullAdmin)
+        _ActionTile(
+          icon: Icons.group_outlined,
+          label: 'Medlemmer',
+          hint:  'Roller & staff',
+          onTap: () => setState(() => _dashSection = 1),
+        ),
+    ];
     return LayoutBuilder(builder: (ctx, constraints) {
-      final wide = constraints.maxWidth > 600;
-      final tiles = <Widget>[
-        _ActionTile(
-          icon: Icons.add_circle_outline,
-          label: 'Opret begivenhed',
-          hint:  'Enkelt eller serie',
-          onTap: _openCreateTraining,
-        ),
-        _ActionTile(
-          icon: Icons.poll_outlined,
-          label: 'Opret afstemning',
-          hint:  'Multi-dato med synergi',
-          onTap: _openCreatePoll,
-        ),
-        if (widget.isFullAdmin)
-          _ActionTile(
-            icon: Icons.gavel,
-            label: 'Uddel lyn-bøde',
-            hint:  'Spiller + type + udfør',
-            onTap: () async {
-              final ok = await showDialog<bool>(
-                context: context,
-                builder: (_) => const GiveFineDialog(),
-              );
-              if (ok == true) reloadFines();
-            },
-          ),
-      ];
-      if (wide) {
-        return Row(
+      // Bredt: alle fliser på én række. Ellers 2 pr. række (2×2-grid).
+      final perRow = constraints.maxWidth > 600 ? tiles.length : 2;
+      const gap = 12.0;
+      final rows = <Widget>[];
+      for (var i = 0; i < tiles.length; i += perRow) {
+        final end = (i + perRow) > tiles.length ? tiles.length : (i + perRow);
+        final chunk = tiles.sublist(i, end);
+        rows.add(Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            for (int i = 0; i < tiles.length; i++) ...[
-              Expanded(child: tiles[i]),
-              if (i != tiles.length - 1) const SizedBox(width: 12),
+            for (var j = 0; j < perRow; j++) ...[
+              Expanded(child: j < chunk.length ? chunk[j] : const SizedBox()),
+              if (j != perRow - 1) const SizedBox(width: gap),
             ],
           ],
-        );
+        ));
+        if (i + perRow < tiles.length) rows.add(const SizedBox(height: gap));
       }
-      return Column(
-        children: [
-          for (int i = 0; i < tiles.length; i++) ...[
-            tiles[i],
-            if (i != tiles.length - 1) const SizedBox(height: 12),
-          ],
-        ],
-      );
+      return Column(children: rows);
     });
   }
 
@@ -854,45 +870,111 @@ class _ActionTile extends StatelessWidget {
   Widget build(BuildContext context) {
     return InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
+      borderRadius: BorderRadius.circular(14),
       child: Container(
-        padding: const EdgeInsets.all(18),
+        padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
           color: _surfaceDark,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: _neon.withValues(alpha: 0.4), width: 1.5),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: _borderSubtle),
         ),
-        child: Row(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
           children: [
             Container(
-              width: 44, height: 44,
+              width: 38, height: 38,
+              alignment: Alignment.center,
               decoration: BoxDecoration(
-                color: _neon.withValues(alpha: 0.15),
-                borderRadius: BorderRadius.circular(8),
+                color: _neon.withValues(alpha: 0.16),
+                borderRadius: BorderRadius.circular(10),
               ),
-              child: Icon(icon, size: 22, color: _neon),
+              child: Icon(icon, size: 20, color: _neon),
             ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(label,
-                      style: const TextStyle(
-                          color: _textPrimary,
-                          fontSize: 15,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: 0.2)),
-                  const SizedBox(height: 2),
-                  Text(hint,
-                      style: const TextStyle(
-                          color: _textSecondary, fontSize: 12)),
-                ],
-              ),
-            ),
-            const Icon(Icons.chevron_right, color: _neon),
+            const SizedBox(height: 12),
+            Text(label,
+                style: _body(
+                    size: 14, weight: FontWeight.w700, spacing: 0.2),
+                maxLines: 1, overflow: TextOverflow.ellipsis),
+            const SizedBox(height: 2),
+            Text(hint,
+                style: _body(size: 11, color: _textSecondary),
+                maxLines: 1, overflow: TextOverflow.ellipsis),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// Sektion-piller til dashboardet: Bøder · Medlemmer · Betaling.
+class _SectionPills extends StatelessWidget {
+  final int active;
+  final int pendingCount;
+  final ValueChanged<int> onChanged;
+  const _SectionPills({
+    required this.active,
+    required this.pendingCount,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    const labels = ['Bøder', 'Medlemmer', 'Betaling'];
+    return Container(
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: _surfaceDark,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: _borderSubtle),
+      ),
+      child: Row(
+        children: [
+          for (var i = 0; i < labels.length; i++)
+            Expanded(
+              child: GestureDetector(
+                onTap: () => onChanged(i),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 180),
+                  height: 38,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: active == i ? _neon : Colors.transparent,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(labels[i],
+                          style: _body(
+                              size: 13,
+                              weight: FontWeight.w700,
+                              color: active == i ? Colors.white : _textSecondary)),
+                      if (i == 0 && pendingCount > 0) ...[
+                        const SizedBox(width: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 6, vertical: 1),
+                          decoration: BoxDecoration(
+                            color: active == 0
+                                ? Colors.white.withValues(alpha: 0.25)
+                                : _gold,
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: Text('$pendingCount',
+                              style: _body(
+                                  size: 10,
+                                  weight: FontWeight.w800,
+                                  color: active == 0 ? Colors.white : _onGold)),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }
@@ -1136,25 +1218,24 @@ class _PendingFinesCard extends StatelessWidget {
           children: [
             Row(
               children: [
-                Icon(Icons.pending_actions, color: Colors.orange.shade700),
+                const Icon(Icons.schedule, color: _gold),
                 const SizedBox(width: 8),
-                Text('Afventende ubetalte bøder',
+                Text('Afventende betalinger',
                     style: theme.textTheme.titleMedium),
                 const Spacer(),
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
                   decoration: BoxDecoration(
                     color: fines.isEmpty
-                        ? theme.colorScheme.surfaceContainerHighest
-                        : Colors.orange.shade100,
-                    borderRadius: BorderRadius.circular(12),
+                        ? _surfaceElevated
+                        : _gold,
+                    borderRadius: BorderRadius.circular(999),
                   ),
                   child: Text('${fines.length}',
-                      style: TextStyle(
-                          color: fines.isEmpty
-                              ? theme.colorScheme.onSurfaceVariant
-                              : Colors.orange.shade900,
-                          fontWeight: FontWeight.bold)),
+                      style: _body(
+                          size: 12,
+                          weight: FontWeight.w800,
+                          color: fines.isEmpty ? _textSecondary : _onGold)),
                 ),
               ],
             ),
@@ -1196,10 +1277,11 @@ class _PendingFinesCard extends StatelessWidget {
                       FilledButton.icon(
                         onPressed: () => onApprove(f['id'] as String),
                         icon: const Icon(Icons.check, size: 16),
-                        label: const Text('Godkend betaling'),
+                        label: const Text('Godkend'),
                         style: FilledButton.styleFrom(
-                          backgroundColor: Colors.green.shade700,
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                          backgroundColor: _success,
+                          foregroundColor: _onSuccess,
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                         ),
                       ),
                     ],

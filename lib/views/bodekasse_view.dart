@@ -32,10 +32,12 @@ class BodekasseTabState extends State<BodekasseTab> {
       setState(() { _loading = true; _error = null; });
     }
     try {
+      // Highscore = flest bøder gennem tiden (total). Skyldigt bruges til
+      // "Du skylder"-callout og ubetalt-markering.
       final rows = await supabase
           .from('fine_leaderboard')
           .select()
-          .order('skyldigt_oere', ascending: false);
+          .order('total_oere', ascending: false);
       final list = List<Map<String, dynamic>>.from(rows as List);
       CacheService.put('leaderboard', list);
       if (!mounted) return;
@@ -59,6 +61,25 @@ class BodekasseTabState extends State<BodekasseTab> {
         isAdmin:  widget.isAdmin,
       ),
     )).then((_) => reload());
+  }
+
+  /// Åbner MobilePay med det skyldige beløb forudfyldt.
+  Future<void> _payWithMobilePay(int oere) async {
+    var box = ClubConfig.cachedBox;
+    box ??= await ClubConfig.fetchMobilePayBox();
+    if (box == null || box.trim().isEmpty || box.trim() == 'VORES_BOX_NUMMER') {
+      if (mounted) {
+        _snack(context,
+            'MobilePay er ikke sat op endnu — en admin kan indtaste Box-ID under Dashboard.',
+            _gold);
+      }
+      return;
+    }
+    final uri = Uri.parse(mobilePayLinkFor(box, oere));
+    final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!ok && mounted) {
+      _snack(context, 'Kunne ikke åbne MobilePay', _danger);
+    }
   }
 
   @override
@@ -138,13 +159,34 @@ class BodekasseTabState extends State<BodekasseTab> {
                       padding: EdgeInsets.all(32),
                       child: Center(child: Text('Ingen profiler endnu')),
                     )
-                  else
+                  else ...[
+                    _Podium(
+                      rows: _rows.take(3).toList(),
+                      currentUserId: widget.currentUserId,
+                    ),
+                    const SizedBox(height: 20),
+                    Builder(builder: (context) {
+                      final myRow = _rows.cast<Map<String, dynamic>?>().firstWhere(
+                          (r) => r!['id'] == widget.currentUserId,
+                          orElse: () => null);
+                      final mySkyldigt =
+                          myRow == null ? 0 : (myRow['skyldigt_oere'] as num).toInt();
+                      if (mySkyldigt <= 0) return const SizedBox.shrink();
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 20),
+                        child: _DuSkylderCallout(
+                          oere: mySkyldigt,
+                          onPay: () => _payWithMobilePay(mySkyldigt),
+                        ),
+                      );
+                    }),
                     ..._rows.asMap().entries.map((e) => _LeaderboardRow(
                           rank: e.key + 1,
                           row: e.value,
                           isOwn: e.value['id'] == widget.currentUserId,
                           onTap: () => _open(e.value),
                         )),
+                  ],
                 ],
               ),
             ),
@@ -155,6 +197,173 @@ class BodekasseTabState extends State<BodekasseTab> {
   }
 }
 
+/// Podium (top 3) — #1 i midten, højere og i accent; #2 og #3 lavere.
+class _Podium extends StatelessWidget {
+  final List<Map<String, dynamic>> rows;
+  final String currentUserId;
+  const _Podium({required this.rows, required this.currentUserId});
+
+  @override
+  Widget build(BuildContext context) {
+    Map<String, dynamic>? at(int i) => i < rows.length ? rows[i] : null;
+    // Rækkefølge: #2 · #1 · #3
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        Expanded(child: _PodiumSpot(row: at(1), rank: 2, currentUserId: currentUserId)),
+        const SizedBox(width: 8),
+        Expanded(child: _PodiumSpot(row: at(0), rank: 1, currentUserId: currentUserId)),
+        const SizedBox(width: 8),
+        Expanded(child: _PodiumSpot(row: at(2), rank: 3, currentUserId: currentUserId)),
+      ],
+    );
+  }
+}
+
+class _PodiumSpot extends StatelessWidget {
+  final Map<String, dynamic>? row;
+  final int rank;
+  final String currentUserId;
+  const _PodiumSpot({
+    required this.row,
+    required this.rank,
+    required this.currentUserId,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final isFirst = rank == 1;
+    final avatarSize = isFirst ? 56.0 : 46.0;
+    final pedestalH  = isFirst ? 60.0 : (rank == 2 ? 44.0 : 32.0);
+    final navn  = row?['navn'] as String? ?? '—';
+    final total = row == null ? 0 : (row!['total_oere'] as num).toInt();
+    final isMe  = row != null && row!['id'] == currentUserId;
+    final empty = row == null;
+
+    final avatarColor = empty
+        ? _surfaceElevated
+        : (isFirst ? _neon : _surfaceElevated);
+    final initial = navn.trim().isEmpty || empty
+        ? '–'
+        : navn.trim().substring(0, 1).toUpperCase();
+
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.end,
+      children: [
+        if (isFirst)
+          const Padding(
+            padding: EdgeInsets.only(bottom: 2),
+            child: Text('👑', style: TextStyle(fontSize: 20)),
+          ),
+        Container(
+          width: avatarSize,
+          height: avatarSize,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: avatarColor,
+            shape: BoxShape.circle,
+            border: Border.all(
+              color: isFirst ? _neon : _borderSubtle,
+              width: isFirst ? 3 : 1,
+            ),
+            boxShadow: isFirst
+                ? [BoxShadow(color: _neon.withValues(alpha: 0.4), blurRadius: 16)]
+                : null,
+          ),
+          child: Text(initial,
+              style: _cond(
+                  size: avatarSize * 0.4,
+                  weight: FontWeight.w800,
+                  color: isFirst ? Colors.white : _textSecondary)),
+        ),
+        const SizedBox(height: 8),
+        Text(isMe ? '$navn · Dig' : navn,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+            style: _body(
+                size: 12,
+                weight: FontWeight.w600,
+                color: empty ? _textMuted : _textPrimary)),
+        const SizedBox(height: 2),
+        Text('$rank',
+            style: _body(size: 11, color: _textMuted)),
+        const SizedBox(height: 6),
+        Container(
+          width: double.infinity,
+          height: pedestalH,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: isFirst
+                ? _neon.withValues(alpha: 0.16)
+                : _surfaceDark,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
+            border: Border.all(
+                color: isFirst ? _neon.withValues(alpha: 0.4) : _borderSubtle),
+          ),
+          child: Text(_fmtKr(total),
+              style: _cond(
+                  size: isFirst ? 20 : 16,
+                  weight: FontWeight.w800,
+                  color: empty ? _textMuted : (isFirst ? _neon : _textPrimary))),
+        ),
+      ],
+    );
+  }
+}
+
+/// "Du skylder"-callout — rød-tonet kort med MobilePay-betaling.
+class _DuSkylderCallout extends StatelessWidget {
+  final int oere;
+  final VoidCallback onPay;
+  const _DuSkylderCallout({required this.oere, required this.onPay});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: _danger.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: _danger.withValues(alpha: 0.5)),
+      ),
+      child: Wrap(
+        alignment: WrapAlignment.spaceBetween,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        runSpacing: 12,
+        spacing: 12,
+        children: [
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('DU SKYLDER',
+                  style: _body(
+                      size: 11,
+                      weight: FontWeight.w700,
+                      spacing: 1.2,
+                      color: _danger)),
+              const SizedBox(height: 2),
+              Text(_fmtKr(oere),
+                  style: _cond(size: 22, weight: FontWeight.w800, color: _danger)),
+            ],
+          ),
+          FilledButton.icon(
+            onPressed: onPay,
+            icon: const Icon(Icons.account_balance_wallet_outlined, size: 18),
+            label: const Text('Betal med MobilePay'),
+            style: FilledButton.styleFrom(
+              backgroundColor: _success,
+              foregroundColor: _onSuccess,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Rangliste-række — rang-badge (guld/sølv) + navn + ubetalt + total.
 class _LeaderboardRow extends StatelessWidget {
   final int rank;
   final Map<String, dynamic> row;
@@ -170,158 +379,85 @@ class _LeaderboardRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final navn       = row['navn']         as String;
-    final skyldigt   = (row['skyldigt_oere'] as num).toInt();
-    final betalt     = (row['betalt_oere']   as num).toInt();
-    final total      = (row['total_oere']    as num).toInt();
-    final ubetalteN  = (row['ubetalte_antal'] as num).toInt();
+    final navn      = row['navn']          as String;
+    final total     = (row['total_oere']    as num).toInt();
+    final ubetalteN = (row['ubetalte_antal'] as num).toInt();
 
     final (rankBg, rankFg) = switch (rank) {
-      1 => (Colors.amber.shade700, Colors.white),
-      2 => (Colors.grey.shade400,  Colors.white),
-      3 => (Colors.brown.shade400, Colors.white),
-      _ => (theme.colorScheme.surfaceContainerHighest,
-            theme.colorScheme.onSurfaceVariant),
+      1 => (_gold,   _onGold),
+      2 => (_silver, _bgBlack),
+      3 => (const Color(0xFFB07B4F), Colors.white),
+      _ => (_surfaceElevated, _textSecondary),
     };
-
-    final stats = Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        _StatColumn(
-          label: 'Skyldigt',
-          value: _fmtKr(skyldigt),
-          color: skyldigt > 0 ? Colors.red.shade700 : Colors.grey,
-          bold: skyldigt > 0,
-        ),
-        const SizedBox(width: 8),
-        _StatColumn(
-          label: 'Betalt',
-          value: _fmtKr(betalt),
-          color: Colors.green.shade700,
-        ),
-        const SizedBox(width: 8),
-        _StatColumn(
-          label: 'Total',
-          value: _fmtKr(total),
-          color: theme.colorScheme.onSurfaceVariant,
-        ),
-      ],
-    );
-
-    final nameBlock = Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Row(
-          children: [
-            Flexible(
-              child: Text(navn,
-                  style: theme.textTheme.titleMedium,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis),
-            ),
-            if (isOwn) ...[
-              const SizedBox(width: 6),
-              Chip(
-                label: const Text('Mig', style: TextStyle(fontSize: 10)),
-                visualDensity: VisualDensity.compact,
-                backgroundColor: theme.colorScheme.primaryContainer,
-                side: BorderSide.none,
-              ),
-            ],
-          ],
-        ),
-        if (ubetalteN > 0)
-          Text('$ubetalteN ubetalt${ubetalteN == 1 ? "" : "e"}',
-              style: theme.textTheme.bodySmall?.copyWith(
-                  color: Colors.red.shade700,
-                  fontWeight: FontWeight.w600)),
-      ],
-    );
 
     return Card(
       margin: const EdgeInsets.only(bottom: 10),
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(16),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-          child: LayoutBuilder(builder: (ctx, constraints) {
-            // Under ~480 px stables stats lodret under navnet — pænere på mobil
-            final compact = constraints.maxWidth < 480;
-            final rankCircle = Container(
-              width: 36, height: 36,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(color: rankBg, shape: BoxShape.circle),
-              child: Text('$rank',
-                  style: TextStyle(color: rankFg,
-                      fontSize: 16, fontWeight: FontWeight.bold)),
-            );
-            if (compact) {
-              return Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  rankCircle,
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          child: Row(
+            children: [
+              Container(
+                width: 34, height: 34,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(color: rankBg, shape: BoxShape.circle),
+                child: Text('$rank',
+                    style: _cond(size: 17, weight: FontWeight.w800, color: rankFg)),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
                       children: [
-                        nameBlock,
-                        const SizedBox(height: 8),
-                        SingleChildScrollView(
-                          scrollDirection: Axis.horizontal,
-                          child: stats,
+                        Flexible(
+                          child: Text(navn,
+                              style: theme.textTheme.titleMedium,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis),
                         ),
+                        if (isOwn) ...[
+                          const SizedBox(width: 6),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: _neon.withValues(alpha: 0.16),
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                            child: Text('DIG',
+                                style: _body(
+                                    size: 9,
+                                    weight: FontWeight.w700,
+                                    spacing: 0.6,
+                                    color: _neon)),
+                          ),
+                        ],
                       ],
                     ),
-                  ),
+                    if (ubetalteN > 0)
+                      Text('$ubetalteN ubetalt${ubetalteN == 1 ? "" : "e"}',
+                          style: _body(
+                              size: 12, weight: FontWeight.w600, color: _danger)),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(_fmtKr(total),
+                      style: _cond(size: 18, weight: FontWeight.w800)),
+                  Text('total', style: _body(size: 11, color: _textMuted)),
                 ],
-              );
-            }
-            return Row(
-              children: [
-                rankCircle,
-                const SizedBox(width: 14),
-                Expanded(flex: 3, child: nameBlock),
-                const SizedBox(width: 8),
-                stats,
-              ],
-            );
-          }),
+              ),
+            ],
+          ),
         ),
-      ),
-    );
-  }
-}
-
-class _StatColumn extends StatelessWidget {
-  final String label;
-  final String value;
-  final Color color;
-  final bool bold;
-  const _StatColumn({
-    required this.label,
-    required this.value,
-    required this.color,
-    this.bold = false,
-  });
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return SizedBox(
-      width: 78,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          Text(label, style: theme.textTheme.bodySmall?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant)),
-          Text(value, style: TextStyle(
-              color: color,
-              fontWeight: bold ? FontWeight.bold : FontWeight.w600,
-              fontSize: 14)),
-        ],
       ),
     );
   }
@@ -488,8 +624,8 @@ class _FineHistoryScreenState extends State<FineHistoryScreen> {
                                       Icons.account_balance_wallet_outlined),
                                   label: const Text('Betal med MobilePay'),
                                   style: FilledButton.styleFrom(
-                                    backgroundColor: const Color(0xFF0055FF),
-                                    foregroundColor: Colors.white,
+                                    backgroundColor: _success,
+                                    foregroundColor: _onSuccess,
                                     padding: const EdgeInsets.symmetric(
                                         vertical: 16),
                                     textStyle: const TextStyle(

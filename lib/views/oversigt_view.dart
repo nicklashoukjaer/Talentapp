@@ -383,21 +383,6 @@ class _OversigtTabState extends State<OversigtTab> {
                             ],
                           ),
                         ),
-                        if (showingTrainings)
-                          IconButton(
-                            onPressed: () {
-                              final show = !_showHistory;
-                              setState(() => _showHistory = show);
-                              if (show && !_historyLoaded) {
-                                _historyLoaded = true;
-                                reload(includeHistory: true);
-                              }
-                            },
-                            icon: Icon(
-                                _showHistory ? Icons.history : Icons.history_outlined,
-                                color: _showHistory ? _neon : _textSecondary),
-                            tooltip: _showHistory ? 'Vis aktive' : 'Historik',
-                          ),
                         IconButton(
                           onPressed: reload,
                           icon: const Icon(Icons.refresh),
@@ -406,6 +391,21 @@ class _OversigtTabState extends State<OversigtTab> {
                       ],
                     ),
                   ),
+                  // Kommende / Historik — pille-toggle (kun på AKTIVITETER)
+                  if (showingTrainings)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 14),
+                      child: _KommendeHistorikToggle(
+                        showHistory: _showHistory,
+                        onChanged: (show) {
+                          setState(() => _showHistory = show);
+                          if (show && !_historyLoaded) {
+                            _historyLoaded = true;
+                            reload(includeHistory: true);
+                          }
+                        },
+                      ),
+                    ),
                   // Segmented switch [AKTIVITETER] / [AFSTEMNINGER]
                   Padding(
                     padding: const EdgeInsets.only(bottom: 12),
@@ -512,11 +512,45 @@ class _OversigtTabState extends State<OversigtTab> {
                         ],
                       ),
                     )
-                  else
-                    ...visible.map((item) => Padding(
+                  else ...[
+                    // Sæson-oversigtskort øverst i Historik-visningen
+                    if (showingTrainings && _showHistory)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 14),
+                        child: _SeasonSummaryCard(
+                          trainings: visible.cast<_TrainingFeedItem>(),
+                        ),
+                      ),
+                    // Web/bred skærm: sæson-matrix (spiller × dato)
+                    if (showingTrainings && _showHistory &&
+                        MediaQuery.of(context).size.width >= 700)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 14),
+                        child: _SeasonMatrix(
+                          trainings: visible.cast<_TrainingFeedItem>(),
+                        ),
+                      ),
+                    // "Næste på programmet"-hero — kun den næste kommende aktivitet
+                    if (showingTrainings && !_showHistory)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 14),
+                        child: _NextUpHero(
+                          item: visible.first as _TrainingFeedItem,
+                          isAdmin: widget.isAdmin,
+                          onSignUp:  () => _signUp(visible.first as _TrainingFeedItem),
+                          onDecline: () => _decline(visible.first as _TrainingFeedItem),
+                        ),
+                      ),
+                    // På bred skærm i historik erstattes kort-listen af matrixen
+                    if (!(showingTrainings && _showHistory &&
+                        MediaQuery.of(context).size.width >= 700))
+                      ...(showingTrainings && !_showHistory ? visible.skip(1) : visible)
+                          .map((item) => Padding(
                       padding: const EdgeInsets.only(bottom: 14),
                       child: switch (item) {
-                        _TrainingFeedItem t => _FeedTrainingCard(
+                        _TrainingFeedItem t => (showingTrainings && _showHistory)
+                            ? _HistoryTrainingCard(item: t)
+                            : _FeedTrainingCard(
                           item: t,
                           isAdmin: widget.isAdmin,
                           onSignUp:  () => _signUp(t),
@@ -545,6 +579,7 @@ class _OversigtTabState extends State<OversigtTab> {
                         ),
                       },
                     )),
+                  ],
                 ],
               ),
             ),
@@ -685,14 +720,14 @@ class _FeedTrainingCardState extends State<_FeedTrainingCard> {
                   final wide = constraints.maxWidth >= 320;
                   final tilmeldBtn = _ActionStatusButton(
                     label: 'TILMELD',
-                    color: const Color(0xFF22C55E),
+                    color: _success,
                     icon: Icons.check,
                     active: status == 'tilmeldt' || status == 'venteliste',
                     onPressed: canSignUp ? widget.onSignUp : null,
                   );
                   final afbudBtn = _ActionStatusButton(
                     label: 'AFBUD',
-                    color: const Color(0xFFEF4444),
+                    color: _danger,
                     icon: Icons.block,
                     active: status == 'afmeldt',
                     onPressed: canSignUp ? widget.onDecline : null,
@@ -1355,6 +1390,600 @@ class _MiniVoteBtn extends StatelessWidget {
         ),
         child: Text(label),
       ),
+    );
+  }
+}
+
+// ─── Redesign-widgets: pille-toggle, hero, sæson-historik ───────────────────
+
+/// "Om X dage"-tekst ud fra kalenderdage til start.
+String _omDage(DateTime start) {
+  final now = DateTime.now();
+  final today   = DateTime(now.year, now.month, now.day);
+  final dayOf   = DateTime(start.year, start.month, start.day);
+  final days    = dayOf.difference(today).inDays;
+  if (days < 0)  return 'Afholdt';
+  if (days == 0) return start.isAfter(now) ? 'I dag' : 'I gang';
+  if (days == 1) return 'I morgen';
+  if (days < 7)  return 'Om $days dage';
+  if (days < 14) return 'Om 1 uge';
+  return 'Om ${(days / 7).round()} uger';
+}
+
+/// Sæson-label ("2025/26") ud fra en dato — sæsonen starter i juli.
+String _saeson(DateTime d) {
+  final startYear = d.month >= 7 ? d.year : d.year - 1;
+  final endShort  = ((startYear + 1) % 100).toString().padLeft(2, '0');
+  return '$startYear/$endShort';
+}
+
+/// Initial-avatar (cirkel med forbogstav). [attended]=false → afbud-styling.
+class _InitialAvatar extends StatelessWidget {
+  final String navn;
+  final double size;
+  final bool attended;
+  const _InitialAvatar({
+    required this.navn,
+    this.size = 28,
+    this.attended = true,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final initial = navn.trim().isEmpty ? '?' : navn.trim().substring(0, 1).toUpperCase();
+    return Container(
+      width: size,
+      height: size,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: attended ? _neon : _surfaceElevated,
+        shape: BoxShape.circle,
+        border: attended
+            ? Border.all(color: _bgBlack, width: 2)
+            : Border.all(color: _danger.withValues(alpha: 0.5), width: 1),
+      ),
+      child: Text(
+        initial,
+        style: _cond(
+          size: size * 0.42,
+          weight: FontWeight.w800,
+          color: attended ? Colors.white : _textMuted,
+        ),
+      ),
+    );
+  }
+}
+
+/// Overlappende avatar-række (26–28px, -8px overlap).
+class _AvatarStack extends StatelessWidget {
+  final List<String> names;
+  final double size;
+  final int maxShown;
+  const _AvatarStack({required this.names, this.size = 26, this.maxShown = 5});
+
+  @override
+  Widget build(BuildContext context) {
+    if (names.isEmpty) return const SizedBox.shrink();
+    final shown = names.take(maxShown).toList();
+    final step  = size - 8;
+    final width = shown.length == 1
+        ? size
+        : size + (shown.length - 1) * step;
+    return SizedBox(
+      height: size,
+      width: width,
+      child: Stack(
+        children: [
+          for (var i = 0; i < shown.length; i++)
+            Positioned(
+              left: i * step,
+              child: _InitialAvatar(navn: shown[i], size: size),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Kommende / Historik — pille-toggle.
+class _KommendeHistorikToggle extends StatelessWidget {
+  final bool showHistory;
+  final ValueChanged<bool> onChanged;
+  const _KommendeHistorikToggle({
+    required this.showHistory,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    Widget seg(String label, bool isHistory) {
+      final active = showHistory == isHistory;
+      return Expanded(
+        child: GestureDetector(
+          onTap: () => onChanged(isHistory),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 180),
+            height: 40,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: active ? _neon : Colors.transparent,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Text(
+              label,
+              style: _body(
+                size: 13,
+                weight: FontWeight.w700,
+                spacing: 0.3,
+                color: active ? Colors.white : _textSecondary,
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: _surfaceDark,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: _borderSubtle),
+      ),
+      child: Row(children: [seg('Kommende', false), seg('Historik', true)]),
+    );
+  }
+}
+
+/// "Næste på programmet"-hero — den næste kommende aktivitet, fremhævet.
+class _NextUpHero extends StatelessWidget {
+  final _TrainingFeedItem item;
+  final bool isAdmin;
+  final VoidCallback onSignUp;
+  final VoidCallback onDecline;
+  const _NextUpHero({
+    required this.item,
+    required this.isAdmin,
+    required this.onSignUp,
+    required this.onDecline,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final t        = item.training;
+    final start    = DateTime.parse(t['start_tid'] as String).toLocal();
+    final slut     = DateTime.parse(t['slut_tid'] as String).toLocal();
+    final deadline = DateTime.parse(t['tilmeldings_deadline'] as String).toLocal();
+    final adresse  = t['adresse'] as String;
+    final titel    = t['titel'] as String;
+    final max      = t['max_deltagere'] as int?;
+    final cnt      = item.signedUpCount;
+    final status   = item.myStatus;
+    final hasAddr  = adresse.isNotEmpty && adresse != _addressUnspecified;
+    final deadlinePassed = DateTime.now().isAfter(deadline);
+    final canSignUp = !deadlinePassed || isAdmin;
+    final names = item.tilmeldte.map((p) => p.navn).toList();
+
+    return Container(
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [_surfaceElevated, _surfaceDark],
+        ),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: _neon.withValues(alpha: 0.35), width: 1.5),
+      ),
+      padding: const EdgeInsets.all(18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Text('NÆSTE PÅ PROGRAMMET',
+                    style: _body(
+                        size: 11,
+                        weight: FontWeight.w700,
+                        spacing: 1.4,
+                        color: _neon)),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: _neon,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Text(_omDage(start),
+                    style: _body(
+                        size: 12, weight: FontWeight.w700, color: Colors.white)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(titel.toUpperCase(), style: theme.textTheme.titleLarge),
+          const SizedBox(height: 8),
+          Row(children: [
+            const Icon(Icons.schedule, size: 15, color: _textSecondary),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text('${_fmtDateTime(start)} – ${_fmtTime(slut)}',
+                  style: theme.textTheme.bodyMedium
+                      ?.copyWith(color: _textSecondary)),
+            ),
+          ]),
+          if (hasAddr) ...[
+            const SizedBox(height: 4),
+            Row(children: [
+              const Icon(Icons.place_outlined, size: 15, color: _textSecondary),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(adresse,
+                    style: theme.textTheme.bodyMedium
+                        ?.copyWith(color: _textSecondary),
+                    overflow: TextOverflow.ellipsis),
+              ),
+            ]),
+          ],
+          const SizedBox(height: 14),
+          Row(children: [
+            if (names.isNotEmpty) ...[
+              _AvatarStack(names: names),
+              const SizedBox(width: 10),
+            ],
+            Text(
+              max == null ? '$cnt tilmeldt' : '$cnt af $max tilmeldt',
+              style: _body(size: 13, weight: FontWeight.w600, color: _textSecondary),
+            ),
+          ]),
+          const SizedBox(height: 14),
+          Row(children: [
+            Expanded(
+              child: _ActionStatusButton(
+                label: 'TILMELD',
+                color: _success,
+                icon: Icons.check,
+                active: status == 'tilmeldt' || status == 'venteliste',
+                onPressed: canSignUp ? onSignUp : null,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: _ActionStatusButton(
+                label: 'AFBUD',
+                color: _danger,
+                icon: Icons.block,
+                active: status == 'afmeldt',
+                onPressed: canSignUp ? onDecline : null,
+              ),
+            ),
+          ]),
+        ],
+      ),
+    );
+  }
+}
+
+/// Sæson-oversigtskort (vises øverst i Historik) — din deltagelse.
+class _SeasonSummaryCard extends StatelessWidget {
+  final List<_TrainingFeedItem> trainings;
+  const _SeasonSummaryCard({required this.trainings});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final total    = trainings.length;
+    final attended = trainings.where((t) => t.myStatus == 'tilmeldt').length;
+    final pct      = total == 0 ? 0.0 : attended / total;
+    final pctText  = '${(pct * 100).round()}%';
+    final saeson   = trainings.isEmpty
+        ? _saeson(DateTime.now())
+        : _saeson(trainings
+            .map((t) => DateTime.parse(t.training['start_tid'] as String))
+            .reduce((a, b) => a.isAfter(b) ? a : b));
+
+    return Container(
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [_surfaceElevated, _surfaceDark],
+        ),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: _borderSubtle),
+      ),
+      padding: const EdgeInsets.all(18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Text('SÆSON $saeson',
+                    style: theme.textTheme.titleLarge),
+              ),
+              Text('$total træninger',
+                  style: _body(size: 13, color: _textSecondary)),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Row(children: [
+            Expanded(
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(999),
+                child: LinearProgressIndicator(
+                  value: pct,
+                  minHeight: 8,
+                  backgroundColor: _surfaceElevated,
+                  valueColor: const AlwaysStoppedAnimation(_success),
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Text(pctText,
+                style: _cond(size: 20, weight: FontWeight.w800, color: _success)),
+          ]),
+          const SizedBox(height: 10),
+          Text('Din deltagelse · $attended af $total',
+              style: _body(size: 13, color: _textSecondary)),
+        ],
+      ),
+    );
+  }
+}
+
+/// Afholdt træning i historikken — dato-blok + fremmøde + deltager-avatarer.
+class _HistoryTrainingCard extends StatelessWidget {
+  final _TrainingFeedItem item;
+  const _HistoryTrainingCard({required this.item});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final t      = item.training;
+    final start  = DateTime.parse(t['start_tid'] as String).toLocal();
+    final titel  = t['titel'] as String;
+    final max    = t['max_deltagere'] as int?;
+    final attended = item.tilmeldte.length;
+    final full   = max != null && attended >= max;
+    const months = ['JAN','FEB','MAR','APR','MAJ','JUN','JUL','AUG','SEP','OKT','NOV','DEC'];
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(children: [
+              // Dato-blok
+              Container(
+                width: 52,
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                decoration: BoxDecoration(
+                  color: _surfaceElevated,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Column(children: [
+                  Text('${start.day}',
+                      style: _cond(size: 22, weight: FontWeight.w800, color: _neon)),
+                  Text(months[start.month - 1],
+                      style: _body(size: 10, weight: FontWeight.w600, spacing: 0.5, color: _textSecondary)),
+                ]),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(titel.toUpperCase(),
+                        style: theme.textTheme.titleMedium,
+                        maxLines: 1, overflow: TextOverflow.ellipsis),
+                    const SizedBox(height: 3),
+                    Text(
+                      max == null ? '$attended deltog' : '$attended af $max deltog',
+                      style: _body(
+                        size: 13,
+                        weight: FontWeight.w600,
+                        color: full ? _success : _textSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ]),
+            if (item.tilmeldte.isNotEmpty || item.afmeldte.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: [
+                  for (final p in item.tilmeldte)
+                    _InitialAvatar(navn: p.navn, size: 28, attended: true),
+                  for (final p in item.afmeldte)
+                    _InitialAvatar(navn: p.navn, size: 28, attended: false),
+                ],
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Sæson-matrix (web) — spiller × dato med deltager-status.
+class _SeasonMatrix extends StatelessWidget {
+  final List<_TrainingFeedItem> trainings;
+  const _SeasonMatrix({required this.trainings});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    // Kolonner = træninger sorteret ældst→nyest
+    final cols = [...trainings]
+      ..sort((a, b) => DateTime.parse(a.training['start_tid'] as String)
+          .compareTo(DateTime.parse(b.training['start_tid'] as String)));
+
+    // Spillere (efter navn) → status pr. kolonne: 'deltog' | 'afbud' | 'intet'
+    final status = <String, Map<int, String>>{};
+    for (var c = 0; c < cols.length; c++) {
+      for (final p in cols[c].tilmeldte) {
+        (status[p.navn] ??= {})[c] = 'deltog';
+      }
+      for (final p in cols[c].afmeldte) {
+        (status[p.navn] ??= {})[c] = 'afbud';
+      }
+    }
+    final players = status.keys.toList()..sort();
+
+    String two(int n) => n.toString().padLeft(2, '0');
+    String colLabel(int c) {
+      final d = DateTime.parse(cols[c].training['start_tid'] as String).toLocal();
+      return '${two(d.day)}.${two(d.month)}';
+    }
+
+    const nameW = 130.0;
+    const cellW = 46.0;
+    const totalW = 54.0;
+
+    Widget cell(String? s) {
+      final (bg, fg, glyph) = switch (s) {
+        'deltog' => (_success.withValues(alpha: 0.16), _success, '✓'),
+        'afbud'  => (_danger.withValues(alpha: 0.16), _danger, '✕'),
+        _        => (_surfaceElevated, _textMuted, '–'),
+      };
+      return SizedBox(
+        width: cellW,
+        child: Center(
+          child: Container(
+            width: 24, height: 24,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(color: bg, shape: BoxShape.circle),
+            child: Text(glyph, style: _body(size: 13, weight: FontWeight.w700, color: fg)),
+          ),
+        ),
+      );
+    }
+
+    Widget headerRow() => Row(
+          children: [
+            SizedBox(
+                width: nameW,
+                child: Text('SPILLER',
+                    style: _body(size: 11, weight: FontWeight.w700, spacing: 0.8, color: _textSecondary))),
+            for (var c = 0; c < cols.length; c++)
+              SizedBox(
+                  width: cellW,
+                  child: Center(
+                      child: Text(colLabel(c),
+                          style: _body(size: 11, weight: FontWeight.w600, color: _textSecondary)))),
+            SizedBox(
+                width: totalW,
+                child: Center(
+                    child: Text('I ALT',
+                        style: _body(size: 11, weight: FontWeight.w700, spacing: 0.6, color: _textSecondary)))),
+          ],
+        );
+
+    Widget playerRow(String navn) {
+      final s = status[navn] ?? const {};
+      final deltog = s.values.where((v) => v == 'deltog').length;
+      return Container(
+        decoration: const BoxDecoration(
+          border: Border(top: BorderSide(color: _borderSubtle)),
+        ),
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Row(
+          children: [
+            SizedBox(
+              width: nameW,
+              child: Row(children: [
+                _InitialAvatar(navn: navn, size: 26),
+                const SizedBox(width: 8),
+                Expanded(
+                    child: Text(navn,
+                        maxLines: 1, overflow: TextOverflow.ellipsis,
+                        style: _body(size: 13, weight: FontWeight.w600))),
+              ]),
+            ),
+            for (var c = 0; c < cols.length; c++) cell(s[c]),
+            SizedBox(
+                width: totalW,
+                child: Center(
+                    child: Text('$deltog/${cols.length}',
+                        style: _cond(size: 15, weight: FontWeight.w800)))),
+          ],
+        ),
+      );
+    }
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('SÆSON-HISTORIK', style: theme.textTheme.titleMedium),
+            const SizedBox(height: 12),
+            if (players.isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                child: Text('Ingen registreret deltagelse endnu',
+                    style: theme.textTheme.bodySmall),
+              )
+            else
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    headerRow(),
+                    for (final navn in players) playerRow(navn),
+                  ],
+                ),
+              ),
+            const SizedBox(height: 14),
+            // Legende
+            Wrap(
+              spacing: 16,
+              runSpacing: 6,
+              children: const [
+                _MatrixLegend(color: _success, glyph: '✓', label: 'Deltog'),
+                _MatrixLegend(color: _danger, glyph: '✕', label: 'Afbud'),
+                _MatrixLegend(color: _textMuted, glyph: '–', label: 'Intet svar'),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _MatrixLegend extends StatelessWidget {
+  final Color color;
+  final String glyph;
+  final String label;
+  const _MatrixLegend({required this.color, required this.glyph, required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 20, height: 20,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.16), shape: BoxShape.circle),
+          child: Text(glyph, style: _body(size: 11, weight: FontWeight.w700, color: color)),
+        ),
+        const SizedBox(width: 6),
+        Text(label, style: _body(size: 12, color: _textSecondary)),
+      ],
     );
   }
 }

@@ -52,7 +52,7 @@ class _AfstemningerTabState extends State<AfstemningerTab> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.how_to_vote_outlined, size: 64, color: Colors.grey.shade400),
+              const Icon(Icons.how_to_vote_outlined, size: 64, color: _textMuted),
               const SizedBox(height: 16),
               const Text('Ingen aktive afstemninger'),
             ],
@@ -60,39 +60,103 @@ class _AfstemningerTabState extends State<AfstemningerTab> {
         ),
       );
     }
+    final theme = Theme.of(context);
     return RefreshIndicator(
       onRefresh: _load,
-      child: ListView.builder(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
-        itemCount: _polls.length,
-        itemBuilder: (_, i) {
-          final p = _polls[i];
-          final lukket = p['lukket_at'] != null &&
-              DateTime.parse(p['lukket_at'] as String).isBefore(DateTime.now());
-          final beskr = p['beskrivelse'] as String?;
-          return Center(
+      child: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          Center(
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 700),
-              child: Card(
-                margin: const EdgeInsets.only(bottom: 12),
-                child: ListTile(
-                  leading: Icon(
-                    lukket ? Icons.lock_outline : Icons.how_to_vote,
-                    color: lukket ? Colors.grey : Colors.teal,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 16, left: 4, top: 4),
+                    child: Row(children: [
+                      Container(
+                        width: 4, height: 32,
+                        decoration: const BoxDecoration(
+                          color: _neon,
+                          borderRadius: BorderRadius.all(Radius.circular(2)),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Text('AFSTEMNINGER', style: theme.textTheme.headlineSmall),
+                    ]),
                   ),
-                  title: Text(p['titel'] as String),
-                  subtitle: Text(
-                    beskr != null && beskr.isNotEmpty
-                        ? beskr
-                        : (lukket ? 'Afsluttet' : 'Klik for at stemme'),
-                  ),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () => _open(p),
-                ),
+                  ..._polls.map((p) {
+                    final lukket = p['lukket_at'] != null &&
+                        DateTime.parse(p['lukket_at'] as String).isBefore(DateTime.now());
+                    final beskr = p['beskrivelse'] as String?;
+                    final lukkeInfo = () {
+                      if (p['lukket_at'] == null) return 'Åben';
+                      final l = DateTime.parse(p['lukket_at'] as String);
+                      if (lukket) return 'Afsluttet · du stemte';
+                      return 'Lukker ${_omDage(l).toLowerCase()}';
+                    }();
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: Opacity(
+                        opacity: lukket ? 0.75 : 1,
+                        child: Card(
+                          child: InkWell(
+                            borderRadius: BorderRadius.circular(16),
+                            onTap: () => _open(p),
+                            child: Padding(
+                              padding: const EdgeInsets.all(16),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(children: [
+                                    if (lukket)
+                                      const Icon(Icons.check_circle,
+                                          size: 18, color: _success)
+                                    else
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 9, vertical: 3),
+                                        decoration: BoxDecoration(
+                                          color: _neon.withValues(alpha: 0.16),
+                                          borderRadius: BorderRadius.circular(999),
+                                        ),
+                                        child: Text('ÅBEN',
+                                            style: _body(
+                                                size: 10,
+                                                weight: FontWeight.w700,
+                                                spacing: 1,
+                                                color: _neon)),
+                                      ),
+                                    const Spacer(),
+                                    Text(lukkeInfo,
+                                        style: _body(size: 12, color: _textSecondary)),
+                                    const SizedBox(width: 6),
+                                    const Icon(Icons.chevron_right,
+                                        size: 20, color: _textMuted),
+                                  ]),
+                                  const SizedBox(height: 10),
+                                  Text(p['titel'] as String,
+                                      style: theme.textTheme.titleLarge),
+                                  if (beskr != null && beskr.isNotEmpty) ...[
+                                    const SizedBox(height: 4),
+                                    Text(beskr,
+                                        style: theme.textTheme.bodyMedium
+                                            ?.copyWith(color: _textSecondary)),
+                                  ],
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    );
+                  }),
+                ],
               ),
             ),
-          );
-        },
+          ),
+        ],
       ),
     );
   }
@@ -108,8 +172,13 @@ class PollDetailScreen extends StatefulWidget {
 class _PollDetailScreenState extends State<PollDetailScreen> {
   List<Map<String, dynamic>> _options = const [];
   Map<String, bool> _myVotes = {};
+  Map<String, int> _yesCounts = {}; // option_id → antal "kan" (svar=true)
   bool _loading = true;
   String? _error;
+
+  bool get _lukket =>
+      widget.poll['lukket_at'] != null &&
+      DateTime.parse(widget.poll['lukket_at'] as String).isBefore(DateTime.now());
 
   @override
   void initState() {
@@ -130,23 +199,28 @@ class _PollDetailScreenState extends State<PollDetailScreen> {
       final optList = List<Map<String, dynamic>>.from(options as List);
       final optIds  = optList.map((o) => o['id'] as String).toList();
 
-      final responses = optIds.isEmpty
+      // Alle svar (til resultat-bjælker) — ikke kun mine.
+      final allResponses = optIds.isEmpty
           ? const <Map<String, dynamic>>[]
           : List<Map<String, dynamic>>.from(await supabase
               .from('poll_responses')
-              .select('poll_option_id, svar')
-              .eq('user_id', userId)
+              .select('poll_option_id, user_id, svar')
               .inFilter('poll_option_id', optIds) as List);
 
-      final votes = <String, bool>{
-        for (final r in responses)
-          r['poll_option_id'] as String: r['svar'] as bool,
-      };
+      final votes = <String, bool>{};
+      final counts = <String, int>{ for (final id in optIds) id: 0 };
+      for (final r in allResponses) {
+        final oid  = r['poll_option_id'] as String;
+        final svar = r['svar'] as bool;
+        if (svar) counts[oid] = (counts[oid] ?? 0) + 1;
+        if (r['user_id'] == userId) votes[oid] = svar;
+      }
 
       setState(() {
-        _options = optList;
-        _myVotes = votes;
-        _loading = false;
+        _options   = optList;
+        _myVotes   = votes;
+        _yesCounts = counts;
+        _loading   = false;
       });
     } catch (e) {
       setState(() { _loading = false; _error = e.toString(); });
@@ -162,6 +236,7 @@ class _PollDetailScreenState extends State<PollDetailScreen> {
         'user_id':        supabase.auth.currentUser!.id,
         'svar':           svar,
       }, onConflict: 'poll_option_id,user_id');
+      await _load(); // opdatér resultat-bjælker
     } on PostgrestException catch (e) {
       setState(() {
         final map = {..._myVotes};
@@ -202,25 +277,49 @@ class _PollDetailScreenState extends State<PollDetailScreen> {
                       child: ConstrainedBox(
                         constraints: const BoxConstraints(maxWidth: 700),
                         child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
                             if (beskr != null && beskr.isNotEmpty)
                               Padding(
-                                padding: const EdgeInsets.only(bottom: 16),
-                                child: Text(beskr, style: theme.textTheme.bodyMedium),
+                                padding: const EdgeInsets.only(bottom: 8),
+                                child: Text(beskr,
+                                    style: theme.textTheme.bodyMedium
+                                        ?.copyWith(color: _textSecondary)),
                               ),
-                            ..._options.map((o) {
-                              final id = o['id'] as String;
-                              final tid = DateTime.parse(o['option_tid'] as String).toLocal();
-                              final label = o['beskrivelse'] as String?;
-                              final myVote = _myVotes[id];
-                              return _PollOptionRow(
-                                tid: tid,
-                                label: label,
-                                myVote: myVote,
-                                onYes: () => _vote(id, true),
-                                onNo:  () => _vote(id, false),
-                              );
-                            }),
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 12, top: 4),
+                              child: Text(
+                                _lukket
+                                    ? 'Afsluttet — afstemningen er låst'
+                                    : 'Sæt flueben ved de datoer du kan',
+                                style: _body(size: 12, color: _textMuted),
+                              ),
+                            ),
+                            Card(
+                              child: Padding(
+                                padding: const EdgeInsets.all(6),
+                                child: Column(
+                                  children: [
+                                    for (final o in _options)
+                                      _PollCheckRow(
+                                        tid: DateTime.parse(
+                                            o['option_tid'] as String).toLocal(),
+                                        label: o['beskrivelse'] as String?,
+                                        checked: _myVotes[o['id'] as String] == true,
+                                        yesCount: _yesCounts[o['id'] as String] ?? 0,
+                                        maxYes: _yesCounts.values.isEmpty
+                                            ? 0
+                                            : _yesCounts.values
+                                                .fold<int>(0, (m, v) => v > m ? v : m),
+                                        locked: _lukket,
+                                        onToggle: () => _vote(
+                                            o['id'] as String,
+                                            !(_myVotes[o['id'] as String] == true)),
+                                      ),
+                                  ],
+                                ),
+                              ),
+                            ),
                           ],
                         ),
                       ),
@@ -231,104 +330,87 @@ class _PollDetailScreenState extends State<PollDetailScreen> {
   }
 }
 
-class _PollOptionRow extends StatelessWidget {
+/// Checkbox-række med resultat-bjælke — "kan du denne dato?"
+class _PollCheckRow extends StatelessWidget {
   final DateTime tid;
   final String? label;
-  final bool? myVote;
-  final VoidCallback onYes;
-  final VoidCallback onNo;
+  final bool checked;
+  final int yesCount;
+  final int maxYes;
+  final bool locked;
+  final VoidCallback onToggle;
 
-  const _PollOptionRow({
+  const _PollCheckRow({
     required this.tid,
     required this.label,
-    required this.myVote,
-    required this.onYes,
-    required this.onNo,
+    required this.checked,
+    required this.yesCount,
+    required this.maxYes,
+    required this.locked,
+    required this.onToggle,
   });
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Card(
-      margin: const EdgeInsets.only(bottom: 12),
+    final frac = maxYes == 0 ? 0.0 : yesCount / maxYes;
+    final barColor = checked ? _success : _neon;
+    return InkWell(
+      onTap: locked ? null : onToggle,
+      borderRadius: BorderRadius.circular(10),
       child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Row(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+        child: Column(
           children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(_fmtDateTime(tid), style: theme.textTheme.titleMedium),
-                  if (label != null && label!.isNotEmpty) ...[
-                    const SizedBox(height: 2),
-                    Text(label!, style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.onSurfaceVariant)),
-                  ],
-                ],
+            Row(
+              children: [
+                // Checkbox
+                Container(
+                  width: 22, height: 22,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: checked ? _success : Colors.transparent,
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(
+                      color: checked ? _success : _textMuted,
+                      width: 1.5,
+                    ),
+                  ),
+                  child: checked
+                      ? const Icon(Icons.check, size: 15, color: _onSuccess)
+                      : null,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(_fmtDateTime(tid),
+                          style: theme.textTheme.bodyLarge
+                              ?.copyWith(fontWeight: FontWeight.w600)),
+                      if (label != null && label!.isNotEmpty)
+                        Text(label!, style: theme.textTheme.bodySmall),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text('$yesCount',
+                    style: _cond(size: 18, weight: FontWeight.w800,
+                        color: checked ? _success : _textSecondary)),
+              ],
+            ),
+            const SizedBox(height: 8),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(999),
+              child: LinearProgressIndicator(
+                value: frac.clamp(0.0, 1.0),
+                minHeight: 8,
+                backgroundColor: _surfaceElevated,
+                valueColor: AlwaysStoppedAnimation(barColor),
               ),
-            ),
-            const SizedBox(width: 12),
-            _VoteButton(
-              label: 'JA',
-              icon: Icons.thumb_up_outlined,
-              activeIcon: Icons.thumb_up,
-              active: myVote == true,
-              activeColor: Colors.green,
-              onPressed: onYes,
-            ),
-            const SizedBox(width: 8),
-            _VoteButton(
-              label: 'NEJ',
-              icon: Icons.thumb_down_outlined,
-              activeIcon: Icons.thumb_down,
-              active: myVote == false,
-              activeColor: Colors.red.shade700,
-              onPressed: onNo,
             ),
           ],
         ),
-      ),
-    );
-  }
-}
-
-class _VoteButton extends StatelessWidget {
-  final String label;
-  final IconData icon;
-  final IconData activeIcon;
-  final bool active;
-  final Color activeColor;
-  final VoidCallback onPressed;
-  const _VoteButton({
-    required this.label,
-    required this.icon,
-    required this.activeIcon,
-    required this.active,
-    required this.activeColor,
-    required this.onPressed,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    if (active) {
-      return FilledButton.icon(
-        onPressed: onPressed,
-        icon: Icon(activeIcon, size: 18),
-        label: Text(label),
-        style: FilledButton.styleFrom(
-          backgroundColor: activeColor,
-          foregroundColor: Colors.white,
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        ),
-      );
-    }
-    return OutlinedButton.icon(
-      onPressed: onPressed,
-      icon: Icon(icon, size: 18),
-      label: Text(label),
-      style: OutlinedButton.styleFrom(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       ),
     );
   }

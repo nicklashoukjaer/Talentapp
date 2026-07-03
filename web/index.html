@@ -89,15 +89,19 @@
       window.osPushResult = { status: 'pending', id: null };
       window.OneSignalDeferred.push(async function (OneSignal) {
         try {
-          if (externalId) {
-            try { await OneSignal.login(externalId); } catch (e) {}
-          }
+          // iOS-krav: bed om tilladelse ALLERFØRST, mens brugerens tryk stadig
+          // "tæller" (transient user-activation). Login/opt-in er netværkskald
+          // der bruger aktiveringen op — så på iPhone dukker prompten aldrig op,
+          // og tilladelsen forbliver 'denied'. Derfor: permission → så resten.
           await OneSignal.Notifications.requestPermission();
           if (!OneSignal.Notifications.permission) {
             window.osPushResult = { status: 'done', id: null };
             return;
           }
           try { await OneSignal.User.PushSubscription.optIn(); } catch (e) {}
+          if (externalId) {
+            try { await OneSignal.login(externalId); } catch (e) {}
+          }
           // id'et er ikke altid klar straks — vent lidt på registrering.
           var id = null;
           for (var i = 0; i < 12; i++) {

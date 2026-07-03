@@ -317,14 +317,18 @@ class DashboardTabState extends State<DashboardTab> {
       for (var i = 0; i < tiles.length; i += perRow) {
         final end = (i + perRow) > tiles.length ? tiles.length : (i + perRow);
         final chunk = tiles.sublist(i, end);
-        rows.add(Row(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            for (var j = 0; j < perRow; j++) ...[
-              Expanded(child: j < chunk.length ? chunk[j] : const SizedBox()),
-              if (j != perRow - 1) const SizedBox(width: gap),
+        // IntrinsicHeight giver Row'en en afgrænset højde, så stretch (ens
+        // flise-højde) virker i ListViewens ellers uendelige lodrette rum.
+        rows.add(IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              for (var j = 0; j < perRow; j++) ...[
+                Expanded(child: j < chunk.length ? chunk[j] : const SizedBox()),
+                if (j != perRow - 1) const SizedBox(width: gap),
+              ],
             ],
-          ],
+          ),
         ));
         if (i + perRow < tiles.length) rows.add(const SizedBox(height: gap));
       }

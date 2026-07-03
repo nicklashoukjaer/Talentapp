@@ -142,6 +142,43 @@ class _HomeShellState extends State<HomeShell> {
     }
   }
 
+  // ─── Hurtig-opret fra "+"-knappen på Oversigten — skifter IKKE fane ─────────
+  Future<void> _quickCreateTraining() async {
+    if (!_isStaff) return;
+    final created = await showDialog<bool>(
+      context: context,
+      builder: (_) => const CreateTrainingDialog(),
+    );
+    if (created == true) {
+      _oversigtKey.currentState?.reload();
+      _dashboardKey.currentState?.reloadTrainings();
+    }
+  }
+
+  Future<void> _quickCreatePoll() async {
+    if (!_isStaff) return;
+    final created = await showDialog<bool>(
+      context: context,
+      builder: (_) => const CreatePollDialog(),
+    );
+    if (created == true) {
+      _oversigtKey.currentState?.reload();
+      _dashboardKey.currentState?.reloadPolls();
+    }
+  }
+
+  Future<void> _quickGiveFine() async {
+    if (!_isAdmin) return;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => const GiveFineDialog(),
+    );
+    if (ok == true) {
+      _bodekasseKey.currentState?.reload();
+      _dashboardKey.currentState?.reloadFines();
+    }
+  }
+
   Future<void> _openSuggestFineTypeDialog() async {
     final ok = await showDialog<bool>(
       context: context,
@@ -343,9 +380,9 @@ class _HomeShellState extends State<HomeShell> {
           (_isStaff && _selectedIndex.clamp(0, pages.length - 1) == _tabOversigt)
               ? _CreateSpeedDial(
                   isAdmin: _isAdmin,
-                  onNewTraining: _openCreateTraining,
-                  onNewPoll: _openCreatePoll,
-                  onNewFine: _openGiveFineDialog,
+                  onNewTraining: _quickCreateTraining,
+                  onNewPoll: _quickCreatePoll,
+                  onNewFine: _quickGiveFine,
                 )
               : null,
       bottomNavigationBar: MediaQuery.of(context).size.width >= 700

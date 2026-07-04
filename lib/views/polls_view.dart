@@ -21,6 +21,7 @@ class _CreatePollDialogState extends State<CreatePollDialog> {
   final List<_PollDateRow> _dates = [];
   int _idCounter = 0;
   bool _saving = false;
+  DateTime? _frist; // stemmefrist — afstemningen lukker automatisk her
 
   @override
   void initState() {
@@ -57,6 +58,7 @@ class _CreatePollDialogState extends State<CreatePollDialog> {
         'titel':       _titel.text.trim(),
         'beskrivelse': _beskr.text.trim().isEmpty ? null : _beskr.text.trim(),
         'created_by':  supabase.auth.currentUser!.id,
+        if (_frist != null) 'lukket_at': _frist!.toUtc().toIso8601String(),
       }).select('id').single();
 
       final pollId = pollResp['id'];
@@ -80,19 +82,46 @@ class _CreatePollDialogState extends State<CreatePollDialog> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Dialog(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 640),
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(24),
-          child: Form(
-            key: _formKey,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text('Opret afstemning', style: theme.textTheme.titleLarge),
-                const SizedBox(height: 24),
+    return Padding(
+      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      child: Container(
+        constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(context).size.height * 0.92),
+        decoration: const BoxDecoration(
+          color: _surfaceDark,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          border: Border(top: BorderSide(color: _borderSubtle)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 40, height: 4,
+              margin: const EdgeInsets.only(top: 10, bottom: 6),
+              decoration: BoxDecoration(
+                color: _borderSubtle, borderRadius: BorderRadius.circular(999)),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 4, 10, 6),
+              child: Row(children: [
+                Expanded(child: Text('OPRET AFSTEMNING',
+                    style: theme.textTheme.titleLarge)),
+                IconButton(
+                  onPressed: _saving ? null : () => Navigator.of(context).pop(false),
+                  icon: const Icon(Icons.close),
+                  color: _textSecondary,
+                ),
+              ]),
+            ),
+            Flexible(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
+                child: Form(
+                  key: _formKey,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
                 TextFormField(
                   controller: _titel,
                   autofocus: true,
@@ -116,7 +145,22 @@ class _CreatePollDialogState extends State<CreatePollDialog> {
                   ),
                   maxLines: 2,
                 ),
-                const SizedBox(height: 24),
+                const SizedBox(height: 20),
+                _QuickDateTimeField(
+                  label: 'Stemmefrist (valgfri)',
+                  value: _frist,
+                  onChanged: (v) => setState(() => _frist = v),
+                ),
+                Padding(
+                  padding: const EdgeInsets.only(top: 4, left: 4, bottom: 4),
+                  child: Text(
+                    _frist == null
+                        ? 'Tom = åben indtil du selv lukker den'
+                        : 'Afstemningen lukker automatisk — ingen kan stemme efter',
+                    style: const TextStyle(color: _textMuted, fontSize: 11),
+                  ),
+                ),
+                const SizedBox(height: 20),
                 Row(
                   children: [
                     Icon(Icons.event, color: theme.colorScheme.primary),
@@ -163,27 +207,43 @@ class _CreatePollDialogState extends State<CreatePollDialog> {
                     label: const Text('Tilføj endnu en dato'),
                   ),
                 ),
-                const SizedBox(height: 24),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    TextButton(
-                      onPressed: _saving ? null : () => Navigator.of(context).pop(false),
-                      child: const Text('Annullér'),
-                    ),
-                    const SizedBox(width: 8),
-                    FilledButton(
-                      onPressed: _saving ? null : _save,
-                      child: _saving
-                          ? const SizedBox(width: 18, height: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                          : const Text('Opret afstemning'),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
-              ],
+              ),
             ),
-          ),
+            // Sticky footer
+            Container(
+              decoration: const BoxDecoration(
+                border: Border(top: BorderSide(color: _borderSubtle)),
+              ),
+              padding: EdgeInsets.fromLTRB(
+                  16, 12, 16, 12 + MediaQuery.of(context).padding.bottom),
+              child: Row(children: [
+                Expanded(
+                  child: TextButton(
+                    onPressed: _saving ? null : () => Navigator.of(context).pop(false),
+                    style: TextButton.styleFrom(
+                      foregroundColor: _textSecondary,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                    ),
+                    child: const Text('Annullér'),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  flex: 2,
+                  child: FilledButton(
+                    onPressed: _saving ? null : _save,
+                    child: _saving
+                        ? const SizedBox(width: 18, height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                        : const Text('Opret afstemning'),
+                  ),
+                ),
+              ]),
+            ),
+          ],
         ),
       ),
     );

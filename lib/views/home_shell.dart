@@ -119,8 +119,10 @@ class _HomeShellState extends State<HomeShell> {
     _gotoTab(_tabDashboard);
     await Future<void>.delayed(const Duration(milliseconds: 40));
     if (!mounted) return;
-    final created = await showDialog<bool>(
+    final created = await showModalBottomSheet<bool>(
       context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
       builder: (_) => const CreatePollDialog(),
     );
     if (created == true) {
@@ -161,8 +163,10 @@ class _HomeShellState extends State<HomeShell> {
 
   Future<void> _quickCreatePoll() async {
     if (!_isStaff) return;
-    final created = await showDialog<bool>(
+    final created = await showModalBottomSheet<bool>(
       context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
       builder: (_) => const CreatePollDialog(),
     );
     if (created == true) {

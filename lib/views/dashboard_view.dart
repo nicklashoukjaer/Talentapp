@@ -131,8 +131,10 @@ class DashboardTabState extends State<DashboardTab> {
   }
 
   Future<void> _openCreatePoll() async {
-    final created = await showDialog<bool>(
+    final created = await showModalBottomSheet<bool>(
       context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
       builder: (_) => const CreatePollDialog(),
     );
     if (created == true) reloadPolls();

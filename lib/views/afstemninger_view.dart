@@ -12,6 +12,7 @@ class _AfstemningerTabState extends State<AfstemningerTab> {
   List<Map<String, dynamic>> _polls = const [];
   bool _loading = true;
   String? _error;
+  int _tab = 0; // 0 = Åbne, 1 = Afsluttede
 
   @override
   void initState() {
@@ -86,7 +87,58 @@ class _AfstemningerTabState extends State<AfstemningerTab> {
                       Text('AFSTEMNINGER', style: theme.textTheme.headlineSmall),
                     ]),
                   ),
-                  ..._polls.map((p) {
+                  // Åbne / Afsluttede — pille-toggle
+                  Builder(builder: (context) {
+                    bool erLukket(Map<String, dynamic> p) =>
+                        p['lukket_at'] != null &&
+                        DateTime.parse(p['lukket_at'] as String)
+                            .isBefore(DateTime.now());
+                    final aabne = _polls.where((p) => !erLukket(p)).length;
+                    final lukkede = _polls.where(erLukket).length;
+                    Widget seg(String label, int i) {
+                      final active = _tab == i;
+                      return Expanded(
+                        child: GestureDetector(
+                          onTap: () => setState(() => _tab = i),
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 180),
+                            height: 40,
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                              color: active ? _neon : Colors.transparent,
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Text(label,
+                                style: _body(
+                                    size: 13,
+                                    weight: FontWeight.w700,
+                                    color: active ? Colors.white : _textSecondary)),
+                          ),
+                        ),
+                      );
+                    }
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 16),
+                      child: Container(
+                        padding: const EdgeInsets.all(4),
+                        decoration: BoxDecoration(
+                          color: _surfaceDark,
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(color: _borderSubtle),
+                        ),
+                        child: Row(children: [
+                          seg('Åbne · $aabne', 0),
+                          seg('Afsluttede · $lukkede', 1),
+                        ]),
+                      ),
+                    );
+                  }),
+                  ..._polls.where((p) {
+                    final lukket = p['lukket_at'] != null &&
+                        DateTime.parse(p['lukket_at'] as String)
+                            .isBefore(DateTime.now());
+                    return _tab == 0 ? !lukket : lukket;
+                  }).map((p) {
                     final lukket = p['lukket_at'] != null &&
                         DateTime.parse(p['lukket_at'] as String).isBefore(DateTime.now());
                     final beskr = p['beskrivelse'] as String?;

@@ -552,6 +552,8 @@ class DashboardTabState extends State<DashboardTab> {
           const Padding(padding: EdgeInsets.all(16),
               child: Center(child: CircularProgressIndicator()))
         else ...[
+          const _GroupsOverviewCard(),
+          const SizedBox(height: 16),
           const _TeamAssignCard(),
           const SizedBox(height: 16),
           _MemberRolesCard(
@@ -561,6 +563,311 @@ class DashboardTabState extends State<DashboardTab> {
           ),
         ],
       ],
+    );
+  }
+}
+
+/// Grupper-overblik (2e) — kort pr. gruppe + opret/slet grupper.
+class _GroupsOverviewCard extends StatefulWidget {
+  const _GroupsOverviewCard();
+  @override
+  State<_GroupsOverviewCard> createState() => _GroupsOverviewCardState();
+}
+
+class _GroupsOverviewCardState extends State<_GroupsOverviewCard> {
+  List<Map<String, dynamic>> _groups = const [];
+  Map<String, int> _counts = {};
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() => _loading = true);
+    try {
+      final res = await Future.wait([
+        supabase.from('groups').select('id, navn, type, farve, sort').order('sort'),
+        supabase.from('group_members').select('group_id'),
+      ]);
+      final counts = <String, int>{};
+      for (final r in List<Map<String, dynamic>>.from(res[1] as List)) {
+        final g = r['group_id'] as String;
+        counts[g] = (counts[g] ?? 0) + 1;
+      }
+      if (!mounted) return;
+      setState(() {
+        _groups = List<Map<String, dynamic>>.from(res[0] as List);
+        _counts = counts;
+        _loading = false;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  static Color _hex(String? h) {
+    if (h == null || h.isEmpty) return _neon;
+    return Color(int.parse(h.replaceFirst('#', ''), radix: 16) | 0xFF000000);
+  }
+
+  Future<void> _newGroup() async {
+    final res = await showModalBottomSheet<Map<String, String>>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (_) => const _NewGroupSheet(),
+    );
+    if (res == null) return;
+    try {
+      final nextSort = _groups
+              .map((g) => (g['sort'] as num?)?.toInt() ?? 0)
+              .fold<int>(0, (m, v) => v > m ? v : m) +
+          1;
+      await supabase.from('groups').insert({
+        'navn': res['navn'],
+        'type': res['type'],
+        'farve': res['farve'],
+        'sort': nextSort,
+      });
+      if (mounted) _snack(context, 'Gruppe oprettet', _success);
+      _load();
+    } on PostgrestException catch (e) {
+      if (mounted) _snack(context, e.message, _danger);
+    }
+  }
+
+  Future<void> _delete(Map<String, dynamic> g) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Slet gruppe?'),
+        content: Text('"${g['navn']}" fjernes. Begivenheder for gruppen '
+            'bliver synlige for alle.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Annullér')),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(backgroundColor: _danger),
+            child: const Text('Slet'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    try {
+      await supabase.from('groups').delete().eq('id', g['id']);
+      if (mounted) _snack(context, 'Gruppe slettet', _textSecondary);
+      _load();
+    } on PostgrestException catch (e) {
+      if (mounted) _snack(context, e.message, _danger);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(children: [
+              const Icon(Icons.workspaces_outlined, color: _neon),
+              const SizedBox(width: 8),
+              Text('Grupper', style: theme.textTheme.titleMedium),
+              const Spacer(),
+              TextButton.icon(
+                onPressed: _newGroup,
+                icon: const Icon(Icons.add, size: 18),
+                label: const Text('Ny gruppe'),
+              ),
+            ]),
+            const SizedBox(height: 4),
+            if (_loading)
+              const Padding(
+                padding: EdgeInsets.all(16),
+                child: Center(child: CircularProgressIndicator()),
+              )
+            else
+              for (final g in _groups) _groupRow(g),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _groupRow(Map<String, dynamic> g) {
+    final c = _hex(g['farve'] as String?);
+    final count = _counts[g['id']] ?? 0;
+    final type = g['type'] == 'kamp-trup'
+        ? 'på tværs af hold'
+        : (g['type'] == 'hold' ? 'hold' : 'gruppe');
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(children: [
+        Container(
+          width: 36, height: 36,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+              color: c.withValues(alpha: 0.18), shape: BoxShape.circle),
+          child: Icon(
+              g['type'] == 'kamp-trup' ? Icons.emoji_events : Icons.groups,
+              color: c, size: 18),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(g['navn'] as String,
+                  style: _body(size: 14, weight: FontWeight.w700)),
+              Text('$count spillere · $type',
+                  style: _body(size: 12, color: _textSecondary)),
+            ],
+          ),
+        ),
+        IconButton(
+          onPressed: () => _delete(g),
+          icon: const Icon(Icons.delete_outline, size: 19, color: _textMuted),
+          tooltip: 'Slet gruppe',
+          visualDensity: VisualDensity.compact,
+        ),
+      ]),
+    );
+  }
+}
+
+/// Bundsheet til at oprette en ny gruppe.
+class _NewGroupSheet extends StatefulWidget {
+  const _NewGroupSheet();
+  @override
+  State<_NewGroupSheet> createState() => _NewGroupSheetState();
+}
+
+class _NewGroupSheetState extends State<_NewGroupSheet> {
+  final _navn = TextEditingController();
+  String _type = 'hold';
+  String _farve = '#E8622C';
+  static const _colors = [
+    '#E8622C', '#3DA9FC', '#F2A63B', '#34C759', '#B892FF', '#E5544E'
+  ];
+
+  @override
+  void dispose() {
+    _navn.dispose();
+    super.dispose();
+  }
+
+  static Color _hex(String h) =>
+      Color(int.parse(h.replaceFirst('#', ''), radix: 16) | 0xFF000000);
+
+  void _save() {
+    if (_navn.text.trim().isEmpty) {
+      _snack(context, 'Giv gruppen et navn', _gold);
+      return;
+    }
+    Navigator.pop(context, {
+      'navn': _navn.text.trim(),
+      'type': _type,
+      'farve': _farve,
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      child: SafeArea(
+        top: false,
+        child: Container(
+          margin: const EdgeInsets.all(12),
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: _surfaceDark,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: _borderSubtle),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text('NY GRUPPE', style: _cond(size: 20, weight: FontWeight.w800)),
+              const SizedBox(height: 14),
+              TextField(
+                controller: _navn,
+                autofocus: true,
+                decoration: const InputDecoration(
+                    labelText: 'Navn', hintText: 'F.eks. "Hold 3" eller "Veteraner"'),
+              ),
+              const SizedBox(height: 16),
+              Text('Type',
+                  style: _body(size: 13, weight: FontWeight.w600, color: _textSecondary)),
+              const SizedBox(height: 8),
+              Wrap(spacing: 8, children: [
+                for (final t in const [
+                  ('hold', 'Hold'),
+                  ('kamp-trup', 'Kamp-trup'),
+                  ('anden', 'Anden')
+                ])
+                  ChoiceChip(
+                    label: Text(t.$2),
+                    selected: _type == t.$1,
+                    onSelected: (_) => setState(() => _type = t.$1),
+                    selectedColor: _neon,
+                    labelStyle: TextStyle(
+                        color: _type == t.$1 ? Colors.white : _textPrimary),
+                  ),
+              ]),
+              const SizedBox(height: 16),
+              Text('Farve',
+                  style: _body(size: 13, weight: FontWeight.w600, color: _textSecondary)),
+              const SizedBox(height: 8),
+              Wrap(spacing: 10, children: [
+                for (final c in _colors)
+                  GestureDetector(
+                    onTap: () => setState(() => _farve = c),
+                    child: Container(
+                      width: 34, height: 34,
+                      decoration: BoxDecoration(
+                        color: _hex(c),
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                            color: _farve == c ? Colors.white : Colors.transparent,
+                            width: 2),
+                      ),
+                      child: _farve == c
+                          ? const Icon(Icons.check, size: 18, color: Colors.white)
+                          : null,
+                    ),
+                  ),
+              ]),
+              const SizedBox(height: 20),
+              Row(children: [
+                Expanded(
+                  child: TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    style: TextButton.styleFrom(foregroundColor: _textSecondary),
+                    child: const Text('Annullér'),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  flex: 2,
+                  child: FilledButton(
+                      onPressed: _save, child: const Text('Opret gruppe')),
+                ),
+              ]),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

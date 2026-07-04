@@ -69,6 +69,11 @@
         serviceWorkerParam: { scope: "/push/onesignal/" },
         serviceWorkerPath: "push/onesignal/OneSignalSDKWorker.js",
         allowLocalhostAsSecureOrigin: true, // tillader test på localhost
+        // VIGTIGT: slå auto-genabonnering FRA. Ellers laver OneSignal på iOS et
+        // NYT (ofte fejlende) push-abonnement ved hver genindlæsning af appen,
+        // hvilket roder brugerens registreringer til. Abonnementet oprettes nu
+        // KUN når brugeren selv trykker "Aktivér notifikationer".
+        autoResubscribe: false,
       });
     });
 

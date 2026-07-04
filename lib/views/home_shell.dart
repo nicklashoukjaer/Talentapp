@@ -339,6 +339,7 @@ class _HomeShellState extends State<HomeShell> {
           ),
         ),
         actions: [
+          const _NotificationsBell(),
           // Ctrl+K kun på brede skærme (desktop/web) — skjult på mobil
           if (MediaQuery.of(context).size.width >= 700) ...[
             TextButton.icon(
@@ -608,6 +609,172 @@ class _Kbd extends StatelessWidget {
       child: Text(label, style: const TextStyle(
         fontSize: 11, fontFamily: 'monospace', fontWeight: FontWeight.w600,
       )),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Notifikations-klokke — pålidelig in-app inbox (læser notifications-tabellen).
+// Ulæst-tælling via lokal "sidst set"-tid, så det virker uden backend-ændringer.
+// ─────────────────────────────────────────────────────────────────────────────
+class _NotificationsBell extends StatefulWidget {
+  const _NotificationsBell();
+  @override
+  State<_NotificationsBell> createState() => _NotificationsBellState();
+}
+
+class _NotificationsBellState extends State<_NotificationsBell> {
+  static const _prefKey = 'notif_last_seen';
+  List<Map<String, dynamic>> _items = const [];
+  int _unread = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final uid = supabase.auth.currentUser?.id;
+      if (uid == null) return;
+      final rows = await supabase
+          .from('notifications')
+          .select('id, kind, titel, body, created_at')
+          .eq('recipient_id', uid)
+          .order('created_at', ascending: false)
+          .limit(50);
+      final list = List<Map<String, dynamic>>.from(rows as List);
+      final seenRaw = platformStorageGet(_prefKey);
+      final seen = seenRaw == null ? null : DateTime.tryParse(seenRaw);
+      var unread = 0;
+      for (final r in list) {
+        final ts = DateTime.tryParse(r['created_at'] as String? ?? '');
+        if (ts != null && (seen == null || ts.isAfter(seen))) unread++;
+      }
+      if (mounted) setState(() { _items = list; _unread = unread; });
+    } catch (_) {
+      // Ingen adgang/tom — klokken viser bare 0.
+    }
+  }
+
+  IconData _iconFor(String? kind) {
+    switch (kind) {
+      case 'training_oprettet': return Icons.event;
+      case 'training_afmeldt': return Icons.person_off_outlined;
+      case 'poll_oprettet':    return Icons.how_to_vote;
+      case 'boede':            return Icons.gavel;
+      default:                 return Icons.notifications_outlined;
+    }
+  }
+
+  Future<void> _open() async {
+    platformStorageSet(_prefKey, DateTime.now().toUtc().toIso8601String());
+    setState(() => _unread = 0);
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (_) => Padding(
+        padding: EdgeInsets.only(top: MediaQuery.of(context).padding.top + 40),
+        child: Container(
+          decoration: const BoxDecoration(
+            color: _surfaceDark,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+            border: Border(top: BorderSide(color: _borderSubtle)),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 40, height: 4,
+                margin: const EdgeInsets.only(top: 10, bottom: 8),
+                decoration: BoxDecoration(
+                    color: _borderSubtle, borderRadius: BorderRadius.circular(999)),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
+                child: Row(children: [
+                  Text('NOTIFIKATIONER',
+                      style: _cond(size: 20, weight: FontWeight.w800)),
+                ]),
+              ),
+              const Divider(height: 1, color: _borderSubtle),
+              if (_items.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.all(40),
+                  child: Text('Ingen notifikationer endnu',
+                      style: TextStyle(color: _textMuted)),
+                )
+              else
+                Flexible(
+                  child: ListView.separated(
+                    shrinkWrap: true,
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    itemCount: _items.length,
+                    separatorBuilder: (_, __) => const Divider(
+                        height: 1, color: _borderSubtle, indent: 68),
+                    itemBuilder: (_, i) {
+                      final n = _items[i];
+                      final ts = DateTime.tryParse(n['created_at'] as String? ?? '');
+                      return ListTile(
+                        leading: Container(
+                          width: 40, height: 40,
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                              color: _neon.withValues(alpha: 0.16),
+                              shape: BoxShape.circle),
+                          child: Icon(_iconFor(n['kind'] as String?),
+                              size: 20, color: _neon),
+                        ),
+                        title: Text(n['titel'] as String? ?? '',
+                            style: _body(size: 14, weight: FontWeight.w700)),
+                        subtitle: Text(n['body'] as String? ?? '',
+                            style: _body(size: 12, color: _textSecondary)),
+                        trailing: ts == null
+                            ? null
+                            : Text(_fmtRelative(ts).replaceFirst('· ', ''),
+                                style: _body(size: 11, color: _textMuted)),
+                      );
+                    },
+                  ),
+                ),
+              const SafeArea(top: false, child: SizedBox(height: 8)),
+            ],
+          ),
+        ),
+      ),
+    );
+    _load();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      alignment: Alignment.center,
+      children: [
+        IconButton(
+          onPressed: _open,
+          icon: const Icon(Icons.notifications_outlined, color: _textPrimary),
+          tooltip: 'Notifikationer',
+        ),
+        if (_unread > 0)
+          Positioned(
+            top: 8, right: 6,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+              constraints: const BoxConstraints(minWidth: 16),
+              decoration: BoxDecoration(
+                  color: _danger, borderRadius: BorderRadius.circular(999)),
+              child: Text(_unread > 9 ? '9+' : '$_unread',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w800)),
+            ),
+          ),
+      ],
     );
   }
 }

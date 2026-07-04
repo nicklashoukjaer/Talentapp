@@ -2701,9 +2701,52 @@ class _CreateTrainingDialogState extends State<CreateTrainingDialog> {
   final _adresse  = TextEditingController();
   final _weeksCtrl = TextEditingController(text: '8');
 
-  DateTime? _start;
-  DateTime? _slut;
+  DateTime? _dato;   // begivenhedens dato
+  TimeOfDay? _fra;   // fra-tid (påkrævet)
+  TimeOfDay? _til;   // til-tid (valgfri)
   DateTime? _deadline;
+
+  static DateTime _combine(DateTime d, TimeOfDay t) =>
+      DateTime(d.year, d.month, d.day, t.hour, t.minute);
+
+  Widget _dateField() {
+    return InkWell(
+      onTap: () async {
+        final d = await _showQuickDatePicker(context, _dato ?? DateTime.now());
+        if (d != null) setState(() => _dato = d);
+      },
+      borderRadius: BorderRadius.circular(11),
+      child: InputDecorator(
+        decoration: const InputDecoration(
+            labelText: 'Dato', prefixIcon: Icon(Icons.event)),
+        child: Text(_dato == null ? 'Vælg dato' : _fmtDate(_dato!),
+            style: TextStyle(color: _dato == null ? _textMuted : null)),
+      ),
+    );
+  }
+
+  Widget _timeField(String label, TimeOfDay? value, ValueChanged<TimeOfDay?> onChanged) {
+    return InkWell(
+      onTap: () async {
+        final t = await _showQuickTimePicker(context, value);
+        if (t != null) onChanged(t);
+      },
+      borderRadius: BorderRadius.circular(11),
+      child: InputDecorator(
+        decoration: InputDecoration(
+            labelText: label, prefixIcon: const Icon(Icons.schedule, size: 18)),
+        child: Text(
+          value == null
+              ? 'Vælg tid'
+              : '${value.hour.toString().padLeft(2, '0')}:${value.minute.toString().padLeft(2, '0')}',
+          style: TextStyle(
+              color: value == null ? _textMuted : _neon,
+              fontWeight: FontWeight.w700,
+              letterSpacing: value == null ? 0 : 1.2),
+        ),
+      ),
+    );
+  }
   bool _recurring = false;
   bool _saving = false;
   List<Map<String, dynamic>> _groups = const [];
@@ -2789,20 +2832,22 @@ class _CreateTrainingDialogState extends State<CreateTrainingDialog> {
 
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
-    if (_start == null) {
-      _snack(context, 'Vælg dato + tid for start', Colors.orange);
+    if (_dato == null || _fra == null) {
+      _snack(context, 'Vælg dato og fra-tid', Colors.orange);
       return;
     }
-    // Slut er valgfri: hvis den ikke er sat, bruges start + 1,5 time.
-    final effectiveSlut = _slut ?? _start!.add(const Duration(minutes: 90));
-    if (!effectiveSlut.isAfter(_start!)) {
-      _snack(context, 'Sluttidspunkt skal være efter start', Colors.orange);
+    final start = _combine(_dato!, _fra!);
+    // Til-tid er valgfri: hvis den ikke er sat, bruges fra + 1,5 time.
+    final effectiveSlut =
+        _til != null ? _combine(_dato!, _til!) : start.add(const Duration(minutes: 90));
+    if (!effectiveSlut.isAfter(start)) {
+      _snack(context, 'Til-tid skal være efter fra-tid', Colors.orange);
       return;
     }
     // Hvis frist ikke er sat: brug start_tid (= reelt "ingen frist", tilmelding
     // er åben helt til begivenheden begynder)
-    final effectiveDeadline = _deadline ?? _start!;
-    if (effectiveDeadline.isAfter(_start!)) {
+    final effectiveDeadline = _deadline ?? start;
+    if (effectiveDeadline.isAfter(start)) {
       _snack(context, 'Deadline skal være før start', Colors.orange);
       return;
     }
@@ -2818,7 +2863,7 @@ class _CreateTrainingDialogState extends State<CreateTrainingDialog> {
     final rows = List<Map<String, dynamic>>.generate(weeks, (i) {
       final delta = Duration(days: 7 * i);
       return _buildRow(
-        start:    _start!.add(delta),
+        start:    start.add(delta),
         slut:     effectiveSlut.add(delta),
         deadline: effectiveDeadline.add(delta),
         maxVal:   maxVal,
@@ -2953,23 +2998,18 @@ class _CreateTrainingDialogState extends State<CreateTrainingDialog> {
                   ],
                 ),
                 const SizedBox(height: 20),
-                _QuickDateTimeField(
-                  label: 'Start',
-                  value: _start,
-                  onChanged: (v) => setState(() => _start = v),
-                ),
+                _dateField(),
                 const SizedBox(height: 12),
-                _QuickDateTimeField(
-                  label: 'Slut (valgfri – ellers +1½ time)',
-                  value: _slut,
-                  fallbackDate: _start,
-                  onChanged: (v) => setState(() => _slut = v),
-                ),
+                Row(children: [
+                  Expanded(child: _timeField('Fra', _fra, (t) => setState(() => _fra = t))),
+                  const SizedBox(width: 12),
+                  Expanded(child: _timeField('Til (valgfri)', _til, (t) => setState(() => _til = t))),
+                ]),
                 const SizedBox(height: 12),
                 _QuickDateTimeField(
                   label: 'Tilmeldingsfrist (valgfri)',
                   value: _deadline,
-                  fallbackDate: _start,
+                  fallbackDate: _dato,
                   onChanged: (v) => setState(() => _deadline = v),
                 ),
                 Padding(
@@ -3024,11 +3064,11 @@ class _CreateTrainingDialogState extends State<CreateTrainingDialog> {
                               const SizedBox(width: 6),
                               Expanded(
                                 child: Text(
-                                  _start == null
-                                      ? 'Vælg starttidspunkt for at se serie'
+                                  _dato == null
+                                      ? 'Vælg dato for at se serie'
                                       : 'Opretter $_plannedWeeks begivenheder — '
-                                        'fra ${_fmtDate(_start!)} til '
-                                        '${_fmtDate(_start!.add(Duration(days: 7 * (_plannedWeeks - 1))))}',
+                                        'fra ${_fmtDate(_dato!)} til '
+                                        '${_fmtDate(_dato!.add(Duration(days: 7 * (_plannedWeeks - 1))))}',
                                   style: theme.textTheme.bodySmall?.copyWith(
                                       color: theme.colorScheme.primary,
                                       fontWeight: FontWeight.w600),

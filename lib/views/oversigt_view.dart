@@ -1949,9 +1949,14 @@ class _HistoryTrainingCard extends StatelessWidget {
     final t      = item.training;
     final start  = DateTime.parse(t['start_tid'] as String).toLocal();
     final titel  = t['titel'] as String;
+    final adresse = t['adresse'] as String? ?? '';
     final max    = t['max_deltagere'] as int?;
     final attended = item.tilmeldte.length;
+    final afbud    = item.afmeldte.length;
     final full   = max != null && attended >= max;
+    final denom  = max ?? (attended + afbud);
+    final frac   = denom == 0 ? 0.0 : attended / denom;
+    final hasAddr = adresse.isNotEmpty && adresse != _addressUnspecified;
     const months = ['JAN','FEB','MAR','APR','MAJ','JUN','JUL','AUG','SEP','OKT','NOV','DEC'];
 
     return Card(
@@ -1960,7 +1965,7 @@ class _HistoryTrainingCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(children: [
+            Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
               // Dato-blok
               Container(
                 width: 52,
@@ -1980,33 +1985,69 @@ class _HistoryTrainingCard extends StatelessWidget {
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
                   children: [
                     Text(titel.toUpperCase(),
                         style: theme.textTheme.titleMedium,
                         maxLines: 1, overflow: TextOverflow.ellipsis),
                     const SizedBox(height: 3),
                     Text(
-                      max == null ? '$attended deltog' : '$attended af $max deltog',
-                      style: _body(
-                        size: 13,
-                        weight: FontWeight.w600,
-                        color: full ? _success : _textSecondary,
-                      ),
+                      '${_fmtTime(start)}${hasAddr ? ' · $adresse' : ''}',
+                      style: _body(size: 12, color: _textSecondary),
+                      maxLines: 1, overflow: TextOverflow.ellipsis,
                     ),
                   ],
                 ),
               ),
+              const SizedBox(width: 8),
+              // DELTOG X/Y
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text('DELTOG',
+                      style: _body(
+                          size: 9, weight: FontWeight.w700, spacing: 0.8,
+                          color: _textMuted)),
+                  Text(max == null ? '$attended' : '$attended/$max',
+                      style: _cond(
+                          size: 18, weight: FontWeight.w800,
+                          color: full ? _success : _textPrimary)),
+                ],
+              ),
             ]),
+            const SizedBox(height: 10),
+            // Fremmøde-måler
+            ClipRRect(
+              borderRadius: BorderRadius.circular(999),
+              child: LinearProgressIndicator(
+                value: frac.clamp(0.0, 1.0),
+                minHeight: 6,
+                backgroundColor: _surfaceElevated,
+                valueColor: const AlwaysStoppedAnimation(_success),
+              ),
+            ),
             if (item.tilmeldte.isNotEmpty || item.afmeldte.isNotEmpty) ...[
               const SizedBox(height: 12),
-              Wrap(
-                spacing: 6,
-                runSpacing: 6,
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  for (final p in item.tilmeldte)
-                    _InitialAvatar(navn: p.navn, size: 28, attended: true),
-                  for (final p in item.afmeldte)
-                    _InitialAvatar(navn: p.navn, size: 28, attended: false),
+                  Expanded(
+                    child: Wrap(
+                      spacing: 6, runSpacing: 6,
+                      children: [
+                        for (final p in item.tilmeldte)
+                          _InitialAvatar(navn: p.navn, size: 28, attended: true),
+                        for (final p in item.afmeldte)
+                          _InitialAvatar(navn: p.navn, size: 28, attended: false),
+                      ],
+                    ),
+                  ),
+                  if (afbud > 0) ...[
+                    const SizedBox(width: 8),
+                    Text('$afbud afbud',
+                        style: _body(size: 12, weight: FontWeight.w600, color: _danger)),
+                  ],
                 ],
               ),
             ],

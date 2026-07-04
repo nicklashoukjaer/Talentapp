@@ -582,7 +582,7 @@ class _Kbd extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Hurtig-opret FAB (speed-dial) — Oversigten, kun trænere/admins
+// Hurtig-opret FAB — åbner et action-sheet (bundsheet). Hele rækken er trykbar.
 // ─────────────────────────────────────────────────────────────────────────────
 class _CreateSpeedDial extends StatefulWidget {
   final bool isAdmin; // fuld admin → må uddele lyn-bøde
@@ -602,77 +602,145 @@ class _CreateSpeedDial extends StatefulWidget {
 class _CreateSpeedDialState extends State<_CreateSpeedDial> {
   bool _open = false;
 
-  void _run(VoidCallback action) {
-    setState(() => _open = false);
-    action();
+  Future<void> _openSheet() async {
+    setState(() => _open = true);
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _CreateSheet(
+        isAdmin: widget.isAdmin,
+        onNewTraining: widget.onNewTraining,
+        onNewPoll: widget.onNewPoll,
+        onNewFine: widget.onNewFine,
+      ),
+    );
+    if (mounted) setState(() => _open = false);
   }
 
-  Widget _action(String label, IconData icon, VoidCallback onTap) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            decoration: BoxDecoration(
-              color: _surfaceDark,
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: _borderSubtle),
-              boxShadow: const [
-                BoxShadow(color: Colors.black45, blurRadius: 8, offset: Offset(0, 2)),
-              ],
+  @override
+  Widget build(BuildContext context) {
+    return FloatingActionButton(
+      heroTag: 'create_fab',
+      onPressed: _openSheet,
+      child: AnimatedRotation(
+        turns: _open ? 0.125 : 0,
+        duration: const Duration(milliseconds: 200),
+        child: const Icon(Icons.add),
+      ),
+    );
+  }
+}
+
+/// Bundsheet med opret-handlinger — hele rækken (ikon + tekst + chevron) er ét
+/// trykbart mål.
+class _CreateSheet extends StatelessWidget {
+  final bool isAdmin;
+  final VoidCallback onNewTraining;
+  final VoidCallback onNewPoll;
+  final VoidCallback onNewFine;
+  const _CreateSheet({
+    required this.isAdmin,
+    required this.onNewTraining,
+    required this.onNewPoll,
+    required this.onNewFine,
+  });
+
+  Widget _row(BuildContext context, IconData icon, String titel, String under,
+      VoidCallback onTap) {
+    return InkWell(
+      onTap: () {
+        Navigator.of(context).pop();
+        onTap();
+      },
+      borderRadius: BorderRadius.circular(14),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        child: Row(
+          children: [
+            Container(
+              width: 44, height: 44,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: _neon.withValues(alpha: 0.16),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(icon, color: _neon, size: 22),
             ),
-            child: Text(label,
-                style: const TextStyle(
-                    color: _textPrimary, fontWeight: FontWeight.w600, fontSize: 13)),
-          ),
-          const SizedBox(width: 12),
-          FloatingActionButton.small(
-            heroTag: 'sd_$label',
-            backgroundColor: _surfaceElevated,
-            foregroundColor: _neon,
-            elevation: 2,
-            onPressed: () => _run(onTap),
-            child: Icon(icon),
-          ),
-        ],
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(titel,
+                      style: _cond(size: 17, weight: FontWeight.w700)),
+                  const SizedBox(height: 2),
+                  Text(under, style: _body(size: 12, color: _textSecondary)),
+                ],
+              ),
+            ),
+            const Icon(Icons.chevron_right, color: _textMuted),
+          ],
+        ),
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.end,
-      children: [
-        AnimatedSize(
-          duration: const Duration(milliseconds: 180),
-          curve: Curves.easeOut,
-          child: _open
-              ? Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.end,
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 8, 12, 16),
+        child: Container(
+          decoration: BoxDecoration(
+            color: _surfaceDark,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: _borderSubtle),
+          ),
+          padding: const EdgeInsets.all(8),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
+                child: Row(
                   children: [
-                    _action('Ny træning / kamp', Icons.event, widget.onNewTraining),
-                    _action('Ny afstemning', Icons.how_to_vote, widget.onNewPoll),
-                    if (widget.isAdmin)
-                      _action('Lyn-bøde', Icons.gavel, widget.onNewFine),
+                    Text('OPRET NY',
+                        style: _body(
+                            size: 12,
+                            weight: FontWeight.w700,
+                            spacing: 1.2,
+                            color: _textSecondary)),
                   ],
-                )
-              : const SizedBox.shrink(),
-        ),
-        FloatingActionButton(
-          heroTag: 'sd_main',
-          onPressed: () => setState(() => _open = !_open),
-          child: AnimatedRotation(
-            turns: _open ? 0.125 : 0,
-            duration: const Duration(milliseconds: 180),
-            child: const Icon(Icons.add),
+                ),
+              ),
+              _row(context, Icons.add_circle_outline, 'Opret begivenhed',
+                  'Skriv "kamp" eller "træning" — sorteres selv', onNewTraining),
+              const Divider(height: 1, color: _borderSubtle),
+              _row(context, Icons.bar_chart, 'Ny afstemning',
+                  'Find dato der passer holdet', onNewPoll),
+              if (isAdmin) ...[
+                const Divider(height: 1, color: _borderSubtle),
+                _row(context, Icons.gavel, 'Lyn-bøde',
+                    'Spiller + type + udfør', onNewFine),
+              ],
+              const SizedBox(height: 8),
+              SizedBox(
+                width: double.infinity,
+                child: TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  style: TextButton.styleFrom(
+                    foregroundColor: _textSecondary,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                  ),
+                  child: const Text('Annullér'),
+                ),
+              ),
+            ],
           ),
         ),
-      ],
+      ),
     );
   }
 }

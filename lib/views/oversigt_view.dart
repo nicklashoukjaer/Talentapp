@@ -723,17 +723,17 @@ class _FeedTrainingCardState extends State<_FeedTrainingCard> {
                   crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                       decoration: BoxDecoration(
-                        color: _neon.withValues(alpha: 0.15),
-                        borderRadius: BorderRadius.circular(4),
+                        color: _surfaceElevated,
+                        borderRadius: BorderRadius.circular(999),
                       ),
-                      child: const Text('BEGIVENHED',
-                          style: TextStyle(
-                              color: _neon,
-                              fontSize: 10,
-                              fontWeight: FontWeight.bold,
-                              letterSpacing: 1.5)),
+                      child: Text('KOMMENDE',
+                          style: _body(
+                              size: 10,
+                              weight: FontWeight.w700,
+                              spacing: 1.2,
+                              color: _textSecondary)),
                     ),
                     _SquadBadge(
                       signedUp: cnt,

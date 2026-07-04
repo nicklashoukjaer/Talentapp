@@ -648,7 +648,7 @@ class _OversigtTabState extends State<OversigtTab> {
                           onOpenSynergy: widget.isAdmin
                               ? () => Navigator.of(context).push(
                                   MaterialPageRoute(
-                                    builder: (_) => SynergyReportScreen(
+                                    builder: (_) => FavoritePairsScreen(
                                         poll: p.poll),
                                   ),
                                 )

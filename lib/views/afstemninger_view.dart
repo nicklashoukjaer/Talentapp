@@ -375,6 +375,17 @@ class _PollDetailScreenState extends State<PollDetailScreen> {
                                 ),
                               ),
                             ),
+                            const SizedBox(height: 12),
+                            OutlinedButton.icon(
+                              onPressed: () => Navigator.of(context).push(
+                                MaterialPageRoute(
+                                  builder: (_) =>
+                                      FavoritePairsScreen(poll: widget.poll),
+                                ),
+                              ),
+                              icon: const Icon(Icons.favorite_border, size: 18),
+                              label: const Text('Favorit-par pr. dato'),
+                            ),
                           ],
                         ),
                       ),

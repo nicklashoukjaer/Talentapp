@@ -251,6 +251,372 @@ class _CreatePollDialogState extends State<CreatePollDialog> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Favorit-par pr. dato (7a/8a/8b) — overblik over mulige makker-par
+// ─────────────────────────────────────────────────────────────────────────────
+class _FavPair {
+  final String aId, bId, aName, bName;
+  final bool mutual;
+  _FavPair(this.aId, this.bId, this.aName, this.bName, this.mutual);
+}
+
+class FavoritePairsScreen extends StatefulWidget {
+  final Map<String, dynamic> poll;
+  const FavoritePairsScreen({super.key, required this.poll});
+  @override
+  State<FavoritePairsScreen> createState() => _FavoritePairsScreenState();
+}
+
+class _FavoritePairsScreenState extends State<FavoritePairsScreen> {
+  List<Map<String, dynamic>> _options = const [];
+  Map<String, Set<String>> _votersByOption = {}; // option_id → "kan"-stemmere
+  Map<String, Set<String>> _favorites = {};       // user_id → favorit user_ids
+  Map<String, String> _names = {};                // user_id → navn
+  bool _loading = true;
+  String? _error;
+  bool _isStaff = false;
+  bool _onlyMutual = true; // 8a/8b-toggle (kun for staff)
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() { _loading = true; _error = null; });
+    try {
+      final uid = supabase.auth.currentUser!.id;
+      final options = await supabase
+          .from('poll_options')
+          .select('id, option_tid, beskrivelse')
+          .eq('poll_id', widget.poll['id'])
+          .order('option_tid');
+      final optList = List<Map<String, dynamic>>.from(options as List);
+      final optIds = optList.map((o) => o['id'] as String).toList();
+
+      final results = await Future.wait([
+        optIds.isEmpty
+            ? Future.value(const <Map<String, dynamic>>[])
+            : supabase
+                .from('poll_responses')
+                .select('poll_option_id, user_id, svar')
+                .inFilter('poll_option_id', optIds),
+        supabase
+            .from('profiles')
+            .select('id, navn, rolle, makker_prio_1, makker_prio_2'),
+      ]);
+      final responses = List<Map<String, dynamic>>.from(results[0] as List);
+      final profiles = List<Map<String, dynamic>>.from(results[1] as List);
+
+      final voters = <String, Set<String>>{for (final id in optIds) id: <String>{}};
+      for (final r in responses) {
+        if (r['svar'] == true) {
+          voters[r['poll_option_id'] as String]?.add(r['user_id'] as String);
+        }
+      }
+      final favs = <String, Set<String>>{};
+      final names = <String, String>{};
+      var staff = false;
+      for (final p in profiles) {
+        final id = p['id'] as String;
+        names[id] = p['navn'] as String? ?? '(ukendt)';
+        final s = <String>{};
+        if (p['makker_prio_1'] != null) s.add(p['makker_prio_1'] as String);
+        if (p['makker_prio_2'] != null) s.add(p['makker_prio_2'] as String);
+        favs[id] = s;
+        if (id == uid) {
+          final rolle = p['rolle'] as String?;
+          staff = rolle == 'admin' || rolle == 'træner';
+        }
+      }
+      if (!mounted) return;
+      setState(() {
+        _options = optList;
+        _votersByOption = voters;
+        _favorites = favs;
+        _names = names;
+        _isStaff = staff;
+        _loading = false;
+      });
+    } catch (e) {
+      if (mounted) setState(() { _loading = false; _error = e.toString(); });
+    }
+  }
+
+  /// Beregn disjunkte favorit-par blandt "kan"-stemmerne for én dato.
+  ({List<_FavPair> pairs, int withoutPartner}) _pairsFor(Set<String> voters) {
+    final list = voters.toList();
+    final cands = <_FavPair>[];
+    for (var i = 0; i < list.length; i++) {
+      for (var j = i + 1; j < list.length; j++) {
+        final a = list[i], b = list[j];
+        final aFavB = (_favorites[a] ?? const {}).contains(b);
+        final bFavA = (_favorites[b] ?? const {}).contains(a);
+        final mutual = aFavB && bFavA;
+        final oneWay = aFavB || bFavA;
+        if (mutual || (!_onlyMutual && oneWay)) {
+          cands.add(_FavPair(a, b, _names[a] ?? '?', _names[b] ?? '?', mutual));
+        }
+      }
+    }
+    // Gensidige først, så vi vælger de sikreste par.
+    cands.sort((x, y) => (y.mutual ? 1 : 0) - (x.mutual ? 1 : 0));
+    final used = <String>{};
+    final selected = <_FavPair>[];
+    for (final c in cands) {
+      if (used.contains(c.aId) || used.contains(c.bId)) continue;
+      used..add(c.aId)..add(c.bId);
+      selected.add(c);
+    }
+    return (pairs: selected, withoutPartner: voters.length - used.length);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('SPILLE DAGE'),
+        actions: [
+          IconButton(onPressed: _load, icon: const Icon(Icons.refresh)),
+        ],
+      ),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : _error != null
+              ? _ErrorView(error: _error!, onRetry: _load)
+              : _buildBody(theme),
+    );
+  }
+
+  Widget _buildBody(ThemeData theme) {
+    // Beregn resultater pr. dato
+    final results = _options.map((o) {
+      final id = o['id'] as String;
+      final voters = _votersByOption[id] ?? const <String>{};
+      final r = _pairsFor(voters);
+      return (option: o, can: voters.length, pairs: r.pairs, without: r.withoutPartner);
+    }).toList();
+
+    // Stærkeste dato = flest par
+    final strongest = results.isEmpty
+        ? null
+        : results.reduce((a, b) => b.pairs.length > a.pairs.length ? b : a);
+
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+      children: [
+        Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 700),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // Toggle (kun staff)
+                if (_isStaff) ...[
+                  _MutualToggle(
+                    onlyMutual: _onlyMutual,
+                    onChanged: (v) => setState(() => _onlyMutual = v),
+                  ),
+                  const SizedBox(height: 14),
+                ],
+                // Stærkeste dato
+                if (strongest != null && strongest.pairs.isNotEmpty)
+                  Container(
+                    margin: const EdgeInsets.only(bottom: 14),
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: _success.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: _success.withValues(alpha: 0.4)),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(children: [
+                          const Text('🏆', style: TextStyle(fontSize: 16)),
+                          const SizedBox(width: 8),
+                          Text('Stærkeste dato',
+                              style: _cond(size: 17, weight: FontWeight.w800, color: _success)),
+                        ]),
+                        const SizedBox(height: 6),
+                        Text(
+                          '${_fmtDate(DateTime.parse(strongest.option['option_tid'] as String).toLocal())} '
+                          'giver flest favorit-par — I kan stille '
+                          '${strongest.pairs.length} par der alle har deres favorit-makker.',
+                          style: _body(size: 13, color: _textPrimary),
+                        ),
+                      ],
+                    ),
+                  ),
+                Row(children: [
+                  const Icon(Icons.info_outline, size: 14, color: _textMuted),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text('Bygger på favorit-makkere fra profilerne',
+                        style: _body(size: 12, color: _textMuted)),
+                  ),
+                ]),
+                const SizedBox(height: 12),
+                for (final r in results) _dateCard(theme, r),
+                const SizedBox(height: 12),
+                Text('Kun et overblik — du sætter den endelige opstilling til '
+                    'kampen selv.',
+                    textAlign: TextAlign.center,
+                    style: _body(size: 12, color: _textMuted)),
+                const SizedBox(height: 10),
+                // Legende
+                Wrap(
+                  alignment: WrapAlignment.center,
+                  spacing: 16, runSpacing: 6,
+                  children: [
+                    _legend(true, 'Gensidig'),
+                    if (_isStaff && !_onlyMutual) _legend(false, 'Én-vejs'),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _legend(bool mutual, String label) => Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(mutual ? Icons.favorite : Icons.favorite_border,
+              size: 14, color: mutual ? _danger : _gold),
+          const SizedBox(width: 6),
+          Text(label, style: _body(size: 12, color: _textSecondary)),
+        ],
+      );
+
+  Widget _dateCard(ThemeData theme,
+      ({Map<String, dynamic> option, int can, List<_FavPair> pairs, int without}) r) {
+    final tid = DateTime.parse(r.option['option_tid'] as String).toLocal();
+    final n = r.pairs.length;
+    final allMutual = r.pairs.every((p) => p.mutual);
+    final badgeColor = n == 0 ? _textMuted : (allMutual ? _success : _gold);
+    final badgeText = n == 0
+        ? 'Ingen par'
+        : (_onlyMutual
+            ? '$n gensidig${n == 1 ? '' : 'e'}'
+            : '$n ${allMutual ? 'gensidige' : 'mulige'}');
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(_fmtDateTime(tid),
+                        style: _cond(size: 17, weight: FontWeight.w800)),
+                    Text('${r.can} kan spille',
+                        style: _body(size: 12, color: _textSecondary)),
+                  ],
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: badgeColor.withValues(alpha: 0.18),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Text(badgeText,
+                    style: _body(size: 12, weight: FontWeight.w700, color: badgeColor)),
+              ),
+            ]),
+            if (r.pairs.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              for (final p in r.pairs) _pairRow(p),
+            ],
+            if (r.without > 0) ...[
+              const SizedBox(height: 6),
+              Text('${r.without} uden makker',
+                  style: _body(size: 12, color: _textMuted)),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _pairRow(_FavPair p) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(children: [
+        _InitialAvatar(navn: p.aName, size: 26),
+        const SizedBox(width: 2),
+        _InitialAvatar(navn: p.bName, size: 26),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text('${p.aName} & ${p.bName}',
+              style: _body(size: 14, weight: FontWeight.w600),
+              maxLines: 1, overflow: TextOverflow.ellipsis),
+        ),
+        if (!p.mutual)
+          Text('én-vejs', style: _body(size: 11, color: _gold)),
+        const SizedBox(width: 6),
+        Icon(p.mutual ? Icons.favorite : Icons.favorite_border,
+            size: 16, color: p.mutual ? _danger : _gold),
+      ]),
+    );
+  }
+}
+
+class _MutualToggle extends StatelessWidget {
+  final bool onlyMutual;
+  final ValueChanged<bool> onChanged;
+  const _MutualToggle({required this.onlyMutual, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    Widget seg(String label, bool mutual) {
+      final active = onlyMutual == mutual;
+      return Expanded(
+        child: GestureDetector(
+          onTap: () => onChanged(mutual),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 180),
+            height: 40,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: active ? _neon : Colors.transparent,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Text(label,
+                style: _body(
+                    size: 13,
+                    weight: FontWeight.w700,
+                    color: active ? Colors.white : _textSecondary)),
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: _surfaceDark,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: _borderSubtle),
+      ),
+      child: Row(children: [
+        seg('Kun gensidige', true),
+        seg('Alle favoritter', false),
+      ]),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Synergy report screen (Fase 3)
 // ─────────────────────────────────────────────────────────────────────────────
 

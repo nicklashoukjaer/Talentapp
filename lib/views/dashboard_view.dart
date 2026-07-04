@@ -551,13 +551,299 @@ class DashboardTabState extends State<DashboardTab> {
         if (_loadingFines)
           const Padding(padding: EdgeInsets.all(16),
               child: Center(child: CircularProgressIndicator()))
-        else
+        else ...[
+          const _TeamAssignCard(),
+          const SizedBox(height: 16),
           _MemberRolesCard(
             profiles: _profiles,
             currentUserId: currentUserId ?? '',
             onChangeRole: _changeRole,
           ),
+        ],
       ],
+    );
+  }
+}
+
+/// Hold & spillere (2f) — sæt hvert medlem på hold. Selv-loadende.
+class _TeamAssignCard extends StatefulWidget {
+  const _TeamAssignCard();
+  @override
+  State<_TeamAssignCard> createState() => _TeamAssignCardState();
+}
+
+class _TeamAssignCardState extends State<_TeamAssignCard> {
+  List<Map<String, dynamic>> _groups = const [];
+  List<Map<String, dynamic>> _members = const [];
+  Map<String, Set<String>> _membership = {}; // user_id → gruppe-id'er
+  bool _loading = true;
+  String? _filterGroupId; // null = Alle
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() => _loading = true);
+    try {
+      final res = await Future.wait([
+        supabase.from('groups').select('id, navn, type, farve, sort').order('sort'),
+        supabase.from('profiles').select('id, navn, rolle').order('navn'),
+        supabase.from('group_members').select('group_id, user_id'),
+      ]);
+      final gm = List<Map<String, dynamic>>.from(res[2] as List);
+      final map = <String, Set<String>>{};
+      for (final r in gm) {
+        (map[r['user_id'] as String] ??= {}).add(r['group_id'] as String);
+      }
+      if (!mounted) return;
+      setState(() {
+        _groups = List<Map<String, dynamic>>.from(res[0] as List);
+        _members = List<Map<String, dynamic>>.from(res[1] as List);
+        _membership = map;
+        _loading = false;
+      });
+    } catch (e) {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  static Color _hex(String? h) {
+    if (h == null || h.isEmpty) return _textSecondary;
+    return Color(int.parse(h.replaceFirst('#', ''), radix: 16) | 0xFF000000);
+  }
+
+  static String _tag(Map<String, dynamic> g) {
+    final navn = g['navn'] as String;
+    if (g['type'] == 'kamp-trup') return 'Kamp';
+    final m = RegExp(r'(\d+)').firstMatch(navn);
+    if (navn.toLowerCase().startsWith('hold') && m != null) return 'H${m.group(1)}';
+    return navn;
+  }
+
+  Future<void> _toggle(String userId, String groupId, bool add) async {
+    setState(() {
+      final s = _membership[userId] ??= {};
+      if (add) {
+        s.add(groupId);
+      } else {
+        s.remove(groupId);
+      }
+    });
+    try {
+      if (add) {
+        await supabase
+            .from('group_members')
+            .insert({'group_id': groupId, 'user_id': userId});
+      } else {
+        await supabase
+            .from('group_members')
+            .delete()
+            .eq('group_id', groupId)
+            .eq('user_id', userId);
+      }
+    } on PostgrestException catch (e) {
+      if (mounted) {
+        _snack(context, e.message, _danger);
+        _load();
+      }
+    }
+  }
+
+  void _editMember(Map<String, dynamic> m) {
+    final userId = m['id'] as String;
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (_) => StatefulBuilder(builder: (ctx, setSheet) {
+        final mine = _membership[userId] ?? const <String>{};
+        return SafeArea(
+          top: false,
+          child: Container(
+            margin: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: _surfaceDark,
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: _borderSubtle),
+            ),
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text((m['navn'] as String).toUpperCase(),
+                    style: _cond(size: 20, weight: FontWeight.w800)),
+                const SizedBox(height: 2),
+                Text('Vælg hvilke hold spilleren er på',
+                    style: _body(size: 13, color: _textSecondary)),
+                const SizedBox(height: 8),
+                for (final g in _groups)
+                  CheckboxListTile(
+                    value: mine.contains(g['id']),
+                    onChanged: (v) {
+                      _toggle(userId, g['id'] as String, v ?? false);
+                      setSheet(() {});
+                    },
+                    activeColor: _neon,
+                    contentPadding: EdgeInsets.zero,
+                    secondary: Container(
+                      width: 14, height: 14,
+                      decoration: BoxDecoration(
+                          color: _hex(g['farve'] as String?),
+                          shape: BoxShape.circle),
+                    ),
+                    title: Text(g['navn'] as String),
+                  ),
+                const SizedBox(height: 8),
+                FilledButton(
+                    onPressed: () => Navigator.pop(ctx),
+                    child: const Text('Færdig')),
+              ],
+            ),
+          ),
+        );
+      }),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    if (_loading) {
+      return const Card(
+        child: Padding(
+          padding: EdgeInsets.all(24),
+          child: Center(child: CircularProgressIndicator()),
+        ),
+      );
+    }
+    final holdGroups = _groups.where((g) => g['type'] == 'hold').toList();
+    final visible = _filterGroupId == null
+        ? _members
+        : _members
+            .where((m) => (_membership[m['id']] ?? const {}).contains(_filterGroupId))
+            .toList();
+    int countIn(String gid) =>
+        _members.where((m) => (_membership[m['id']] ?? const {}).contains(gid)).length;
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(children: [
+              const Icon(Icons.groups_outlined, color: _neon),
+              const SizedBox(width: 8),
+              Text('Hold & spillere', style: theme.textTheme.titleMedium),
+              const Spacer(),
+              IconButton(
+                  onPressed: _load,
+                  icon: const Icon(Icons.refresh),
+                  tooltip: 'Opdater'),
+            ]),
+            Text('Sæt hvert medlem på hold — gælder automatisk i alle begivenheder.',
+                style: _body(size: 12, color: _textSecondary)),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8, runSpacing: 8,
+              children: [
+                _filterChip('Alle · ${_members.length}', null),
+                for (final g in holdGroups)
+                  _filterChip('${g['navn']} · ${countIn(g['id'] as String)}',
+                      g['id'] as String),
+              ],
+            ),
+            const SizedBox(height: 6),
+            for (final m in visible) _memberRow(m),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _filterChip(String label, String? groupId) {
+    final active = _filterGroupId == groupId;
+    return GestureDetector(
+      onTap: () => setState(() => _filterGroupId = groupId),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color: active ? _neon : _surfaceElevated,
+          borderRadius: BorderRadius.circular(999),
+        ),
+        child: Text(label,
+            style: _body(
+                size: 12,
+                weight: FontWeight.w600,
+                color: active ? Colors.white : _textSecondary)),
+      ),
+    );
+  }
+
+  Widget _memberRow(Map<String, dynamic> m) {
+    final userId = m['id'] as String;
+    final navn = m['navn'] as String;
+    final rolle = m['rolle'] as String? ?? 'medlem';
+    final mine = _membership[userId] ?? const <String>{};
+    final myGroups = _groups.where((g) => mine.contains(g['id'])).toList();
+    return InkWell(
+      onTap: () => _editMember(m),
+      borderRadius: BorderRadius.circular(10),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Row(children: [
+          _InitialAvatar(navn: navn, size: 36),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(navn,
+                    style: _body(size: 14, weight: FontWeight.w600),
+                    maxLines: 1, overflow: TextOverflow.ellipsis),
+                Text(
+                    rolle == 'admin'
+                        ? 'Admin'
+                        : (rolle == 'træner' ? 'Træner' : 'Spiller'),
+                    style: _body(size: 12, color: _textSecondary)),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          if (myGroups.isEmpty)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(
+                color: _gold.withValues(alpha: 0.16),
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: Text('Tildel',
+                  style: _body(size: 11, weight: FontWeight.w700, color: _gold)),
+            )
+          else
+            Wrap(
+              spacing: 4,
+              children: [for (final g in myGroups) _groupTag(g)],
+            ),
+        ]),
+      ),
+    );
+  }
+
+  Widget _groupTag(Map<String, dynamic> g) {
+    final c = _hex(g['farve'] as String?);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: c.withValues(alpha: 0.18),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(_tag(g),
+          style: _body(size: 10, weight: FontWeight.w700, color: c)),
     );
   }
 }

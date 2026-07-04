@@ -121,8 +121,10 @@ class DashboardTabState extends State<DashboardTab> {
   }
 
   Future<void> _openCreateTraining() async {
-    final created = await showDialog<bool>(
+    final created = await showModalBottomSheet<bool>(
       context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
       builder: (_) => const CreateTrainingDialog(),
     );
     if (created == true) reloadTrainings();
@@ -2212,19 +2214,46 @@ class _CreateTrainingDialogState extends State<CreateTrainingDialog> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Dialog(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 640),
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(24),
-          child: Form(
-            key: _formKey,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text('Opret begivenhed', style: theme.textTheme.titleLarge),
-                const SizedBox(height: 24),
+    return Padding(
+      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      child: Container(
+        constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(context).size.height * 0.92),
+        decoration: const BoxDecoration(
+          color: _surfaceDark,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          border: Border(top: BorderSide(color: _borderSubtle)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 40, height: 4,
+              margin: const EdgeInsets.only(top: 10, bottom: 6),
+              decoration: BoxDecoration(
+                color: _borderSubtle, borderRadius: BorderRadius.circular(999)),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 4, 10, 6),
+              child: Row(children: [
+                Expanded(child: Text('OPRET BEGIVENHED',
+                    style: theme.textTheme.titleLarge)),
+                IconButton(
+                  onPressed: _saving ? null : () => Navigator.of(context).pop(false),
+                  icon: const Icon(Icons.close),
+                  color: _textSecondary,
+                ),
+              ]),
+            ),
+            Flexible(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
+                child: Form(
+                  key: _formKey,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
                 TextFormField(
                   controller: _titel,
                   autofocus: true,
@@ -2366,27 +2395,43 @@ class _CreateTrainingDialogState extends State<CreateTrainingDialog> {
                     ],
                   ),
                 ),
-                const SizedBox(height: 24),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    TextButton(
-                      onPressed: _saving ? null : () => Navigator.of(context).pop(false),
-                      child: const Text('Annullér'),
-                    ),
-                    const SizedBox(width: 8),
-                    FilledButton(
-                      onPressed: _saving ? null : _save,
-                      child: _saving
-                          ? const SizedBox(width: 18, height: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                          : Text(_recurring ? 'Opret serie' : 'Opret'),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
-              ],
+              ),
             ),
-          ),
+            // Sticky footer
+            Container(
+              decoration: const BoxDecoration(
+                border: Border(top: BorderSide(color: _borderSubtle)),
+              ),
+              padding: EdgeInsets.fromLTRB(
+                  16, 12, 16, 12 + MediaQuery.of(context).padding.bottom),
+              child: Row(children: [
+                Expanded(
+                  child: TextButton(
+                    onPressed: _saving ? null : () => Navigator.of(context).pop(false),
+                    style: TextButton.styleFrom(
+                      foregroundColor: _textSecondary,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                    ),
+                    child: const Text('Annullér'),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  flex: 2,
+                  child: FilledButton(
+                    onPressed: _saving ? null : _save,
+                    child: _saving
+                        ? const SizedBox(width: 18, height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                        : Text(_recurring ? 'Opret serie' : 'Opret'),
+                  ),
+                ),
+              ]),
+            ),
+          ],
         ),
       ),
     );

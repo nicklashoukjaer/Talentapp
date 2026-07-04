@@ -102,8 +102,10 @@ class _HomeShellState extends State<HomeShell> {
     _gotoTab(_tabDashboard);
     await Future<void>.delayed(const Duration(milliseconds: 40));
     if (!mounted) return;
-    final created = await showDialog<bool>(
+    final created = await showModalBottomSheet<bool>(
       context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
       builder: (_) => const CreateTrainingDialog(),
     );
     if (created == true) {
@@ -145,8 +147,10 @@ class _HomeShellState extends State<HomeShell> {
   // ─── Hurtig-opret fra "+"-knappen på Oversigten — skifter IKKE fane ─────────
   Future<void> _quickCreateTraining() async {
     if (!_isStaff) return;
-    final created = await showDialog<bool>(
+    final created = await showModalBottomSheet<bool>(
       context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
       builder: (_) => const CreateTrainingDialog(),
     );
     if (created == true) {

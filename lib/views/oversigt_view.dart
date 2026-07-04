@@ -689,8 +689,6 @@ class _FeedTrainingCard extends StatefulWidget {
 }
 
 class _FeedTrainingCardState extends State<_FeedTrainingCard> {
-  bool _expanded = false;
-
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -707,7 +705,6 @@ class _FeedTrainingCardState extends State<_FeedTrainingCard> {
     final hasAddr  = adresse.isNotEmpty && adresse != _addressUnspecified;
     final deadlinePassed = DateTime.now().isAfter(deadline);
     final canSignUp = !deadlinePassed || widget.isAdmin;
-    final full = max != null && cnt >= max;
     final totalParticipants =
         item.tilmeldte.length + item.venteliste.length +
         item.afmeldte.length + item.trainere.length;
@@ -857,71 +854,30 @@ class _FeedTrainingCardState extends State<_FeedTrainingCard> {
           if (totalParticipants > 0) ...[
             const Divider(height: 1, color: _borderSubtle),
             InkWell(
-              onTap: () => setState(() => _expanded = !_expanded),
+              onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                builder: (_) => EventDetailScreen(
+                    training: t, isStaff: widget.isAdmin),
+              )),
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
                 child: Row(
                   children: [
-                    Icon(_expanded ? Icons.expand_less : Icons.expand_more,
-                        size: 20, color: _neon),
-                    const SizedBox(width: 8),
-                    Text(_expanded ? 'Skjul deltagere' : 'Se deltagere',
+                    if (item.tilmeldte.isNotEmpty) ...[
+                      _AvatarStack(
+                          names: item.tilmeldte.map((p) => p.navn).toList(),
+                          size: 26, maxShown: 4),
+                      const SizedBox(width: 10),
+                    ],
+                    Text('${item.tilmeldte.length} tilmeldt',
                         style: const TextStyle(
-                            color: _neon,
+                            color: _success,
                             fontSize: 13,
-                            fontWeight: FontWeight.w700,
-                            letterSpacing: 0.5)),
+                            fontWeight: FontWeight.w700)),
+                    const SizedBox(width: 8),
+                    const Text('· tryk for detaljer',
+                        style: TextStyle(color: _textMuted, fontSize: 12)),
                     const Spacer(),
-                    Text('$totalParticipants total',
-                        style: const TextStyle(
-                            color: _textSecondary, fontSize: 12)),
-                  ],
-                ),
-              ),
-            ),
-            AnimatedCrossFade(
-              crossFadeState: _expanded
-                  ? CrossFadeState.showSecond
-                  : CrossFadeState.showFirst,
-              duration: const Duration(milliseconds: 200),
-              firstChild: const SizedBox(width: double.infinity, height: 0),
-              secondChild: Padding(
-                padding: const EdgeInsets.fromLTRB(18, 0, 18, 18),
-                child: Column(
-                  children: [
-                    if (item.trainere.isNotEmpty) ...[
-                      _TrainingParticipantGroup(
-                        label: 'TRÆNERE',
-                        color: Colors.lightBlue.shade300,
-                        icon: Icons.shield,
-                        participants: item.trainere,
-                      ),
-                      const SizedBox(height: 10),
-                    ],
-                    _TrainingParticipantGroup(
-                      label: 'TILMELDT',
-                      color: Colors.green.shade400,
-                      icon: Icons.check_circle,
-                      participants: item.tilmeldte,
-                    ),
-                    if (item.venteliste.isNotEmpty) ...[
-                      const SizedBox(height: 10),
-                      _TrainingParticipantGroup(
-                        label: 'VENTELISTE',
-                        color: Colors.orange.shade400,
-                        icon: Icons.hourglass_top,
-                        participants: item.venteliste,
-                      ),
-                    ],
-                    if (item.afmeldte.isNotEmpty) ...[
-                      const SizedBox(height: 10),
-                      _TrainingParticipantGroup(
-                        label: 'AFBUD',
-                        color: const Color(0xFFEF4444),
-                        icon: Icons.block,
-                        participants: item.afmeldte,
-                      ),
-                    ],
+                    const Icon(Icons.chevron_right, size: 20, color: _textSecondary),
                   ],
                 ),
               ),
@@ -929,79 +885,6 @@ class _FeedTrainingCardState extends State<_FeedTrainingCard> {
           ],
         ],
       ),
-    );
-  }
-}
-
-/// Trænings-deltagere — viser navn + tidspunkt (især nyttigt for "Afmeldt"
-/// gruppen, så admin/træner kan se *hvornår* spilleren meldte afbud).
-class _TrainingParticipantGroup extends StatelessWidget {
-  final String label;
-  final Color color;
-  final IconData icon;
-  final List<_Participant> participants;
-  const _TrainingParticipantGroup({
-    required this.label,
-    required this.color,
-    required this.icon,
-    required this.participants,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Icon(icon, size: 14, color: color),
-            const SizedBox(width: 6),
-            Text(label,
-                style: TextStyle(
-                    color: color,
-                    fontSize: 10,
-                    letterSpacing: 1.2,
-                    fontWeight: FontWeight.bold)),
-            const SizedBox(width: 6),
-            Text('· ${participants.length}',
-                style: const TextStyle(color: _textSecondary, fontSize: 11)),
-          ],
-        ),
-        const SizedBox(height: 6),
-        if (participants.isEmpty)
-          const Padding(
-            padding: EdgeInsets.only(left: 20),
-            child: Text('Ingen',
-                style: TextStyle(color: _textMuted, fontSize: 13)),
-          )
-        else
-          Wrap(
-            spacing: 6, runSpacing: 6,
-            children: participants.map((p) => Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-              decoration: BoxDecoration(
-                color: _surfaceElevated,
-                borderRadius: BorderRadius.circular(6),
-                border: Border.all(
-                    color: color.withValues(alpha: 0.3), width: 1),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(p.navn,
-                      style: const TextStyle(
-                          color: _textPrimary, fontSize: 13,
-                          fontWeight: FontWeight.w600)),
-                  const SizedBox(width: 8),
-                  Text(_fmtRelative(p.updatedAt),
-                      style: const TextStyle(
-                          color: _textMuted, fontSize: 11,
-                          fontWeight: FontWeight.w500)),
-                ],
-              ),
-            )).toList(),
-          ),
-      ],
     );
   }
 }
@@ -2197,6 +2080,327 @@ class _MatrixLegend extends StatelessWidget {
         const SizedBox(width: 6),
         Text(label, style: _body(size: 12, color: _textSecondary)),
       ],
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Begivenheds-detalje (9b) — hvem er tilmeldt/afbud/mangler + admin-svar
+// ─────────────────────────────────────────────────────────────────────────────
+class _AttPerson {
+  final String id, navn;
+  final DateTime? svarTid;
+  _AttPerson(this.id, this.navn, this.svarTid);
+}
+
+String _fmtSvar(DateTime d) {
+  const m = ['jan','feb','mar','apr','maj','jun','jul','aug','sep','okt','nov','dec'];
+  final l = d.toLocal();
+  String two(int n) => n.toString().padLeft(2, '0');
+  return '${l.day}. ${m[l.month - 1]} · ${two(l.hour)}:${two(l.minute)}';
+}
+
+class EventDetailScreen extends StatefulWidget {
+  final Map<String, dynamic> training;
+  final bool isStaff;
+  const EventDetailScreen({super.key, required this.training, required this.isStaff});
+  @override
+  State<EventDetailScreen> createState() => _EventDetailScreenState();
+}
+
+class _EventDetailScreenState extends State<EventDetailScreen> {
+  List<_AttPerson> _tilmeldt = const [];
+  List<_AttPerson> _afbud = const [];
+  List<_AttPerson> _mangler = const [];
+  bool _loading = true;
+  String? _error;
+  bool _busy = false;
+  String? _myId;
+
+  @override
+  void initState() {
+    super.initState();
+    _myId = supabase.auth.currentUser?.id;
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() { _loading = true; _error = null; });
+    try {
+      final tid = widget.training['id'];
+      final results = await Future.wait([
+        supabase.from('training_participants')
+            .select('user_id, status, updated_at, '
+                'profiles!training_participants_user_id_fkey(navn)')
+            .eq('training_id', tid),
+        supabase.from('profiles').select('id, navn').order('navn'),
+      ]);
+      final parts = List<Map<String, dynamic>>.from(results[0] as List);
+      final profiles = List<Map<String, dynamic>>.from(results[1] as List);
+      final byUser = {for (final p in parts) p['user_id'] as String: p};
+
+      final tilmeldt = <_AttPerson>[], afbud = <_AttPerson>[], mangler = <_AttPerson>[];
+      for (final prof in profiles) {
+        final id = prof['id'] as String;
+        final navn = prof['navn'] as String? ?? '(ukendt)';
+        final part = byUser[id];
+        if (part == null) {
+          mangler.add(_AttPerson(id, navn, null));
+        } else {
+          final status = part['status'] as String;
+          final ts = part['updated_at'] == null
+              ? null
+              : DateTime.parse(part['updated_at'] as String);
+          if (status == 'afmeldt') {
+            afbud.add(_AttPerson(id, navn, ts));
+          } else {
+            tilmeldt.add(_AttPerson(id, navn, ts));
+          }
+        }
+      }
+      if (!mounted) return;
+      setState(() {
+        _tilmeldt = tilmeldt;
+        _afbud = afbud;
+        _mangler = mangler;
+        _loading = false;
+      });
+    } catch (e) {
+      if (mounted) setState(() { _loading = false; _error = e.toString(); });
+    }
+  }
+
+  Future<void> _setStatus(String userId, String status) async {
+    setState(() => _busy = true);
+    try {
+      await supabase.from('training_participants').upsert({
+        'training_id': widget.training['id'],
+        'user_id': userId,
+        'status': status,
+      }, onConflict: 'training_id,user_id');
+      await _load();
+    } on PostgrestException catch (e) {
+      if (mounted) _snack(context, e.message, _danger);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _remindMissing() async {
+    setState(() => _busy = true);
+    try {
+      final count = await supabase.rpc('send_training_reminders',
+          params: {'p_training_id': widget.training['id']});
+      if (mounted) {
+        _snack(context, 'Rykker sendt til $count medlem${count == 1 ? '' : 'mer'}',
+            _success);
+      }
+    } on PostgrestException catch (e) {
+      if (mounted) _snack(context, e.message, _danger);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final t = widget.training;
+    final start = DateTime.parse(t['start_tid'] as String).toLocal();
+    final slut = t['slut_tid'] == null
+        ? null
+        : DateTime.parse(t['slut_tid'] as String).toLocal();
+    final adresse = t['adresse'] as String? ?? '';
+    final hasAddr = adresse.isNotEmpty && adresse != _addressUnspecified;
+
+    return Scaffold(
+      appBar: AppBar(title: Text((t['titel'] as String).toUpperCase())),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : _error != null
+              ? _ErrorView(error: _error!, onRetry: _load)
+              : ListView(
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+                  children: [
+                    Center(
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 700),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Row(children: [
+                              const Icon(Icons.schedule, size: 15, color: _textSecondary),
+                              const SizedBox(width: 6),
+                              Text('${_fmtDateTime(start)}${slut != null ? ' – ${_fmtTime(slut)}' : ''}',
+                                  style: theme.textTheme.bodyMedium
+                                      ?.copyWith(color: _textSecondary)),
+                            ]),
+                            if (hasAddr) ...[
+                              const SizedBox(height: 4),
+                              Row(children: [
+                                const Icon(Icons.place_outlined, size: 15, color: _textSecondary),
+                                const SizedBox(width: 6),
+                                Expanded(child: Text(adresse,
+                                    style: theme.textTheme.bodyMedium
+                                        ?.copyWith(color: _textSecondary))),
+                              ]),
+                            ],
+                            const SizedBox(height: 16),
+                            _attendanceBar(),
+                            const SizedBox(height: 8),
+                            Row(children: [
+                              Text('${_tilmeldt.length} tilmeldt',
+                                  style: _body(size: 12, weight: FontWeight.w700, color: _success)),
+                              const SizedBox(width: 12),
+                              Text('${_afbud.length} afbud',
+                                  style: _body(size: 12, weight: FontWeight.w700, color: _danger)),
+                              const SizedBox(width: 12),
+                              Text('${_mangler.length} mangler',
+                                  style: _body(size: 12, weight: FontWeight.w700, color: _textMuted)),
+                            ]),
+                            if (widget.isStaff) ...[
+                              const SizedBox(height: 14),
+                              Container(
+                                padding: const EdgeInsets.all(12),
+                                decoration: BoxDecoration(
+                                  color: _gold.withValues(alpha: 0.12),
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(color: _gold.withValues(alpha: 0.35)),
+                                ),
+                                child: Row(children: [
+                                  const Icon(Icons.info_outline, size: 18, color: _gold),
+                                  const SizedBox(width: 10),
+                                  Expanded(
+                                    child: Text(
+                                        'Du kan sætte tilmeld/afbud på andres vegne — tryk ✓/✗ ved spilleren.',
+                                        style: _body(size: 12, color: _textSecondary)),
+                                  ),
+                                ]),
+                              ),
+                            ],
+                            const SizedBox(height: 18),
+                            _group('TILMELDT', _tilmeldt, _success, Icons.check_circle),
+                            _group('AFBUD', _afbud, _danger, Icons.cancel),
+                            _group('MANGLER SVAR', _mangler, _textMuted, Icons.help_outline),
+                            if (widget.isStaff && _mangler.isNotEmpty) ...[
+                              const SizedBox(height: 8),
+                              SizedBox(
+                                width: double.infinity,
+                                child: FilledButton.icon(
+                                  onPressed: _busy ? null : _remindMissing,
+                                  icon: const Icon(Icons.notifications_active_outlined, size: 18),
+                                  label: const Text('Påmind alle der mangler'),
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+    );
+  }
+
+  Widget _attendanceBar() {
+    final tt = _tilmeldt.length, aa = _afbud.length, mm = _mangler.length;
+    final total = tt + aa + mm;
+    if (total == 0) {
+      return Container(
+        height: 8,
+        decoration: BoxDecoration(
+            color: _surfaceElevated, borderRadius: BorderRadius.circular(999)),
+      );
+    }
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(999),
+      child: SizedBox(
+        height: 8,
+        child: Row(children: [
+          if (tt > 0) Expanded(flex: tt, child: Container(color: _success)),
+          if (aa > 0) Expanded(flex: aa, child: Container(color: _danger)),
+          if (mm > 0) Expanded(flex: mm, child: Container(color: _surfaceElevated)),
+        ]),
+      ),
+    );
+  }
+
+  Widget _group(String label, List<_AttPerson> people, Color color, IconData icon) {
+    if (people.isEmpty) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8, top: 4),
+          child: Row(children: [
+            Icon(icon, size: 16, color: color),
+            const SizedBox(width: 6),
+            Text('$label · ${people.length}',
+                style: _body(size: 12, weight: FontWeight.w700, spacing: 0.8, color: color)),
+          ]),
+        ),
+        for (final p in people) _personRow(p),
+        const SizedBox(height: 12),
+      ],
+    );
+  }
+
+  Widget _personRow(_AttPerson p) {
+    final isMe = p.id == _myId;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 5),
+      child: Row(children: [
+        _InitialAvatar(navn: p.navn, size: 34),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Row(children: [
+            Flexible(
+              child: Text(p.navn,
+                  style: _body(size: 14, weight: FontWeight.w600),
+                  maxLines: 1, overflow: TextOverflow.ellipsis),
+            ),
+            if (isMe)
+              Padding(
+                padding: const EdgeInsets.only(left: 6),
+                child: Text('· dig', style: _body(size: 12, color: _neon)),
+              ),
+          ]),
+        ),
+        if (p.svarTid != null)
+          Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text('svarede', style: _body(size: 10, color: _textMuted)),
+                Text(_fmtSvar(p.svarTid!),
+                    style: _body(size: 11, weight: FontWeight.w600, color: _textSecondary)),
+              ],
+            ),
+          ),
+        if (widget.isStaff) ...[
+          _miniBtn(Icons.check, _success, () => _setStatus(p.id, 'tilmeldt')),
+          const SizedBox(width: 6),
+          _miniBtn(Icons.close, _danger, () => _setStatus(p.id, 'afmeldt')),
+        ],
+      ]),
+    );
+  }
+
+  Widget _miniBtn(IconData icon, Color color, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: _busy ? null : onTap,
+      child: Container(
+        width: 34, height: 34,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.16),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: color.withValues(alpha: 0.5)),
+        ),
+        child: Icon(icon, size: 18, color: color),
+      ),
     );
   }
 }

@@ -620,7 +620,7 @@ class _OversigtTabState extends State<OversigtTab> {
                     if (!(showingTrainings && _showHistory &&
                         MediaQuery.of(context).size.width >= 700))
                       ...(showingTrainings && !_showHistory ? visible.skip(1) : visible)
-                          .map((item) => Padding(
+                          .map((item) => RepaintBoundary(child: Padding(
                       padding: const EdgeInsets.only(bottom: 14),
                       child: switch (item) {
                         _TrainingFeedItem t => (showingTrainings && _showHistory)
@@ -655,7 +655,7 @@ class _OversigtTabState extends State<OversigtTab> {
                               : null,
                         ),
                       },
-                    )),
+                    ))),
                   ],
                 ],
               ),

@@ -390,7 +390,8 @@ class _LeaderboardRow extends StatelessWidget {
       _ => (_surfaceElevated, _textSecondary),
     };
 
-    return Card(
+    return RepaintBoundary(
+      child: Card(
       margin: const EdgeInsets.only(bottom: 10),
       child: InkWell(
         onTap: onTap,
@@ -459,6 +460,7 @@ class _LeaderboardRow extends StatelessWidget {
           ),
         ),
       ),
+    ),
     );
   }
 }

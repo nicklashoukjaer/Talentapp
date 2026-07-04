@@ -163,15 +163,24 @@
             }
           });
         });
-        // Tjek aktivt for ny udrulning: ved opstart, når appen åbnes igen,
-        // og hvert minut. (HTTP no-cache på SW-filen, se vercel.json, gør at
-        // browseren faktisk opdager den nye version.)
-        var check = function () { reg.update().catch(function () {}); };
+        // Tjek aktivt for ny udrulning: ved opstart, når appen bringes i
+        // forgrunden (iOS opdaterer stort set kun der), ved fokus, og hvert
+        // 30. sek. Efter update() aktiveres en evt. ventende version STRAKS,
+        // så brugeren ALDRIG behøver at lukke/genåbne appen manuelt.
+        var check = function () {
+          reg.update().then(function () {
+            if (reg.waiting && navigator.serviceWorker.controller) {
+              activate(reg.waiting);
+            }
+          }).catch(function () {});
+        };
         check();
         document.addEventListener('visibilitychange', function () {
           if (document.visibilityState === 'visible') check();
         });
-        setInterval(check, 60 * 1000);
+        window.addEventListener('pageshow', check);
+        window.addEventListener('focus', check);
+        setInterval(check, 30 * 1000);
       }).catch(function () {});
 
       // Når den nye SW overtager → genindlæs automatisk til frisk version.

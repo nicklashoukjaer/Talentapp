@@ -2399,6 +2399,8 @@ class _CreateTrainingDialogState extends State<CreateTrainingDialog> {
   DateTime? _deadline;
   bool _recurring = false;
   bool _saving = false;
+  List<Map<String, dynamic>> _groups = const [];
+  String? _groupId; // null = alle hold
 
   @override
   void initState() {
@@ -2406,6 +2408,39 @@ class _CreateTrainingDialogState extends State<CreateTrainingDialog> {
     _weeksCtrl.addListener(() {
       if (mounted) setState(() {});
     });
+    _loadGroups();
+  }
+
+  Future<void> _loadGroups() async {
+    try {
+      final rows = await supabase
+          .from('groups')
+          .select('id, navn, type, farve, sort')
+          .order('sort');
+      if (mounted) {
+        setState(() => _groups = List<Map<String, dynamic>>.from(rows as List));
+      }
+    } catch (_) {}
+  }
+
+  Widget _groupChip(String label, String? id) {
+    final active = _groupId == id;
+    return GestureDetector(
+      onTap: () => setState(() => _groupId = id),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        decoration: BoxDecoration(
+          color: active ? _neon : _surfaceElevated,
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: active ? _neon : _borderSubtle),
+        ),
+        child: Text(label,
+            style: _body(
+                size: 13,
+                weight: FontWeight.w600,
+                color: active ? Colors.white : _textPrimary)),
+      ),
+    );
   }
 
   int get _plannedWeeks {
@@ -2441,6 +2476,7 @@ class _CreateTrainingDialogState extends State<CreateTrainingDialog> {
       'adresse':              adresseVal,
       'tilmeldings_deadline': deadline.toUtc().toIso8601String(),
       'created_by':           userId,
+      'group_id':             _groupId,
     };
   }
 
@@ -2542,6 +2578,21 @@ class _CreateTrainingDialogState extends State<CreateTrainingDialog> {
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
+                if (_groups.isNotEmpty) ...[
+                  Text('Hvem kan deltage?',
+                      style: _body(
+                          size: 13, weight: FontWeight.w600, color: _textSecondary)),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8, runSpacing: 8,
+                    children: [
+                      _groupChip('Alle', null),
+                      for (final g in _groups)
+                        _groupChip(g['navn'] as String, g['id'] as String),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                ],
                 TextFormField(
                   controller: _titel,
                   autofocus: true,

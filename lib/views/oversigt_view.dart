@@ -38,6 +38,9 @@ class _OversigtTabState extends State<OversigtTab> {
   int _activitySubview = 0;  // 0 = TRÆNINGER, 1 = KAMPE
   bool _showHistory = false; // når true: arkiverede begivenheder (>24t efter start)
   bool _historyLoaded = false; // lazy: historik (90 dage) hentes først ved behov
+  List<Map<String, dynamic>> _groups = const []; // grupper brugeren er på
+  Set<String> _myGroupIds = {};   // brugerens gruppe-id'er
+  String? _switcherGroupId;       // valgt hold i switcheren (null = alle mine)
 
   @override
   void initState() {
@@ -59,7 +62,7 @@ class _OversigtTabState extends State<OversigtTab> {
       final results = await Future.wait([
         // Træninger 90 dage tilbage og frem
         supabase.from('trainings')
-            .select('id, titel, beskrivelse, max_deltagere, start_tid, slut_tid, adresse, tilmeldings_deadline')
+            .select('id, titel, beskrivelse, max_deltagere, start_tid, slut_tid, adresse, tilmeldings_deadline, group_id')
             .gte('start_tid', sinceIso).order('start_tid'),
         // Polls (alle — lukkede filtreres client-side)
         supabase.from('polls')
@@ -67,11 +70,17 @@ class _OversigtTabState extends State<OversigtTab> {
             .order('created_at', ascending: false),
         // Profiles for count
         supabase.from('profiles').select('id'),
+        // Grupper + mit medlemskab (til hold-filtrering)
+        supabase.from('groups').select('id, navn, type, farve, sort').order('sort'),
+        supabase.from('group_members').select('group_id').eq('user_id', userId),
       ]);
 
       final trainings   = List<Map<String, dynamic>>.from(results[0] as List);
       final pollsAll    = List<Map<String, dynamic>>.from(results[1] as List);
       final profileRows = List<Map<String, dynamic>>.from(results[2] as List);
+      final groups      = List<Map<String, dynamic>>.from(results[3] as List);
+      final myGroupIds  = List<Map<String, dynamic>>.from(results[4] as List)
+          .map((r) => r['group_id'] as String).toSet();
 
       // Filtrér åbne polls
       final polls = pollsAll.where((p) {
@@ -216,6 +225,8 @@ class _OversigtTabState extends State<OversigtTab> {
 
       setState(() {
         _items = items;
+        _groups = groups;
+        _myGroupIds = myGroupIds;
         _loading = false;
       });
     } catch (e) {
@@ -381,8 +392,20 @@ class _OversigtTabState extends State<OversigtTab> {
     if (_loading) return const Center(child: CircularProgressIndicator());
     if (_error != null) return _ErrorView(error: _error!, onRetry: reload);
 
-    final allTrainings = _items.whereType<_TrainingFeedItem>().toList();
     final polls        = _items.whereType<_PollFeedItem>().toList();
+    // Hold-filtrering: vis kun begivenheder for hold jeg er på (eller fælles-
+    // begivenheder uden hold). Switcheren filtrerer yderligere til ét hold.
+    bool visibleToMe(_TrainingFeedItem t) {
+      final gid = t.training['group_id'] as String?;
+      final mine = gid == null || _myGroupIds.contains(gid);
+      if (!mine) return false;
+      if (_switcherGroupId != null && gid != null && gid != _switcherGroupId) {
+        return false;
+      }
+      return true;
+    }
+    final allTrainings =
+        _items.whereType<_TrainingFeedItem>().where(visibleToMe).toList();
 
     // Arkivering: en begivenhed bliver "historik" 24 timer efter start_tid
     final archiveCutoff = DateTime.now().subtract(const Duration(hours: 24));
@@ -462,6 +485,18 @@ class _OversigtTabState extends State<OversigtTab> {
                       ],
                     ),
                   ),
+                  // Hold-switcher — kun hvis brugeren er på mindst ét hold
+                  if (_groups.where((g) => _myGroupIds.contains(g['id'])).isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 14),
+                      child: _HoldSwitcher(
+                        groups: _groups
+                            .where((g) => _myGroupIds.contains(g['id']))
+                            .toList(),
+                        selectedId: _switcherGroupId,
+                        onChanged: (id) => setState(() => _switcherGroupId = id),
+                      ),
+                    ),
                   // Kommende / Historik — pille-toggle (kun på AKTIVITETER)
                   if (showingTrainings)
                     Padding(
@@ -1580,6 +1615,73 @@ class _AvatarStack extends StatelessWidget {
               left: i * step,
               child: _InitialAvatar(navn: shown[i], size: size),
             ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Hold-switcher — Alle / Hold 1 / Hold 2 / Kamp-trup (kun brugerens hold).
+class _HoldSwitcher extends StatelessWidget {
+  final List<Map<String, dynamic>> groups;
+  final String? selectedId;
+  final ValueChanged<String?> onChanged;
+  const _HoldSwitcher({
+    required this.groups,
+    required this.selectedId,
+    required this.onChanged,
+  });
+
+  static Color _hex(String? h) {
+    if (h == null || h.isEmpty) return _neon;
+    return Color(int.parse(h.replaceFirst('#', ''), radix: 16) | 0xFF000000);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    Widget chip(String label, String? id, Color color) {
+      final active = selectedId == id;
+      return Padding(
+        padding: const EdgeInsets.only(right: 8),
+        child: GestureDetector(
+          onTap: () => onChanged(id),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+            decoration: BoxDecoration(
+              color: active ? color : _surfaceDark,
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(color: active ? color : _borderSubtle),
+            ),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              if (id != null) ...[
+                Container(
+                  width: 8, height: 8,
+                  decoration: BoxDecoration(
+                      color: active ? Colors.white : color,
+                      shape: BoxShape.circle),
+                ),
+                const SizedBox(width: 7),
+              ],
+              Text(label,
+                  style: _body(
+                      size: 13,
+                      weight: FontWeight.w700,
+                      color: active ? Colors.white : _textSecondary)),
+            ]),
+          ),
+        ),
+      );
+    }
+
+    return SizedBox(
+      height: 40,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        padding: EdgeInsets.zero,
+        children: [
+          chip('Alle', null, _neon),
+          for (final g in groups)
+            chip(g['navn'] as String, g['id'] as String, _hex(g['farve'] as String?)),
         ],
       ),
     );

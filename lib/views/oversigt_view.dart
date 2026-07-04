@@ -437,7 +437,7 @@ class _OversigtTabState extends State<OversigtTab> {
     return RefreshIndicator(
       onRefresh: reload,
       child: ListView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
         children: [
           Center(
             child: ConstrainedBox(
@@ -512,39 +512,8 @@ class _OversigtTabState extends State<OversigtTab> {
                         },
                       ),
                     ),
-                  // Segmented switch [AKTIVITETER] / [AFSTEMNINGER]
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 12),
-                    child: SegmentedButton<int>(
-                      style: SegmentedButton.styleFrom(
-                        backgroundColor: _surfaceDark,
-                        selectedBackgroundColor: _neon,
-                        selectedForegroundColor: Colors.black,
-                        foregroundColor: _textSecondary,
-                        side: const BorderSide(color: _borderSubtle),
-                        textStyle: const TextStyle(
-                            fontSize: 13, fontWeight: FontWeight.w700, letterSpacing: 0.4),
-                      ),
-                      segments: [
-                        ButtonSegment(
-                          value: 0,
-                          icon: const Icon(Icons.bolt, size: 18),
-                          label: Text('AKTIVITETER · ${source.length}',
-                              maxLines: 1, softWrap: false,
-                              overflow: TextOverflow.ellipsis),
-                        ),
-                        ButtonSegment(
-                          value: 1,
-                          icon: const Icon(Icons.how_to_vote, size: 18),
-                          label: Text('AFSTEMNINGER · ${polls.length}',
-                              maxLines: 1, softWrap: false,
-                              overflow: TextOverflow.ellipsis),
-                        ),
-                      ],
-                      selected: {_activeView},
-                      onSelectionChanged: (s) => setState(() => _activeView = s.first),
-                    ),
-                  ),
+                  // (Aktiviteter/Afstemninger-segmentet fjernet — afstemninger
+                  //  har sin egen fane. Oversigt viser kun aktiviteter.)
                   // Sub-tabs [TRÆNINGER] / [KAMPE] — kun på AKTIVITETER
                   if (showingTrainings)
                     Padding(

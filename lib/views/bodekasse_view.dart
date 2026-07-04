@@ -91,7 +91,7 @@ class BodekasseTabState extends State<BodekasseTab> {
     return RefreshIndicator(
       onRefresh: reload,
       child: ListView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
         children: [
           Center(
             child: ConstrainedBox(

@@ -92,6 +92,8 @@ class _HomeShellState extends State<HomeShell> {
   static const _tabDashboard   = 4;
 
   final GlobalKey<_OversigtTabState> _oversigtKey = GlobalKey<_OversigtTabState>();
+  final GlobalKey<_AfstemningerTabState> _afstemningerKey =
+      GlobalKey<_AfstemningerTabState>();
 
   Future<void> _logout() async => supabase.auth.signOut();
 
@@ -172,6 +174,7 @@ class _HomeShellState extends State<HomeShell> {
     if (created == true) {
       _oversigtKey.currentState?.reload();
       _dashboardKey.currentState?.reloadPolls();
+      _afstemningerKey.currentState?.reload();
     }
   }
 
@@ -315,7 +318,7 @@ class _HomeShellState extends State<HomeShell> {
         isAdmin: _isAdmin,
         currentUserId: _profile!['id'] as String,
       ),
-      const AfstemningerTab(),
+      AfstemningerTab(key: _afstemningerKey),
       ProfileTab(profile: _profile!, onProfileUpdated: _loadProfile),
       if (_isStaff) DashboardTab(key: _dashboardKey, isFullAdmin: _isAdmin),
     ];
@@ -383,16 +386,36 @@ class _HomeShellState extends State<HomeShell> {
           ],
         );
       }(),
-      // Hurtig-opret på Oversigten (kun trænere/admins) — nemt fra telefonen.
-      floatingActionButton:
-          (_isStaff && _selectedIndex.clamp(0, pages.length - 1) == _tabOversigt)
-              ? _CreateSpeedDial(
-                  isAdmin: _isAdmin,
-                  onNewTraining: _quickCreateTraining,
-                  onNewPoll: _quickCreatePoll,
-                  onNewFine: _quickGiveFine,
-                )
-              : null,
+      // Kontekstuel hurtig-opret pr. fane:
+      //  Oversigt → begivenhed/afstemning · Afstemninger → ny afstemning ·
+      //  Bødekasse → uddel bøde (kun admin).
+      floatingActionButton: () {
+        final idx = _selectedIndex.clamp(0, pages.length - 1);
+        if (idx == _tabOversigt && _isStaff) {
+          return _CreateSpeedDial(
+            isAdmin: _isAdmin,
+            onNewTraining: _quickCreateTraining,
+            onNewPoll: _quickCreatePoll,
+            onNewFine: _quickGiveFine,
+          );
+        }
+        if (idx == _tabAfstemning && _isStaff) {
+          return FloatingActionButton(
+            heroTag: 'fab_poll',
+            onPressed: _quickCreatePoll,
+            child: const Icon(Icons.add),
+          );
+        }
+        if (idx == _tabBoede && _isAdmin) {
+          return FloatingActionButton.extended(
+            heroTag: 'fab_fine',
+            onPressed: _quickGiveFine,
+            icon: const Icon(Icons.gavel),
+            label: const Text('Uddel bøde'),
+          );
+        }
+        return null;
+      }(),
       bottomNavigationBar: MediaQuery.of(context).size.width >= 700
           ? null
           // Baggrund dækker helt ned i bunden; SafeArea skubber selve nav-baren

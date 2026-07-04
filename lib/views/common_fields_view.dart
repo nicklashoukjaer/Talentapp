@@ -97,12 +97,12 @@ class _QuickDateTimeFieldState extends State<_QuickDateTimeField> {
               ),
               child: Text(
                 _time == null
-                    ? 'HH:MM'
+                    ? 'Vælg tid'
                     : '${_two(_time!.hour)}:${_two(_time!.minute)}',
                 style: TextStyle(
                     color: _time == null ? _textMuted : _neon,
                     fontWeight: FontWeight.w700,
-                    letterSpacing: 1.2),
+                    letterSpacing: _time == null ? 0 : 1.2),
                 textAlign: TextAlign.center,
               ),
             ),
@@ -181,6 +181,31 @@ Future<TimeOfDay?> _showQuickTimePicker(BuildContext ctx, TimeOfDay? initial) {
                 ),
               ),
               const SizedBox(height: 12),
+              const Divider(height: 1, color: _borderSubtle),
+              // Hurtig-valg
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                child: Row(children: [
+                  const Text('Hurtig:',
+                      style: TextStyle(color: _textMuted, fontSize: 12)),
+                  const SizedBox(width: 8),
+                  for (final t in const [
+                    TimeOfDay(hour: 18, minute: 0),
+                    TimeOfDay(hour: 19, minute: 30),
+                    TimeOfDay(hour: 20, minute: 0),
+                  ])
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: ActionChip(
+                        label: Text(
+                            '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}'),
+                        onPressed: () => Navigator.pop(sheetCtx, t),
+                        backgroundColor: _surfaceElevated,
+                        side: BorderSide.none,
+                      ),
+                    ),
+                ]),
+              ),
               const Divider(height: 1, color: _borderSubtle),
               // Wheels
               Expanded(

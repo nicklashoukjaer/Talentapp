@@ -20,6 +20,9 @@ class _AfstemningerTabState extends State<AfstemningerTab> {
     _load();
   }
 
+  /// Offentligt genindlæs — kaldes fx efter en ny afstemning er oprettet via FAB.
+  void reload() => _load();
+
   Future<void> _load() async {
     setState(() { _loading = true; _error = null; });
     try {
@@ -65,7 +68,7 @@ class _AfstemningerTabState extends State<AfstemningerTab> {
     return RefreshIndicator(
       onRefresh: _load,
       child: ListView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
         children: [
           Center(
             child: ConstrainedBox(

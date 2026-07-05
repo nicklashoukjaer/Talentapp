@@ -883,6 +883,7 @@ class _TeamAssignCardState extends State<_TeamAssignCard> {
   List<Map<String, dynamic>> _groups = const [];
   List<Map<String, dynamic>> _members = const [];
   Map<String, Set<String>> _membership = {}; // user_id → gruppe-id'er
+  Map<String, int> _skyldigt = {};           // user_id → ubetalt øre
   bool _loading = true;
   String? _filterGroupId; // null = Alle
 
@@ -899,21 +900,115 @@ class _TeamAssignCardState extends State<_TeamAssignCard> {
         supabase.from('groups').select('id, navn, type, farve, sort').order('sort'),
         supabase.from('profiles').select('id, navn, rolle').order('navn'),
         supabase.from('group_members').select('group_id, user_id'),
+        supabase.from('fine_leaderboard').select('id, skyldigt_oere'),
       ]);
       final gm = List<Map<String, dynamic>>.from(res[2] as List);
       final map = <String, Set<String>>{};
       for (final r in gm) {
         (map[r['user_id'] as String] ??= {}).add(r['group_id'] as String);
       }
+      final skyldigt = <String, int>{};
+      for (final r in List<Map<String, dynamic>>.from(res[3] as List)) {
+        skyldigt[r['id'] as String] = (r['skyldigt_oere'] as num?)?.toInt() ?? 0;
+      }
       if (!mounted) return;
       setState(() {
         _groups = List<Map<String, dynamic>>.from(res[0] as List);
         _members = List<Map<String, dynamic>>.from(res[1] as List);
         _membership = map;
+        _skyldigt = skyldigt;
         _loading = false;
       });
     } catch (e) {
       if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _deleteMember(Map<String, dynamic> m) async {
+    final id = m['id'] as String;
+    final navn = m['navn'] as String;
+    final skyldigt = _skyldigt[id] ?? 0;
+    final ok = await showModalBottomSheet<bool>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => SafeArea(
+        top: false,
+        child: Container(
+          margin: const EdgeInsets.all(12),
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: _surfaceDark,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: _borderSubtle),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Center(
+                child: Container(
+                  width: 52, height: 52,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                      color: _danger.withValues(alpha: 0.16), shape: BoxShape.circle),
+                  child: const Icon(Icons.delete_outline, color: _danger, size: 26),
+                ),
+              ),
+              const SizedBox(height: 14),
+              Text('Fjern $navn?',
+                  textAlign: TextAlign.center,
+                  style: _cond(size: 20, weight: FontWeight.w800)),
+              const SizedBox(height: 8),
+              Text(
+                'Personen fjernes HELT fra appen — medlemmer, bødekassen, '
+                'afstemninger og alle begivenheder. Det kan ikke fortrydes.',
+                textAlign: TextAlign.center,
+                style: _body(size: 13, color: _textSecondary),
+              ),
+              if (skyldigt > 0) ...[
+                const SizedBox(height: 14),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: _gold.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: _gold.withValues(alpha: 0.4)),
+                  ),
+                  child: Row(children: [
+                    const Icon(Icons.warning_amber_rounded, color: _gold, size: 20),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                          '$navn har ${_fmtKr(skyldigt)} ubetalt — beløbet slettes med personen.',
+                          style: _body(size: 12, color: _textPrimary)),
+                    ),
+                  ]),
+                ),
+              ],
+              const SizedBox(height: 18),
+              FilledButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                style: FilledButton.styleFrom(backgroundColor: _danger),
+                child: const Text('Ja, fjern medlem'),
+              ),
+              const SizedBox(height: 8),
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                style: TextButton.styleFrom(foregroundColor: _textSecondary),
+                child: const Text('Annullér'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (ok != true) return;
+    try {
+      await supabase.rpc('admin_delete_member', params: {'p_user_id': id});
+      if (mounted) _snack(context, '$navn er fjernet', _textSecondary);
+      _load();
+    } on PostgrestException catch (e) {
+      if (mounted) _snack(context, e.message, _danger);
     }
   }
 
@@ -1096,8 +1191,10 @@ class _TeamAssignCardState extends State<_TeamAssignCard> {
     final rolle = m['rolle'] as String? ?? 'medlem';
     final mine = _membership[userId] ?? const <String>{};
     final myGroups = _groups.where((g) => mine.contains(g['id'])).toList();
-    return InkWell(
+    final isMe = userId == supabase.auth.currentUser?.id;
+    final row = InkWell(
       onTap: () => _editMember(m),
+      onLongPress: isMe ? null : () => _deleteMember(m),
       borderRadius: BorderRadius.circular(10),
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 8),
@@ -1138,6 +1235,26 @@ class _TeamAssignCardState extends State<_TeamAssignCard> {
             ),
         ]),
       ),
+    );
+    if (isMe) return row;
+    return Dismissible(
+      key: ValueKey('mbr_$userId'),
+      direction: DismissDirection.endToStart,
+      background: Container(
+        alignment: Alignment.centerRight,
+        padding: const EdgeInsets.only(right: 20),
+        margin: const EdgeInsets.symmetric(vertical: 2),
+        decoration: BoxDecoration(
+          color: _danger.withValues(alpha: 0.18),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: const Icon(Icons.delete_outline, color: _danger),
+      ),
+      confirmDismiss: (_) async {
+        await _deleteMember(m);
+        return false;
+      },
+      child: row,
     );
   }
 

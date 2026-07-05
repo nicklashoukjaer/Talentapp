@@ -2,6 +2,32 @@
 // ignore_for_file: deprecated_member_use, avoid_web_libraries_in_flutter
 part of '../main.dart';
 
+/// Grupperet felt-container med lille overskrift — samler fx dato+tid visuelt
+/// så det er tydeligt de hører sammen (design 10a/10b).
+Widget _fieldGroup(String heading, List<Widget> children) {
+  return Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Padding(
+        padding: const EdgeInsets.only(left: 4, bottom: 8),
+        child: Text(heading,
+            style: _body(
+                size: 11, weight: FontWeight.w700, spacing: 1, color: _textSecondary)),
+      ),
+      Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: _bgBlack,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: _borderSubtle),
+        ),
+        child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch, children: children),
+      ),
+    ],
+  );
+}
+
 class _QuickDateTimeField extends StatefulWidget {
   final String label;
   final DateTime? value;

@@ -146,20 +146,22 @@ class _CreatePollDialogState extends State<CreatePollDialog> {
                   maxLines: 2,
                 ),
                 const SizedBox(height: 20),
-                _QuickDateTimeField(
-                  label: 'Stemmefrist (valgfri)',
-                  value: _frist,
-                  onChanged: (v) => setState(() => _frist = v),
-                ),
-                Padding(
-                  padding: const EdgeInsets.only(top: 4, left: 4, bottom: 4),
-                  child: Text(
-                    _frist == null
-                        ? 'Tom = åben indtil du selv lukker den'
-                        : 'Afstemningen lukker automatisk — ingen kan stemme efter',
-                    style: const TextStyle(color: _textMuted, fontSize: 11),
+                _fieldGroup('STEMMEFRIST · valgfri', [
+                  _QuickDateTimeField(
+                    label: 'Dato',
+                    value: _frist,
+                    onChanged: (v) => setState(() => _frist = v),
                   ),
-                ),
+                  Padding(
+                    padding: const EdgeInsets.only(top: 6, left: 2),
+                    child: Text(
+                      _frist == null
+                          ? 'Tom = åben indtil du selv lukker den'
+                          : 'Afstemningen lukker automatisk — ingen kan stemme efter',
+                      style: const TextStyle(color: _textMuted, fontSize: 11),
+                    ),
+                  ),
+                ]),
                 const SizedBox(height: 20),
                 Row(
                   children: [

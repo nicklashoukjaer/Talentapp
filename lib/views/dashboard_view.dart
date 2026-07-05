@@ -2998,29 +2998,36 @@ class _CreateTrainingDialogState extends State<CreateTrainingDialog> {
                   ],
                 ),
                 const SizedBox(height: 20),
-                _dateField(),
-                const SizedBox(height: 12),
-                Row(children: [
-                  Expanded(child: _timeField('Fra', _fra, (t) => setState(() => _fra = t))),
-                  const SizedBox(width: 12),
-                  Expanded(child: _timeField('Til (valgfri)', _til, (t) => setState(() => _til = t))),
+                _fieldGroup('DATO & TIDSPUNKT', [
+                  _dateField(),
+                  const SizedBox(height: 10),
+                  Row(children: [
+                    Expanded(child: _timeField('Fra', _fra, (t) => setState(() => _fra = t))),
+                    const Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 6),
+                      child: Icon(Icons.arrow_forward, size: 16, color: _textMuted),
+                    ),
+                    Expanded(child: _timeField('Til · valgfri', _til, (t) => setState(() => _til = t))),
+                  ]),
                 ]),
-                const SizedBox(height: 12),
-                _QuickDateTimeField(
-                  label: 'Tilmeldingsfrist (valgfri)',
-                  value: _deadline,
-                  fallbackDate: _dato,
-                  onChanged: (v) => setState(() => _deadline = v),
-                ),
-                Padding(
-                  padding: const EdgeInsets.only(top: 4, left: 4),
-                  child: Text(
-                    _deadline == null
-                        ? 'Tom = åben til begivenheden begynder'
-                        : ' ',
-                    style: const TextStyle(color: _textMuted, fontSize: 11),
+                const SizedBox(height: 16),
+                _fieldGroup('TILMELDINGSFRIST · valgfri', [
+                  _QuickDateTimeField(
+                    label: 'Dato',
+                    value: _deadline,
+                    fallbackDate: _dato,
+                    onChanged: (v) => setState(() => _deadline = v),
                   ),
-                ),
+                  Padding(
+                    padding: const EdgeInsets.only(top: 6, left: 2),
+                    child: Text(
+                      _deadline == null
+                          ? 'Tom = åben til begivenheden begynder'
+                          : 'Tilmelding lukker på dette tidspunkt',
+                      style: const TextStyle(color: _textMuted, fontSize: 11),
+                    ),
+                  ),
+                ]),
                 const SizedBox(height: 20),
                 Container(
                   decoration: BoxDecoration(

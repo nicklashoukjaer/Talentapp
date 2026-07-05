@@ -308,7 +308,7 @@ class _HomeShellState extends State<HomeShell> {
       (icon: Icons.how_to_vote_outlined, selectedIcon: Icons.how_to_vote, label: 'Afstemninger'),
       (icon: Icons.person_outline, selectedIcon: Icons.person, label: 'Min profil'),
       if (_isStaff)
-        (icon: Icons.dashboard_outlined, selectedIcon: Icons.dashboard, label: 'Dashboard'),
+        (icon: Icons.settings_outlined, selectedIcon: Icons.settings, label: 'Admin'),
     ];
 
     final pages = <Widget>[

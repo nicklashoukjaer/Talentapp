@@ -55,6 +55,122 @@ void _snack(BuildContext ctx, String text, Color color) {
   );
 }
 
+/// Puls-skeleton-blok til loading-tilstande (i stedet for en spinner på tom flade).
+class _Skeleton extends StatefulWidget {
+  final double height;
+  final double width;
+  final double radius;
+  const _Skeleton({this.height = 14, this.width = double.infinity, this.radius = 8});
+  @override
+  State<_Skeleton> createState() => _SkeletonState();
+}
+
+class _SkeletonState extends State<_Skeleton>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(
+      vsync: this, duration: const Duration(milliseconds: 900))
+    ..repeat(reverse: true);
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _c,
+      builder: (_, __) => Container(
+        height: widget.height,
+        width: widget.width,
+        decoration: BoxDecoration(
+          color: Color.lerp(_surfaceDark, _surfaceElevated, _c.value),
+          borderRadius: BorderRadius.circular(widget.radius),
+        ),
+      ),
+    );
+  }
+}
+
+/// Nogle kort-formede skeletons — samme form som rigtige kort.
+Widget _skeletonCards({int count = 4}) {
+  return Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      for (var i = 0; i < count; i++)
+        Container(
+          margin: const EdgeInsets.only(bottom: 14),
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: _surfaceDark,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: _borderSubtle),
+          ),
+          child: const Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _Skeleton(height: 12, width: 90, radius: 999),
+              SizedBox(height: 14),
+              _Skeleton(height: 18, width: 170),
+              SizedBox(height: 8),
+              _Skeleton(height: 12, width: 230),
+              SizedBox(height: 16),
+              Row(children: [
+                Expanded(child: _Skeleton(height: 42, radius: 12)),
+                SizedBox(width: 8),
+                Expanded(child: _Skeleton(height: 42, radius: 12)),
+              ]),
+            ],
+          ),
+        ),
+    ],
+  );
+}
+
+/// Loading-skærm med skeleton-kort (i stedet for en spinner på tom flade).
+Widget _loadingSkeleton() => ListView(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
+      children: [
+        Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 760),
+            child: _skeletonCards(),
+          ),
+        ),
+      ],
+    );
+
+/// Rolig tom-tilstand: ikon + titel + evt. undertekst.
+class _EmptyState extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String? subtitle;
+  const _EmptyState({required this.icon, required this.title, this.subtitle});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.all(40),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 64, color: _textMuted),
+          const SizedBox(height: 16),
+          Text(title,
+              textAlign: TextAlign.center, style: theme.textTheme.titleMedium),
+          if (subtitle != null) ...[
+            const SizedBox(height: 6),
+            Text(subtitle!,
+                textAlign: TextAlign.center, style: theme.textTheme.bodySmall),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
 class _ErrorView extends StatelessWidget {
   final String       error;
   final VoidCallback onRetry;

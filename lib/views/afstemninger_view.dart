@@ -47,20 +47,14 @@ class _AfstemningerTabState extends State<AfstemningerTab> {
 
   @override
   Widget build(BuildContext context) {
-    if (_loading) return const Center(child: CircularProgressIndicator());
+    if (_loading) return _loadingSkeleton();
     if (_error != null) return _ErrorView(error: _error!, onRetry: _load);
     if (_polls.isEmpty) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(32),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(Icons.how_to_vote_outlined, size: 64, color: _textMuted),
-              const SizedBox(height: 16),
-              const Text('Ingen aktive afstemninger'),
-            ],
-          ),
+      return const Center(
+        child: _EmptyState(
+          icon: Icons.how_to_vote_outlined,
+          title: 'Ingen afstemninger endnu',
+          subtitle: 'Tryk + for at oprette en afstemning',
         ),
       );
     }

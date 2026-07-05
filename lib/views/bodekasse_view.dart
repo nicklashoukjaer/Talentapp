@@ -85,7 +85,7 @@ class BodekasseTabState extends State<BodekasseTab> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    if (_loading) return const Center(child: CircularProgressIndicator());
+    if (_loading) return _loadingSkeleton();
     if (_error != null) return _ErrorView(error: _error!, onRetry: reload);
 
     return RefreshIndicator(
@@ -155,9 +155,10 @@ class BodekasseTabState extends State<BodekasseTab> {
                     }),
                   ),
                   if (_rows.isEmpty)
-                    const Padding(
-                      padding: EdgeInsets.all(32),
-                      child: Center(child: Text('Ingen profiler endnu')),
+                    const _EmptyState(
+                      icon: Icons.emoji_events_outlined,
+                      title: 'Ingen bøder endnu',
+                      subtitle: 'Bødekassen fyldes når nogen får en bøde',
                     )
                   else ...[
                     _Podium(

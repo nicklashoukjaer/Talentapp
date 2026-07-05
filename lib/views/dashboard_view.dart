@@ -1494,7 +1494,7 @@ class _MemberRolesCardState extends State<_MemberRolesCard> {
                 final (rolleLabel, rolleColor) = switch (rolle) {
                   'admin'  => ('ADMIN',  _neon),
                   'træner' => ('TRÆNER', Colors.lightBlue.shade300),
-                  _        => ('MEDLEM', _textSecondary),
+                  _        => ('SPILLER', _textSecondary),
                 };
 
                 return Padding(
@@ -1590,7 +1590,7 @@ class _MemberRolesCardState extends State<_MemberRolesCard> {
                                   ),
                                   items: const [
                                     DropdownMenuItem(value: 'medlem',
-                                        child: Text('Medlem', style: TextStyle(fontSize: 13))),
+                                        child: Text('Spiller', style: TextStyle(fontSize: 13))),
                                     DropdownMenuItem(value: 'træner',
                                         child: Text('Træner', style: TextStyle(fontSize: 13))),
                                     DropdownMenuItem(value: 'admin',

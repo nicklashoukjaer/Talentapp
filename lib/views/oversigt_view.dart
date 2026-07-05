@@ -389,7 +389,7 @@ class _OversigtTabState extends State<OversigtTab> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    if (_loading) return const Center(child: CircularProgressIndicator());
+    if (_loading) return _loadingSkeleton();
     if (_error != null) return _ErrorView(error: _error!, onRetry: reload);
 
     final polls        = _items.whereType<_PollFeedItem>().toList();

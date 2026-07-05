@@ -609,11 +609,21 @@ class _OversigtTabState extends State<OversigtTab> {
                     if (showingTrainings && !_showHistory)
                       Padding(
                         padding: const EdgeInsets.only(bottom: 14),
-                        child: _NextUpHero(
-                          item: visible.first as _TrainingFeedItem,
-                          isAdmin: widget.isAdmin,
-                          onSignUp:  () => _signUp(visible.first as _TrainingFeedItem),
-                          onDecline: () => _decline(visible.first as _TrainingFeedItem),
+                        child: GestureDetector(
+                          onTap: () => Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => EventDetailScreen(
+                                training: (visible.first as _TrainingFeedItem).training,
+                                isStaff: widget.isAdmin,
+                              ),
+                            ),
+                          ).then((_) => reload()),
+                          child: _NextUpHero(
+                            item: visible.first as _TrainingFeedItem,
+                            isAdmin: widget.isAdmin,
+                            onSignUp:  () => _signUp(visible.first as _TrainingFeedItem),
+                            onDecline: () => _decline(visible.first as _TrainingFeedItem),
+                          ),
                         ),
                       ),
                     // På bred skærm i historik erstattes kort-listen af matrixen
@@ -2202,6 +2212,53 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
     }
   }
 
+  Future<void> _edit() async {
+    final changed = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _EditEventSheet(training: widget.training),
+    );
+    if (changed == true && mounted) Navigator.of(context).pop(true);
+  }
+
+  Future<void> _delete() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Slet begivenhed?'),
+        content: Text('"${widget.training['titel']}" og alle tilmeldinger '
+            'fjernes permanent for alle.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Annullér')),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(backgroundColor: _danger),
+            child: const Text('Slet'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    setState(() => _busy = true);
+    try {
+      final id = widget.training['id'];
+      await supabase.from('training_participants').delete().eq('training_id', id);
+      await supabase.from('trainings').delete().eq('id', id);
+      if (mounted) {
+        _snack(context, 'Begivenhed slettet', _textSecondary);
+        Navigator.of(context).pop(true);
+      }
+    } on PostgrestException catch (e) {
+      if (mounted) {
+        _snack(context, e.message, _danger);
+        setState(() => _busy = false);
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -2214,7 +2271,17 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
     final hasAddr = adresse.isNotEmpty && adresse != _addressUnspecified;
 
     return Scaffold(
-      appBar: AppBar(title: Text((t['titel'] as String).toUpperCase())),
+      appBar: AppBar(
+        title: Text((t['titel'] as String).toUpperCase()),
+        actions: [
+          if (widget.isStaff)
+            IconButton(
+              onPressed: _busy ? null : _edit,
+              icon: const Icon(Icons.edit_outlined),
+              tooltip: 'Redigér',
+            ),
+        ],
+      ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : _error != null
@@ -2290,6 +2357,21 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                                   onPressed: _busy ? null : _remindMissing,
                                   icon: const Icon(Icons.notifications_active_outlined, size: 18),
                                   label: const Text('Påmind alle der mangler'),
+                                ),
+                              ),
+                            ],
+                            if (widget.isStaff) ...[
+                              const SizedBox(height: 20),
+                              SizedBox(
+                                width: double.infinity,
+                                child: OutlinedButton.icon(
+                                  onPressed: _busy ? null : _delete,
+                                  icon: const Icon(Icons.delete_outline, size: 18),
+                                  label: const Text('Slet begivenhed'),
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: _danger,
+                                    side: const BorderSide(color: _danger),
+                                  ),
                                 ),
                               ),
                             ],
@@ -2400,6 +2482,243 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
           border: Border.all(color: color.withValues(alpha: 0.5)),
         ),
         child: Icon(icon, size: 18, color: color),
+      ),
+    );
+  }
+}
+
+/// Redigér begivenhed (11b) — bundsheet med grupperede dato/tid-felter.
+class _EditEventSheet extends StatefulWidget {
+  final Map<String, dynamic> training;
+  const _EditEventSheet({required this.training});
+  @override
+  State<_EditEventSheet> createState() => _EditEventSheetState();
+}
+
+class _EditEventSheetState extends State<_EditEventSheet> {
+  late final TextEditingController _titel;
+  late final TextEditingController _adresse;
+  late final TextEditingController _maxCtrl;
+  DateTime? _dato;
+  TimeOfDay? _fra;
+  TimeOfDay? _til;
+  bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final t = widget.training;
+    _titel = TextEditingController(text: t['titel'] as String? ?? '');
+    final adr = t['adresse'] as String? ?? '';
+    _adresse = TextEditingController(text: adr == _addressUnspecified ? '' : adr);
+    final mx = t['max_deltagere'];
+    _maxCtrl = TextEditingController(text: mx == null ? '' : '$mx');
+    final start = DateTime.parse(t['start_tid'] as String).toLocal();
+    _dato = DateTime(start.year, start.month, start.day);
+    _fra = TimeOfDay(hour: start.hour, minute: start.minute);
+    if (t['slut_tid'] != null) {
+      final slut = DateTime.parse(t['slut_tid'] as String).toLocal();
+      _til = TimeOfDay(hour: slut.hour, minute: slut.minute);
+    }
+  }
+
+  @override
+  void dispose() {
+    _titel.dispose();
+    _adresse.dispose();
+    _maxCtrl.dispose();
+    super.dispose();
+  }
+
+  static DateTime _combine(DateTime d, TimeOfDay t) =>
+      DateTime(d.year, d.month, d.day, t.hour, t.minute);
+
+  Future<void> _save() async {
+    if (_titel.text.trim().isEmpty) {
+      _snack(context, 'Titel er påkrævet', _gold);
+      return;
+    }
+    if (_dato == null || _fra == null) {
+      _snack(context, 'Vælg dato og fra-tid', _gold);
+      return;
+    }
+    final start = _combine(_dato!, _fra!);
+    final slut =
+        _til != null ? _combine(_dato!, _til!) : start.add(const Duration(minutes: 90));
+    if (!slut.isAfter(start)) {
+      _snack(context, 'Til-tid skal være efter fra-tid', _gold);
+      return;
+    }
+    setState(() => _saving = true);
+    try {
+      final maxRaw = _maxCtrl.text.trim();
+      await supabase.from('trainings').update({
+        'titel': _titel.text.trim(),
+        'start_tid': start.toUtc().toIso8601String(),
+        'slut_tid': slut.toUtc().toIso8601String(),
+        'adresse': _adresse.text.trim().isEmpty
+            ? _addressUnspecified
+            : _adresse.text.trim(),
+        'max_deltagere': maxRaw.isEmpty ? null : int.tryParse(maxRaw),
+      }).eq('id', widget.training['id']);
+      if (mounted) {
+        _snack(context, 'Begivenhed opdateret', _success);
+        Navigator.pop(context, true);
+      }
+    } on PostgrestException catch (e) {
+      if (mounted) {
+        _snack(context, e.message, _danger);
+        setState(() => _saving = false);
+      }
+    }
+  }
+
+  Widget _dateField() => InkWell(
+        onTap: () async {
+          final d = await _showQuickDatePicker(context, _dato ?? DateTime.now());
+          if (d != null) setState(() => _dato = d);
+        },
+        borderRadius: BorderRadius.circular(11),
+        child: InputDecorator(
+          decoration: const InputDecoration(
+              labelText: 'Dato', prefixIcon: Icon(Icons.event)),
+          child: Text(_dato == null ? 'Vælg dato' : _fmtDate(_dato!),
+              style: TextStyle(color: _dato == null ? _textMuted : null)),
+        ),
+      );
+
+  Widget _timeField(String label, TimeOfDay? v, ValueChanged<TimeOfDay?> onCh) =>
+      InkWell(
+        onTap: () async {
+          final t = await _showQuickTimePicker(context, v);
+          if (t != null) onCh(t);
+        },
+        borderRadius: BorderRadius.circular(11),
+        child: InputDecorator(
+          decoration: InputDecoration(
+              labelText: label, prefixIcon: const Icon(Icons.schedule, size: 18)),
+          child: Text(
+            v == null
+                ? 'Vælg tid'
+                : '${v.hour.toString().padLeft(2, '0')}:${v.minute.toString().padLeft(2, '0')}',
+            style: TextStyle(
+                color: v == null ? _textMuted : _neon,
+                fontWeight: FontWeight.w700,
+                letterSpacing: v == null ? 0 : 1.2),
+          ),
+        ),
+      );
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      child: Container(
+        constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(context).size.height * 0.92),
+        decoration: const BoxDecoration(
+          color: _surfaceDark,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          border: Border(top: BorderSide(color: _borderSubtle)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 40, height: 4,
+              margin: const EdgeInsets.only(top: 10, bottom: 6),
+              decoration: BoxDecoration(
+                  color: _borderSubtle, borderRadius: BorderRadius.circular(999)),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 4, 10, 6),
+              child: Row(children: [
+                Expanded(child: Text('REDIGÉR BEGIVENHED',
+                    style: theme.textTheme.titleLarge)),
+                IconButton(
+                  onPressed: _saving ? null : () => Navigator.pop(context),
+                  icon: const Icon(Icons.close),
+                  color: _textSecondary,
+                ),
+              ]),
+            ),
+            Flexible(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    TextField(
+                      controller: _titel,
+                      decoration: const InputDecoration(labelText: 'Titel'),
+                    ),
+                    const SizedBox(height: 16),
+                    _fieldGroup('DATO & TIDSPUNKT', [
+                      _dateField(),
+                      const SizedBox(height: 10),
+                      Row(children: [
+                        Expanded(child: _timeField('Fra', _fra, (t) => setState(() => _fra = t))),
+                        const Padding(
+                          padding: EdgeInsets.symmetric(horizontal: 6),
+                          child: Icon(Icons.arrow_forward, size: 16, color: _textMuted),
+                        ),
+                        Expanded(child: _timeField('Til · valgfri', _til, (t) => setState(() => _til = t))),
+                      ]),
+                    ]),
+                    const SizedBox(height: 16),
+                    Row(children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _maxCtrl,
+                          keyboardType: TextInputType.number,
+                          inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                          decoration: const InputDecoration(
+                              labelText: 'Max', hintText: '∞'),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        flex: 2,
+                        child: TextField(
+                          controller: _adresse,
+                          decoration: const InputDecoration(labelText: 'Sted'),
+                        ),
+                      ),
+                    ]),
+                  ],
+                ),
+              ),
+            ),
+            Container(
+              decoration: const BoxDecoration(
+                border: Border(top: BorderSide(color: _borderSubtle)),
+              ),
+              padding: EdgeInsets.fromLTRB(
+                  16, 12, 16, 12 + MediaQuery.of(context).padding.bottom),
+              child: Row(children: [
+                Expanded(
+                  child: TextButton(
+                    onPressed: _saving ? null : () => Navigator.pop(context),
+                    style: TextButton.styleFrom(foregroundColor: _textSecondary),
+                    child: const Text('Annullér'),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  flex: 2,
+                  child: FilledButton(
+                    onPressed: _saving ? null : _save,
+                    child: _saving
+                        ? const SizedBox(width: 18, height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                        : const Text('Gem ændringer'),
+                  ),
+                ),
+              ]),
+            ),
+          ],
+        ),
       ),
     );
   }

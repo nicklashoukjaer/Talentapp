@@ -3,7 +3,8 @@
 part of '../main.dart';
 
 class AfstemningerTab extends StatefulWidget {
-  const AfstemningerTab({super.key});
+  final bool isStaff; // admin/træner → må slette afstemninger
+  const AfstemningerTab({super.key, this.isStaff = false});
   @override
   State<AfstemningerTab> createState() => _AfstemningerTabState();
 }
@@ -43,6 +44,54 @@ class _AfstemningerTabState extends State<AfstemningerTab> {
     Navigator.of(context).push(MaterialPageRoute(
       builder: (_) => PollDetailScreen(poll: poll),
     )).then((_) => _load());
+  }
+
+  Future<void> _deletePoll(Map<String, dynamic> poll) async {
+    final id = poll['id'] as String;
+    final titel = poll['titel'] as String? ?? 'afstemning';
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Slet afstemning?'),
+        content: Text('"$titel" og alle stemmer fjernes permanent.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Annullér')),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(backgroundColor: _danger),
+            child: const Text('Slet'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    try {
+      final opts =
+          await supabase.from('poll_options').select('id').eq('poll_id', id);
+      final optIds = (opts as List).map((o) => o['id'] as String).toList();
+      if (optIds.isNotEmpty) {
+        await supabase
+            .from('poll_responses')
+            .delete()
+            .inFilter('poll_option_id', optIds);
+      }
+      await supabase.from('poll_options').delete().eq('poll_id', id);
+      final deleted =
+          await supabase.from('polls').delete().eq('id', id).select();
+      if (!mounted) return;
+      _snack(
+        context,
+        (deleted as List).isEmpty
+            ? 'Kunne ikke slette — mangler du rettigheder?'
+            : 'Afstemning slettet',
+        (deleted).isEmpty ? _danger : _textSecondary,
+      );
+      _load();
+    } on PostgrestException catch (e) {
+      if (mounted) _snack(context, e.message, _danger);
+    }
   }
 
   @override
@@ -180,9 +229,23 @@ class _AfstemningerTabState extends State<AfstemningerTab> {
                                     const Spacer(),
                                     Text(lukkeInfo,
                                         style: _body(size: 12, color: _textSecondary)),
-                                    const SizedBox(width: 6),
-                                    const Icon(Icons.chevron_right,
-                                        size: 20, color: _textMuted),
+                                    if (widget.isStaff)
+                                      IconButton(
+                                        onPressed: () => _deletePoll(p),
+                                        icon: const Icon(Icons.delete_outline,
+                                            size: 19, color: _danger),
+                                        tooltip: 'Slet afstemning',
+                                        visualDensity: VisualDensity.compact,
+                                        padding: EdgeInsets.zero,
+                                        constraints: const BoxConstraints(
+                                            minWidth: 34, minHeight: 34),
+                                      )
+                                    else
+                                      const Padding(
+                                        padding: EdgeInsets.only(left: 6),
+                                        child: Icon(Icons.chevron_right,
+                                            size: 20, color: _textMuted),
+                                      ),
                                   ]),
                                   const SizedBox(height: 10),
                                   Text(p['titel'] as String,

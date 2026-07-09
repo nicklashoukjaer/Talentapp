@@ -98,7 +98,7 @@ class DashboardTabState extends State<DashboardTab> {
     setState(() { _loadingFines = true; _finesError = null; });
     try {
       final results = await Future.wait([
-        supabase.from('profiles').select('id, navn, rolle').order('navn'),
+        supabase.from('profiles').select('id, navn, rolle, email').order('navn'),
         supabase.from('fine_types').select('id, titel, belob_oere, aktiv').order('titel'),
         // VIGTIGT: profiles har 3 FK'er fra fines (user_id, given_by, approved_by)
         // — disambigueres med fines_user_id_fkey
@@ -560,6 +560,7 @@ class DashboardTabState extends State<DashboardTab> {
             profiles: _profiles,
             currentUserId: currentUserId ?? '',
             onChangeRole: _changeRole,
+            onReload: reloadFines,
           ),
         ],
       ],
@@ -1399,28 +1400,30 @@ class _MemberRolesCard extends StatefulWidget {
   final List<Map<String, dynamic>> profiles;
   final String currentUserId;
   final Future<void> Function(String userId, String newRole) onChangeRole;
+  final Future<void> Function() onReload;
   const _MemberRolesCard({
     required this.profiles,
     required this.currentUserId,
     required this.onChangeRole,
+    required this.onReload,
   });
   @override
   State<_MemberRolesCard> createState() => _MemberRolesCardState();
 }
 
 class _MemberRolesCardState extends State<_MemberRolesCard> {
-  final Set<String> _saving = {};
-
-  Future<void> _setRole(Map<String, dynamic> profile, String newRole) async {
-    final id = profile['id'] as String;
-    setState(() => _saving.add(id));
-    try {
-      await widget.onChangeRole(id, newRole);
-    } catch (_) {
-      // _changeRole viser allerede fejl-snack
-    } finally {
-      if (mounted) setState(() => _saving.remove(id));
-    }
+  Future<void> _editUser(Map<String, dynamic> p) async {
+    final changed = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _EditUserSheet(
+        profile: p,
+        isMe: p['id'] == widget.currentUserId,
+        onChangeRole: widget.onChangeRole,
+      ),
+    );
+    if (changed == true) await widget.onReload();
   }
 
   @override
@@ -1489,7 +1492,6 @@ class _MemberRolesCardState extends State<_MemberRolesCard> {
                 final navn  = p['navn']  as String;
                 final rolle = p['rolle'] as String;
                 final isMe  = id == widget.currentUserId;
-                final saving = _saving.contains(id);
 
                 final (rolleLabel, rolleColor) = switch (rolle) {
                   'admin'  => ('ADMIN',  _neon),
@@ -1497,8 +1499,11 @@ class _MemberRolesCardState extends State<_MemberRolesCard> {
                   _        => ('SPILLER', _textSecondary),
                 };
 
-                return Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 6),
+                return InkWell(
+                  onTap: () => _editUser(p),
+                  borderRadius: BorderRadius.circular(10),
+                  child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
                   child: Row(
                     children: [
                       CircleAvatar(
@@ -1562,49 +1567,264 @@ class _MemberRolesCardState extends State<_MemberRolesCard> {
                         ),
                       ),
                       const SizedBox(width: 8),
-                      if (isMe)
-                        Tooltip(
-                          message: 'Du kan ikke ændre din egen rolle',
-                          child: Container(
-                            width: 40, height: 40,
-                            alignment: Alignment.center,
-                            child: Icon(Icons.lock_outline,
-                                size: 18, color: _textMuted),
-                          ),
-                        )
-                      else
-                        SizedBox(
-                          width: 130,
-                          child: saving
-                              ? const Center(
-                                  child: SizedBox(width: 18, height: 18,
-                                      child: CircularProgressIndicator(strokeWidth: 2)))
-                              : DropdownButtonFormField<String>(
-                                  value: rolle,
-                                  isDense: true,
-                                  isExpanded: true,
-                                  decoration: const InputDecoration(
-                                    isDense: true,
-                                    contentPadding: EdgeInsets.symmetric(
-                                        horizontal: 10, vertical: 6),
-                                  ),
-                                  items: const [
-                                    DropdownMenuItem(value: 'medlem',
-                                        child: Text('Spiller', style: TextStyle(fontSize: 13))),
-                                    DropdownMenuItem(value: 'træner',
-                                        child: Text('Træner', style: TextStyle(fontSize: 13))),
-                                    DropdownMenuItem(value: 'admin',
-                                        child: Text('Admin', style: TextStyle(fontSize: 13))),
-                                  ],
-                                  onChanged: (v) {
-                                    if (v != null && v != rolle) _setRole(p, v);
-                                  },
-                                ),
-                        ),
+                      Icon(Icons.edit_outlined, size: 18, color: _textMuted),
                     ],
+                  ),
                   ),
                 );
               }),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Admin-visning: redigér et medlem — navn, rolle og nulstil kodeord.
+class _EditUserSheet extends StatefulWidget {
+  final Map<String, dynamic> profile;
+  final bool isMe;
+  final Future<void> Function(String userId, String newRole) onChangeRole;
+  const _EditUserSheet({
+    required this.profile,
+    required this.isMe,
+    required this.onChangeRole,
+  });
+  @override
+  State<_EditUserSheet> createState() => _EditUserSheetState();
+}
+
+class _EditUserSheetState extends State<_EditUserSheet> {
+  late final TextEditingController _navn =
+      TextEditingController(text: widget.profile['navn'] as String? ?? '');
+  late String _rolle = widget.profile['rolle'] as String? ?? 'medlem';
+  bool _saving = false;
+  bool _sendingReset = false;
+
+  String get _id => widget.profile['id'] as String;
+  String? get _email => widget.profile['email'] as String?;
+
+  @override
+  void dispose() {
+    _navn.dispose();
+    super.dispose();
+  }
+
+  Future<void> _sendReset() async {
+    final email = _email;
+    if (email == null || email.isEmpty) {
+      _snack(context, 'Medlemmet har ingen e-mail registreret', _gold);
+      return;
+    }
+    setState(() => _sendingReset = true);
+    try {
+      await supabase.auth.resetPasswordForEmail(email);
+      if (mounted) _snack(context, 'Nulstil-mail sendt til $email', _success);
+    } on AuthException catch (e) {
+      if (mounted) _snack(context, e.message, _danger);
+    } catch (e) {
+      if (mounted) _snack(context, 'Kunne ikke sende mail: $e', _danger);
+    } finally {
+      if (mounted) setState(() => _sendingReset = false);
+    }
+  }
+
+  Future<void> _save() async {
+    final navn = _navn.text.trim();
+    if (navn.isEmpty) {
+      _snack(context, 'Navn må ikke være tomt', _gold);
+      return;
+    }
+    setState(() => _saving = true);
+    try {
+      final origNavn  = widget.profile['navn'] as String? ?? '';
+      final origRolle = widget.profile['rolle'] as String? ?? 'medlem';
+      if (navn != origNavn) {
+        await supabase.from('profiles').update({'navn': navn}).eq('id', _id);
+      }
+      if (!widget.isMe && _rolle != origRolle) {
+        await widget.onChangeRole(_id, _rolle);
+      }
+      if (!mounted) return;
+      _snack(context, 'Medlem opdateret', _success);
+      Navigator.of(context).pop(true);
+    } on PostgrestException catch (e) {
+      if (mounted) _snack(context, e.message, _danger);
+    } catch (e) {
+      if (mounted) _snack(context, 'Kunne ikke gemme: $e', _danger);
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Widget _roleChip(String label, String value) {
+    final active = _rolle == value;
+    return Expanded(
+      child: GestureDetector(
+        onTap: widget.isMe ? null : () => setState(() => _rolle = value),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: active ? _neon : Colors.transparent,
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Text(label,
+              style: _body(
+                  size: 13,
+                  weight: FontWeight.w700,
+                  color: active ? Colors.white : _textSecondary)),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      child: Container(
+        constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(context).size.height * 0.9),
+        decoration: const BoxDecoration(
+          color: _surfaceDark,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          border: Border(top: BorderSide(color: _borderSubtle)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 40, height: 4,
+              margin: const EdgeInsets.only(top: 10, bottom: 6),
+              decoration: BoxDecoration(
+                  color: _borderSubtle, borderRadius: BorderRadius.circular(999)),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 4, 10, 6),
+              child: Row(children: [
+                Expanded(child: Text('REDIGÉR MEDLEM',
+                    style: theme.textTheme.titleLarge)),
+                IconButton(
+                  onPressed: _saving ? null : () => Navigator.of(context).pop(false),
+                  icon: const Icon(Icons.close),
+                  color: _textSecondary,
+                ),
+              ]),
+            ),
+            Flexible(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    TextField(
+                      controller: _navn,
+                      textCapitalization: TextCapitalization.words,
+                      decoration: const InputDecoration(
+                        labelText: 'Navn',
+                        prefixIcon: Icon(Icons.person_outline),
+                      ),
+                    ),
+                    if (_email != null && _email!.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Row(children: [
+                        const Icon(Icons.mail_outline, size: 15, color: _textMuted),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(_email!,
+                              style: _body(size: 12, color: _textMuted),
+                              overflow: TextOverflow.ellipsis),
+                        ),
+                      ]),
+                    ],
+                    const SizedBox(height: 20),
+                    Text('ROLLE',
+                        style: _body(
+                            size: 12, weight: FontWeight.w700, color: _textSecondary,
+                            spacing: 1)),
+                    const SizedBox(height: 8),
+                    Container(
+                      padding: const EdgeInsets.all(4),
+                      decoration: BoxDecoration(
+                        color: _bgBlack,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: _borderSubtle),
+                      ),
+                      child: Row(children: [
+                        _roleChip('Spiller', 'medlem'),
+                        _roleChip('Træner', 'træner'),
+                        _roleChip('Admin', 'admin'),
+                      ]),
+                    ),
+                    if (widget.isMe) ...[
+                      const SizedBox(height: 6),
+                      Text('Du kan ikke ændre din egen rolle',
+                          style: _body(size: 11, color: _textMuted)),
+                    ],
+                    const SizedBox(height: 20),
+                    Text('KODEORD',
+                        style: _body(
+                            size: 12, weight: FontWeight.w700, color: _textSecondary,
+                            spacing: 1)),
+                    const SizedBox(height: 8),
+                    OutlinedButton.icon(
+                      onPressed: _sendingReset ? null : _sendReset,
+                      icon: _sendingReset
+                          ? const SizedBox(width: 16, height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2))
+                          : const Icon(Icons.lock_reset, size: 20),
+                      label: Text(_sendingReset
+                          ? 'Sender…'
+                          : 'Send nulstil-kodeord-mail'),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'Medlemmet får en mail med et link til at vælge et nyt '
+                      'kodeord.',
+                      style: _body(size: 11, color: _textMuted),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            // Sticky footer
+            Container(
+              decoration: const BoxDecoration(
+                border: Border(top: BorderSide(color: _borderSubtle)),
+              ),
+              padding: EdgeInsets.fromLTRB(
+                  16, 12, 16, 12 + MediaQuery.of(context).padding.bottom),
+              child: Row(children: [
+                Expanded(
+                  child: TextButton(
+                    onPressed: _saving ? null : () => Navigator.of(context).pop(false),
+                    style: TextButton.styleFrom(
+                      foregroundColor: _textSecondary,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                    ),
+                    child: const Text('Annullér'),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  flex: 2,
+                  child: FilledButton(
+                    onPressed: _saving ? null : _save,
+                    child: _saving
+                        ? const SizedBox(width: 18, height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                        : const Text('Gem'),
+                  ),
+                ),
+              ]),
+            ),
           ],
         ),
       ),

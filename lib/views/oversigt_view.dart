@@ -318,6 +318,26 @@ class _OversigtTabState extends State<OversigtTab> {
     }
   }
 
+  Future<void> _publishTraining(_TrainingFeedItem item) async {
+    final id = item.training['id'] as String;
+    try {
+      // synlig_fra = null → straks synlig for alle (overstyrer det planlagte tidspunkt).
+      final updated = await supabase.from('trainings')
+          .update({'synlig_fra': null}).eq('id', id).select();
+      if (!mounted) return;
+      _snack(
+        context,
+        (updated as List).isEmpty
+            ? 'Kunne ikke udgive — mangler du rettigheder?'
+            : 'Udgivet — nu synlig for spillerne',
+        (updated).isEmpty ? _danger : _success,
+      );
+      await reload();
+    } on PostgrestException catch (e) {
+      if (mounted) _snack(context, e.message, _danger);
+    }
+  }
+
   Future<void> _deletePoll(_PollFeedItem item) async {
     final id = item.poll['id'] as String;
     final titel = item.poll['titel'] as String;
@@ -651,6 +671,7 @@ class _OversigtTabState extends State<OversigtTab> {
                           onSignUp:  () => _signUp(t),
                           onDecline: () => _decline(t),
                           onDelete: widget.isAdmin ? () => _deleteTraining(t) : null,
+                          onPublish: widget.isAdmin ? () => _publishTraining(t) : null,
                           onOpenBoard: widget.isAdmin
                               ? () => Navigator.of(context).push(
                                   MaterialPageRoute(
@@ -696,6 +717,7 @@ class _FeedTrainingCard extends StatefulWidget {
   final VoidCallback onDecline;
   final VoidCallback? onOpenBoard;
   final VoidCallback? onDelete;
+  final VoidCallback? onPublish;
   const _FeedTrainingCard({
     required this.item,
     required this.isAdmin,
@@ -703,6 +725,7 @@ class _FeedTrainingCard extends StatefulWidget {
     required this.onDecline,
     this.onOpenBoard,
     this.onDelete,
+    this.onPublish,
   });
   @override
   State<_FeedTrainingCard> createState() => _FeedTrainingCardState();
@@ -725,6 +748,11 @@ class _FeedTrainingCardState extends State<_FeedTrainingCard> {
     final hasAddr  = adresse.isNotEmpty && adresse != _addressUnspecified;
     final deadlinePassed = DateTime.now().isAfter(deadline);
     final canSignUp = !deadlinePassed || widget.isAdmin;
+    // Synlighed: er aktiviteten stadig skjult for spillerne? (kun relevant for staff)
+    final synligFraStr = t['synlig_fra'] as String?;
+    final hiddenUntil = synligFraStr == null
+        ? null : DateTime.parse(synligFraStr).toLocal();
+    final isHidden = hiddenUntil != null && hiddenUntil.isAfter(DateTime.now());
     final totalParticipants =
         item.tilmeldte.length + item.venteliste.length +
         item.afmeldte.length + item.trainere.length;
@@ -823,6 +851,50 @@ class _FeedTrainingCardState extends State<_FeedTrainingCard> {
                       ],
                     ),
                   ),
+                if (widget.isAdmin && isHidden && widget.onPublish != null) ...[
+                  const SizedBox(height: 12),
+                  Container(
+                    padding: const EdgeInsets.fromLTRB(12, 10, 10, 10),
+                    decoration: BoxDecoration(
+                      color: _gold.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: _gold.withValues(alpha: 0.4)),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.visibility_off_outlined,
+                            size: 18, color: _gold),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('Skjult for spillerne',
+                                  style: _body(
+                                      size: 12,
+                                      weight: FontWeight.w700,
+                                      color: _gold)),
+                              Text('Bliver synlig ${_fmtDateTime(hiddenUntil)}',
+                                  style: _body(size: 11, color: _textSecondary)),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        FilledButton.icon(
+                          onPressed: widget.onPublish,
+                          icon: const Icon(Icons.campaign_outlined, size: 18),
+                          label: const Text('Udgiv nu'),
+                          style: FilledButton.styleFrom(
+                            backgroundColor: _gold,
+                            foregroundColor: _onGold,
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 14, vertical: 10),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 14),
                 LayoutBuilder(builder: (ctx, constraints) {
                   final wide = constraints.maxWidth >= 320;
@@ -2232,6 +2304,24 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
     if (changed == true && mounted) Navigator.of(context).pop(true);
   }
 
+  Future<void> _publish() async {
+    setState(() => _busy = true);
+    try {
+      final id = widget.training['id'];
+      await supabase.from('trainings')
+          .update({'synlig_fra': null}).eq('id', id);
+      widget.training['synlig_fra'] = null; // opdater lokalt så banneret forsvinder
+      if (mounted) {
+        _snack(context, 'Udgivet — nu synlig for spillerne', _success);
+        setState(() {});
+      }
+    } on PostgrestException catch (e) {
+      if (mounted) _snack(context, e.message, _danger);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   Future<void> _delete() async {
     final ok = await showDialog<bool>(
       context: context,
@@ -2279,6 +2369,10 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
         : DateTime.parse(t['slut_tid'] as String).toLocal();
     final adresse = t['adresse'] as String? ?? '';
     final hasAddr = adresse.isNotEmpty && adresse != _addressUnspecified;
+    final synligFraStr = t['synlig_fra'] as String?;
+    final hiddenUntil = synligFraStr == null
+        ? null : DateTime.parse(synligFraStr).toLocal();
+    final isHidden = hiddenUntil != null && hiddenUntil.isAfter(DateTime.now());
 
     return Scaffold(
       appBar: AppBar(
@@ -2335,6 +2429,49 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                               Text('${_mangler.length} mangler',
                                   style: _body(size: 12, weight: FontWeight.w700, color: _textMuted)),
                             ]),
+                            if (widget.isStaff && isHidden) ...[
+                              const SizedBox(height: 14),
+                              Container(
+                                padding: const EdgeInsets.fromLTRB(12, 10, 10, 10),
+                                decoration: BoxDecoration(
+                                  color: _gold.withValues(alpha: 0.12),
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(color: _gold.withValues(alpha: 0.4)),
+                                ),
+                                child: Row(children: [
+                                  const Icon(Icons.visibility_off_outlined,
+                                      size: 18, color: _gold),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text('Skjult for spillerne',
+                                            style: _body(
+                                                size: 12,
+                                                weight: FontWeight.w700,
+                                                color: _gold)),
+                                        Text('Bliver synlig ${_fmtDateTime(hiddenUntil)}',
+                                            style: _body(
+                                                size: 11, color: _textSecondary)),
+                                      ],
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  FilledButton.icon(
+                                    onPressed: _busy ? null : _publish,
+                                    icon: const Icon(Icons.campaign_outlined, size: 18),
+                                    label: const Text('Udgiv nu'),
+                                    style: FilledButton.styleFrom(
+                                      backgroundColor: _gold,
+                                      foregroundColor: _onGold,
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 14, vertical: 10),
+                                    ),
+                                  ),
+                                ]),
+                              ),
+                            ],
                             if (widget.isStaff) ...[
                               const SizedBox(height: 14),
                               Container(

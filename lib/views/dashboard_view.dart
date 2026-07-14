@@ -3041,7 +3041,13 @@ class _CreateTrainingDialogState extends State<CreateTrainingDialog> {
   DateTime? _dato;   // begivenhedens dato
   TimeOfDay? _fra;   // fra-tid (påkrævet)
   TimeOfDay? _til;   // til-tid (valgfri)
-  DateTime? _deadline;
+  // Tilmeldingsfrist som antal dage FØR hver begivenhed (relativ, så den
+  // følger med i en serie). null = ingen frist (åben til begivenheden starter).
+  int? _deadlineDaysBefore;
+  // Synlighed: antal dage FØR hver begivenhed den bliver synlig for spillere.
+  // null = straks synlig. Bruges især til serier, så spillerne ikke ser 15
+  // aktiviteter på én gang.
+  int? _visibleDaysBefore;
 
   static DateTime _combine(DateTime d, TimeOfDay t) =>
       DateTime(d.year, d.month, d.day, t.hour, t.minute);
@@ -3130,6 +3136,46 @@ class _CreateTrainingDialogState extends State<CreateTrainingDialog> {
     );
   }
 
+  Widget _deadlineChip(String label, int? daysBefore) {
+    final active = _deadlineDaysBefore == daysBefore;
+    return GestureDetector(
+      onTap: () => setState(() => _deadlineDaysBefore = daysBefore),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        decoration: BoxDecoration(
+          color: active ? _neon : _surfaceElevated,
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: active ? _neon : _borderSubtle),
+        ),
+        child: Text(label,
+            style: _body(
+                size: 13,
+                weight: FontWeight.w600,
+                color: active ? Colors.white : _textPrimary)),
+      ),
+    );
+  }
+
+  Widget _visibleChip(String label, int? daysBefore) {
+    final active = _visibleDaysBefore == daysBefore;
+    return GestureDetector(
+      onTap: () => setState(() => _visibleDaysBefore = daysBefore),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        decoration: BoxDecoration(
+          color: active ? _neon : _surfaceElevated,
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: active ? _neon : _borderSubtle),
+        ),
+        child: Text(label,
+            style: _body(
+                size: 13,
+                weight: FontWeight.w600,
+                color: active ? Colors.white : _textPrimary)),
+      ),
+    );
+  }
+
   int get _plannedWeeks {
     if (!_recurring) return 1;
     final n = int.tryParse(_weeksCtrl.text.trim()) ?? 0;
@@ -3150,6 +3196,7 @@ class _CreateTrainingDialogState extends State<CreateTrainingDialog> {
     required DateTime start,
     required DateTime slut,
     required DateTime deadline,
+    required DateTime? synligFra,
     required int? maxVal,
     required String adresseVal,
     required String userId,
@@ -3162,6 +3209,7 @@ class _CreateTrainingDialogState extends State<CreateTrainingDialog> {
       'slut_tid':             slut.toUtc().toIso8601String(),
       'adresse':              adresseVal,
       'tilmeldings_deadline': deadline.toUtc().toIso8601String(),
+      'synlig_fra':           synligFra?.toUtc().toIso8601String(),
       'created_by':           userId,
       'group_id':             _groupId,
     };
@@ -3181,14 +3229,6 @@ class _CreateTrainingDialogState extends State<CreateTrainingDialog> {
       _snack(context, 'Til-tid skal være efter fra-tid', Colors.orange);
       return;
     }
-    // Hvis frist ikke er sat: brug start_tid (= reelt "ingen frist", tilmelding
-    // er åben helt til begivenheden begynder)
-    final effectiveDeadline = _deadline ?? start;
-    if (effectiveDeadline.isAfter(start)) {
-      _snack(context, 'Deadline skal være før start', Colors.orange);
-      return;
-    }
-
     // Tom = ubegrænset (null sendes til DB; RPC + UI håndterer det som "∞")
     final maxRaw = _maxCtrl.text.trim();
     final int? maxVal = maxRaw.isEmpty ? null : int.tryParse(maxRaw);
@@ -3199,10 +3239,22 @@ class _CreateTrainingDialogState extends State<CreateTrainingDialog> {
 
     final rows = List<Map<String, dynamic>>.generate(weeks, (i) {
       final delta = Duration(days: 7 * i);
+      final evStart = start.add(delta);
+      // Fristen er relativ til HVER begivenheds dato: X dage før start.
+      // null = ingen frist → åben til begivenheden begynder (= start).
+      final deadline = _deadlineDaysBefore == null
+          ? evStart
+          : evStart.subtract(Duration(days: _deadlineDaysBefore!));
+      // Synlighed: bliver synlig X dage før hver begivenhed.
+      // null = straks synlig.
+      final synligFra = _visibleDaysBefore == null
+          ? null
+          : evStart.subtract(Duration(days: _visibleDaysBefore!));
       return _buildRow(
-        start:    start.add(delta),
+        start:    evStart,
         slut:     effectiveSlut.add(delta),
-        deadline: effectiveDeadline.add(delta),
+        deadline: deadline,
+        synligFra: synligFra,
         maxVal:   maxVal,
         adresseVal: adresseVal,
         userId:   userId,
@@ -3349,18 +3401,52 @@ class _CreateTrainingDialogState extends State<CreateTrainingDialog> {
                 ]),
                 const SizedBox(height: 16),
                 _fieldGroup('TILMELDINGSFRIST · valgfri', [
-                  _QuickDateTimeField(
-                    label: 'Dato',
-                    value: _deadline,
-                    fallbackDate: _dato,
-                    onChanged: (v) => setState(() => _deadline = v),
+                  Wrap(
+                    spacing: 8, runSpacing: 8,
+                    children: [
+                      _deadlineChip('Ingen frist', null),
+                      _deadlineChip('På dagen', 0),
+                      _deadlineChip('1 dag før', 1),
+                      _deadlineChip('2 dage før', 2),
+                      _deadlineChip('3 dage før', 3),
+                      _deadlineChip('1 uge før', 7),
+                    ],
                   ),
                   Padding(
-                    padding: const EdgeInsets.only(top: 6, left: 2),
+                    padding: const EdgeInsets.only(top: 8, left: 2),
                     child: Text(
-                      _deadline == null
-                          ? 'Tom = åben til begivenheden begynder'
-                          : 'Tilmelding lukker på dette tidspunkt',
+                      _deadlineDaysBefore == null
+                          ? 'Åben til begivenheden begynder'
+                          : _deadlineDaysBefore == 0
+                              ? 'Tilmelding lukker samme dag kl. '
+                                  '${_fra == null ? "start" : "${_fra!.hour.toString().padLeft(2, '0')}:${_fra!.minute.toString().padLeft(2, '0')}"}'
+                              : 'Tilmelding lukker $_deadlineDaysBefore '
+                                  '${_deadlineDaysBefore == 1 ? "dag" : "dage"} før hver '
+                                  'begivenhed',
+                      style: const TextStyle(color: _textMuted, fontSize: 11),
+                    ),
+                  ),
+                ]),
+                const SizedBox(height: 16),
+                _fieldGroup('VIS FOR SPILLERE · valgfri', [
+                  Wrap(
+                    spacing: 8, runSpacing: 8,
+                    children: [
+                      _visibleChip('Straks', null),
+                      _visibleChip('1 uge før', 7),
+                      _visibleChip('2 uger før', 14),
+                      _visibleChip('3 uger før', 21),
+                    ],
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8, left: 2),
+                    child: Text(
+                      _visibleDaysBefore == null
+                          ? 'Aktiviteten er synlig for spillerne med det samme'
+                          : 'Hver aktivitet dukker først op hos spillerne '
+                              '${_visibleDaysBefore! ~/ 7} '
+                              '${_visibleDaysBefore == 7 ? "uge" : "uger"} før — '
+                              'så de ikke ser hele serien på én gang',
                       style: const TextStyle(color: _textMuted, fontSize: 11),
                     ),
                   ),

@@ -62,7 +62,7 @@ class _OversigtTabState extends State<OversigtTab> {
       final results = await Future.wait([
         // Træninger 90 dage tilbage og frem
         supabase.from('trainings')
-            .select('id, titel, beskrivelse, max_deltagere, start_tid, slut_tid, adresse, tilmeldings_deadline, group_id')
+            .select('id, titel, beskrivelse, max_deltagere, start_tid, slut_tid, adresse, tilmeldings_deadline, group_id, synlig_fra')
             .gte('start_tid', sinceIso).order('start_tid'),
         // Polls (alle — lukkede filtreres client-side)
         supabase.from('polls')
@@ -75,7 +75,17 @@ class _OversigtTabState extends State<OversigtTab> {
         supabase.from('group_members').select('group_id').eq('user_id', userId),
       ]);
 
-      final trainings   = List<Map<String, dynamic>>.from(results[0] as List);
+      final trainingsRaw = List<Map<String, dynamic>>.from(results[0] as List);
+      // Synlighed: spillere ser kun aktiviteter der er "åbnet" (synlig_fra er
+      // null eller passeret). Staff (admin/træner) ser altid alt.
+      final nowVis = DateTime.now();
+      final trainings = widget.isAdmin
+          ? trainingsRaw
+          : trainingsRaw.where((t) {
+              final sf = t['synlig_fra'] as String?;
+              if (sf == null) return true;
+              return !DateTime.parse(sf).toLocal().isAfter(nowVis);
+            }).toList();
       final pollsAll    = List<Map<String, dynamic>>.from(results[1] as List);
       final profileRows = List<Map<String, dynamic>>.from(results[2] as List);
       final groups      = List<Map<String, dynamic>>.from(results[3] as List);

@@ -640,6 +640,27 @@ class _GroupsOverviewCardState extends State<_GroupsOverviewCard> {
     }
   }
 
+  Future<void> _editGroup(Map<String, dynamic> g) async {
+    final res = await showModalBottomSheet<Map<String, String>>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (_) => _NewGroupSheet(existing: g),
+    );
+    if (res == null) return;
+    try {
+      await supabase.from('groups').update({
+        'navn': res['navn'],
+        'type': res['type'],
+        'farve': res['farve'],
+      }).eq('id', g['id']);
+      if (mounted) _snack(context, 'Gruppe opdateret', _success);
+      _load();
+    } on PostgrestException catch (e) {
+      if (mounted) _snack(context, e.message, _danger);
+    }
+  }
+
   Future<void> _delete(Map<String, dynamic> g) async {
     final ok = await showDialog<bool>(
       context: context,
@@ -735,6 +756,12 @@ class _GroupsOverviewCardState extends State<_GroupsOverviewCard> {
           ),
         ),
         IconButton(
+          onPressed: () => _editGroup(g),
+          icon: const Icon(Icons.edit_outlined, size: 19, color: _textMuted),
+          tooltip: 'Redigér gruppe',
+          visualDensity: VisualDensity.compact,
+        ),
+        IconButton(
           onPressed: () => _delete(g),
           icon: const Icon(Icons.delete_outline, size: 19, color: _textMuted),
           tooltip: 'Slet gruppe',
@@ -745,17 +772,20 @@ class _GroupsOverviewCardState extends State<_GroupsOverviewCard> {
   }
 }
 
-/// Bundsheet til at oprette en ny gruppe.
+/// Bundsheet til at oprette en ny gruppe — eller redigere en eksisterende
+/// (når [existing] er sat). Returnerer {navn, type, farve} eller null.
 class _NewGroupSheet extends StatefulWidget {
-  const _NewGroupSheet();
+  final Map<String, dynamic>? existing;
+  const _NewGroupSheet({this.existing});
   @override
   State<_NewGroupSheet> createState() => _NewGroupSheetState();
 }
 
 class _NewGroupSheetState extends State<_NewGroupSheet> {
-  final _navn = TextEditingController();
-  String _type = 'hold';
-  String _farve = '#E8622C';
+  late final _navn =
+      TextEditingController(text: widget.existing?['navn'] as String? ?? '');
+  late String _type = widget.existing?['type'] as String? ?? 'hold';
+  late String _farve = widget.existing?['farve'] as String? ?? '#E8622C';
   static const _colors = [
     '#E8622C', '#3DA9FC', '#F2A63B', '#34C759', '#B892FF', '#E5544E'
   ];
@@ -799,7 +829,8 @@ class _NewGroupSheetState extends State<_NewGroupSheet> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text('NY GRUPPE', style: _cond(size: 20, weight: FontWeight.w800)),
+              Text(widget.existing == null ? 'NY GRUPPE' : 'REDIGÉR GRUPPE',
+                  style: _cond(size: 20, weight: FontWeight.w800)),
               const SizedBox(height: 14),
               TextField(
                 controller: _navn,
@@ -862,7 +893,10 @@ class _NewGroupSheetState extends State<_NewGroupSheet> {
                 Expanded(
                   flex: 2,
                   child: FilledButton(
-                      onPressed: _save, child: const Text('Opret gruppe')),
+                      onPressed: _save,
+                      child: Text(widget.existing == null
+                          ? 'Opret gruppe'
+                          : 'Gem')),
                 ),
               ]),
             ],

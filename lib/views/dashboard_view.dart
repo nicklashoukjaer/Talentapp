@@ -1286,6 +1286,10 @@ class _MobilePayConfigCardState extends State<_MobilePayConfigCard> {
   final _ctrl = TextEditingController();
   bool _saving = false;
   bool _loading = true;
+  List<Map<String, dynamic>> _groups = const [];
+  // null = fælles boks (club_config). Ellers valgt holds id.
+  String? _selectedGroupId;
+  String? _clubBox;
 
   @override
   void initState() {
@@ -1294,11 +1298,35 @@ class _MobilePayConfigCardState extends State<_MobilePayConfigCard> {
   }
 
   Future<void> _load() async {
-    final box = ClubConfig.cachedBox ?? await ClubConfig.fetchMobilePayBox();
+    try {
+      _clubBox = await ClubConfig.fetchMobilePayBox();
+      final rows = await supabase
+          .from('groups')
+          .select('id, navn, mobilepay_box_id')
+          .order('sort');
+      _groups = List<Map<String, dynamic>>.from(rows as List);
+    } catch (_) {
+      _clubBox ??= ClubConfig.cachedBox;
+    }
     if (!mounted) return;
     setState(() {
-      _ctrl.text = box ?? '';
+      _selectedGroupId = null;
+      _ctrl.text = _clubBox ?? '';
       _loading = false;
+    });
+  }
+
+  /// Skift valgt hold → indlæs dets gemte boks i tekstfeltet.
+  void _onSelect(String? groupId) {
+    setState(() {
+      _selectedGroupId = groupId;
+      if (groupId == null) {
+        _ctrl.text = _clubBox ?? '';
+      } else {
+        final g = _groups.firstWhere(
+            (e) => e['id'] == groupId, orElse: () => const {});
+        _ctrl.text = (g['mobilepay_box_id'] as String?) ?? '';
+      }
     });
   }
 
@@ -1310,14 +1338,31 @@ class _MobilePayConfigCardState extends State<_MobilePayConfigCard> {
 
   Future<void> _save() async {
     final v = _ctrl.text.trim();
-    if (v.isEmpty) {
+    final isStandard = _selectedGroupId == null;
+    if (isStandard && v.isEmpty) {
       _snack(context, 'Indtast et Box-ID eller et fuldt MobilePay-link', Colors.orange);
       return;
     }
     setState(() => _saving = true);
     try {
-      await ClubConfig.updateMobilePayBox(v);
-      if (mounted) _snack(context, 'MobilePay-opsætning gemt ✓', Colors.green);
+      if (isStandard) {
+        await ClubConfig.updateMobilePayBox(v);
+        _clubBox = v;
+      } else {
+        // Tom = fjern holdets egen boks → holdet falder tilbage til fælles-boksen.
+        final boxVal = v.isEmpty ? null : v;
+        await supabase.from('groups')
+            .update({'mobilepay_box_id': boxVal}).eq('id', _selectedGroupId!);
+        final idx = _groups.indexWhere((e) => e['id'] == _selectedGroupId);
+        if (idx >= 0) _groups[idx]['mobilepay_box_id'] = boxVal;
+      }
+      if (mounted) {
+        _snack(context,
+            isStandard
+                ? 'Fælles MobilePay-opsætning gemt ✓'
+                : 'MobilePay gemt for holdet ✓',
+            Colors.green);
+      }
     } on PostgrestException catch (e) {
       if (mounted) _snack(context, 'Kunne ikke gemme: ${e.message}', Colors.red);
     } catch (e) {
@@ -1349,8 +1394,9 @@ class _MobilePayConfigCardState extends State<_MobilePayConfigCard> {
             ),
             const SizedBox(height: 6),
             Text(
-              'Indtast holdets MobilePay Box-ID (fx 1234567) ELLER et fuldt '
-              'Box-link. Det bruges automatisk når spillere betaler deres bøder.',
+              'Vælg et hold og indtast dets MobilePay Box-ID (fx 1234567) ELLER '
+              'et fuldt Box-link. Hvert hold kan have sin egen boks. "Fælles" '
+              'bruges af spillere der ikke er på et hold med egen boks.',
               style: theme.textTheme.bodySmall,
             ),
             const SizedBox(height: 14),
@@ -1360,12 +1406,41 @@ class _MobilePayConfigCardState extends State<_MobilePayConfigCard> {
                 child: Center(child: CircularProgressIndicator()),
               )
             else ...[
+              DropdownButtonFormField<String?>(
+                value: _selectedGroupId,
+                isExpanded: true,
+                decoration: const InputDecoration(
+                  labelText: 'Hold',
+                  prefixIcon: Icon(Icons.groups_outlined),
+                ),
+                items: [
+                  const DropdownMenuItem<String?>(
+                    value: null,
+                    child: Text('Fælles – alle hold'),
+                  ),
+                  for (final g in _groups)
+                    DropdownMenuItem<String?>(
+                      value: g['id'] as String,
+                      child: Text(
+                        (g['mobilepay_box_id'] as String?)?.trim().isNotEmpty == true
+                            ? '${g['navn']}  ·  egen boks'
+                            : g['navn'] as String,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                ],
+                onChanged: (v) => _onSelect(v),
+              ),
+              const SizedBox(height: 12),
               TextField(
                 controller: _ctrl,
-                decoration: const InputDecoration(
+                decoration: InputDecoration(
                   labelText: 'Box-ID eller fuldt Box-link',
-                  prefixIcon: Icon(Icons.qr_code_2_outlined),
+                  prefixIcon: const Icon(Icons.qr_code_2_outlined),
                   hintText: 'fx 1234567  ·  eller  https://qr.mobilepay.dk/box/…',
+                  helperText: _selectedGroupId == null
+                      ? 'Fælles boks — bruges når holdet ikke har sin egen'
+                      : 'Tom = holdet bruger den fælles boks',
                 ),
                 onSubmitted: (_) => _save(),
               ),

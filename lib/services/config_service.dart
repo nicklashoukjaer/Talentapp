@@ -39,6 +39,30 @@ class ClubConfig {
     _cachedBox = v;
     CacheService.put('club_config', {'mobilepay_box_id': v});
   }
+
+  /// Henter de hold (navn + box) som [userId] er medlem af, og som har et eget
+  /// MobilePay Box-ID sat. Bruges af bødekassen til at sende betalingen til det
+  /// rigtige holds boks. Hold uden egen boks udelades (de bruger fælles-boksen).
+  static Future<List<({String navn, String box})>> teamBoxesForUser(
+      String userId) async {
+    try {
+      final rows = await supabase
+          .from('group_members')
+          .select('groups(navn, mobilepay_box_id)')
+          .eq('user_id', userId);
+      final out = <({String navn, String box})>[];
+      for (final r in (rows as List)) {
+        final g = r['groups'] as Map<String, dynamic>?;
+        final box = (g?['mobilepay_box_id'] as String?)?.trim();
+        if (g != null && box != null && box.isNotEmpty) {
+          out.add((navn: g['navn'] as String? ?? 'Hold', box: box));
+        }
+      }
+      return out;
+    } catch (_) {
+      return const [];
+    }
+  }
 }
 
 /// Bygger det officielle MobilePay-link ud fra [box] og beløbet [oere].

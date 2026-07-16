@@ -63,18 +63,10 @@ class BodekasseTabState extends State<BodekasseTab> {
     )).then((_) => reload());
   }
 
-  /// Åbner MobilePay med det skyldige beløb forudfyldt.
+  /// Åbner MobilePay med det skyldige beløb forudfyldt — til spillerens holds boks.
   Future<void> _payWithMobilePay(int oere) async {
-    var box = ClubConfig.cachedBox;
-    box ??= await ClubConfig.fetchMobilePayBox();
-    if (box == null || box.trim().isEmpty || box.trim() == 'VORES_BOX_NUMMER') {
-      if (mounted) {
-        _snack(context,
-            'MobilePay er ikke sat op endnu — en admin kan indtaste Box-ID under Dashboard.',
-            _gold);
-      }
-      return;
-    }
+    final box = await _resolveMobilePayBox(context);
+    if (box == null) return; // resolver har allerede vist besked / bruger fortrød
     final uri = Uri.parse(mobilePayLinkFor(box, oere));
     final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
     if (!ok && mounted) {
@@ -566,18 +558,10 @@ class _FineHistoryScreenState extends State<FineHistoryScreen> {
     }
   }
 
-  /// Åbner MobilePay med det skyldige beløb forudfyldt (øre → kroner).
+  /// Åbner MobilePay med det skyldige beløb forudfyldt — til spillerens holds boks.
   Future<void> _payWithMobilePay(int oere) async {
-    var box = ClubConfig.cachedBox;
-    box ??= await ClubConfig.fetchMobilePayBox();
-    if (box == null || box.trim().isEmpty || box.trim() == 'VORES_BOX_NUMMER') {
-      if (mounted) {
-        _snack(context,
-            'MobilePay er ikke sat op endnu — en admin kan indtaste Box-ID under Dashboard.',
-            Colors.orange);
-      }
-      return;
-    }
+    final box = await _resolveMobilePayBox(context);
+    if (box == null) return; // resolver har allerede vist besked / bruger fortrød
     final uri = Uri.parse(mobilePayLinkFor(box, oere));
     final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
     if (!ok && mounted) {
@@ -793,6 +777,99 @@ class _FineHistoryRow extends StatelessWidget {
                 ],
               ),
             ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MobilePay: find spillerens holds boks (med valg hvis flere hold har egen boks)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Finder det MobilePay Box-ID en spiller skal betale til:
+///  • spilleren er på ét hold med egen boks → brug den
+///  • flere hold med hver sin boks → spørg hvilket
+///  • ingen hold-boks → klubbens fælles boks (club_config)
+/// Returnerer null hvis der ikke er sat en boks op, eller brugeren fortryder
+/// (i så fald har funktionen selv vist en besked).
+Future<String?> _resolveMobilePayBox(BuildContext context) async {
+  final userId = supabase.auth.currentUser?.id;
+  String? box;
+  if (userId != null) {
+    final teams = await ClubConfig.teamBoxesForUser(userId);
+    if (teams.length == 1) {
+      box = teams.first.box;
+    } else if (teams.length > 1) {
+      if (!context.mounted) return null;
+      final chosen = await showModalBottomSheet<({String navn, String box})>(
+        context: context,
+        backgroundColor: Colors.transparent,
+        builder: (_) => _TeamBoxChooser(teams: teams),
+      );
+      if (chosen == null) return null; // fortrudt
+      box = chosen.box;
+    }
+  }
+  // Ingen hold-boks → fælles boks.
+  box ??= ClubConfig.cachedBox ?? await ClubConfig.fetchMobilePayBox();
+  if (box == null || box.trim().isEmpty || box.trim() == 'VORES_BOX_NUMMER') {
+    if (context.mounted) {
+      _snack(context,
+          'MobilePay er ikke sat op endnu — en admin kan indtaste Box-ID under Admin → Betaling.',
+          _gold);
+    }
+    return null;
+  }
+  return box;
+}
+
+/// Bottom sheet: vælg hvilket holds MobilePay-boks der betales til.
+class _TeamBoxChooser extends StatelessWidget {
+  final List<({String navn, String box})> teams;
+  const _TeamBoxChooser({required this.teams});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: const BoxDecoration(
+        color: _surfaceDark,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        border: Border(top: BorderSide(color: _borderSubtle)),
+      ),
+      child: SafeArea(
+        top: false,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 40, height: 4,
+              margin: const EdgeInsets.only(top: 10, bottom: 6),
+              decoration: BoxDecoration(
+                  color: _borderSubtle, borderRadius: BorderRadius.circular(999)),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 8, 20, 8),
+              child: Row(children: [
+                const Icon(Icons.groups_outlined, color: _neon),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text('Hvilket hold betaler du til?',
+                      style: _cond(size: 18, weight: FontWeight.w700)),
+                ),
+              ]),
+            ),
+            for (final t in teams)
+              ListTile(
+                leading: const Icon(Icons.account_balance_wallet_outlined,
+                    color: _success),
+                title: Text(t.navn,
+                    style: _body(size: 15, weight: FontWeight.w600)),
+                trailing: const Icon(Icons.chevron_right, color: _textMuted),
+                onTap: () => Navigator.of(context).pop(t),
+              ),
+            const SizedBox(height: 12),
           ],
         ),
       ),

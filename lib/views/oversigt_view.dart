@@ -2284,8 +2284,26 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
         supabase.from('profiles').select('id, navn').order('navn'),
       ]);
       final parts = List<Map<String, dynamic>>.from(results[0] as List);
-      final profiles = List<Map<String, dynamic>>.from(results[1] as List);
+      var profiles = List<Map<String, dynamic>>.from(results[1] as List);
       final byUser = {for (final p in parts) p['user_id'] as String: p};
+
+      // Holdspecifik aktivitet: vis kun medlemmer af aktivitetens hold(s).
+      // Alle der allerede har svaret beholdes uanset (fx en træner/admin).
+      final groupIds = _trainingGroupIds(widget.training);
+      if (groupIds.isNotEmpty) {
+        final gm = await supabase
+            .from('group_members')
+            .select('user_id')
+            .inFilter('group_id', groupIds);
+        final eligible = List<Map<String, dynamic>>.from(gm as List)
+            .map((r) => r['user_id'] as String)
+            .toSet();
+        profiles = profiles
+            .where((p) =>
+                eligible.contains(p['id'] as String) ||
+                byUser.containsKey(p['id'] as String))
+            .toList();
+      }
 
       final tilmeldt = <_AttPerson>[], afbud = <_AttPerson>[], mangler = <_AttPerson>[];
       for (final prof in profiles) {

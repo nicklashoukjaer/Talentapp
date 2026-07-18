@@ -318,7 +318,7 @@ class _HomeShellState extends State<HomeShell> {
         isAdmin: _isAdmin,
         currentUserId: _profile!['id'] as String,
       ),
-      AfstemningerTab(key: _afstemningerKey, isStaff: _isStaff),
+      AfstemningerTab(key: _afstemningerKey, isStaff: _isStaff, isAdmin: _isAdmin),
       ProfileTab(profile: _profile!, onProfileUpdated: _loadProfile),
       if (_isStaff) DashboardTab(key: _dashboardKey, isFullAdmin: _isAdmin),
     ];

@@ -4,16 +4,23 @@ part of '../main.dart';
 
 class AfstemningerTab extends StatefulWidget {
   final bool isStaff; // admin/træner → må slette afstemninger
-  const AfstemningerTab({super.key, this.isStaff = false});
+  final bool isAdmin; // fuld admin → ser ALLE holds afstemninger
+  const AfstemningerTab({super.key, this.isStaff = false, this.isAdmin = false});
   @override
   State<AfstemningerTab> createState() => _AfstemningerTabState();
 }
 
 class _AfstemningerTabState extends State<AfstemningerTab> {
   List<Map<String, dynamic>> _polls = const [];
+  Map<String, Map<String, dynamic>> _groupById = {};
   bool _loading = true;
   String? _error;
   int _tab = 0; // 0 = Åbne, 1 = Afsluttede
+
+  static Color _hexColor(String? h) {
+    if (h == null || h.isEmpty) return _neon;
+    return Color(int.parse(h.replaceFirst('#', ''), radix: 16) | 0xFF000000);
+  }
 
   @override
   void initState() {
@@ -27,17 +34,51 @@ class _AfstemningerTabState extends State<AfstemningerTab> {
   Future<void> _load() async {
     setState(() { _loading = true; _error = null; });
     try {
-      final rows = await supabase
-          .from('polls')
-          .select('id, titel, beskrivelse, lukket_at, created_at')
-          .order('created_at', ascending: false);
+      final userId = supabase.auth.currentUser!.id;
+      final results = await Future.wait([
+        supabase.from('polls')
+            .select('id, titel, beskrivelse, lukket_at, created_at, group_id')
+            .order('created_at', ascending: false),
+        supabase.from('groups').select('id, navn, farve'),
+        supabase.from('group_members').select('group_id').eq('user_id', userId),
+      ]);
+      final allPolls = List<Map<String, dynamic>>.from(results[0] as List);
+      final groups = List<Map<String, dynamic>>.from(results[1] as List);
+      final myIds = List<Map<String, dynamic>>.from(results[2] as List)
+          .map((r) => r['group_id'] as String)
+          .toSet();
+      // Spillere/trænere ser klub-brede (null) + deres egne holds afstemninger.
+      // Fuld admin ser alt.
+      final visible = widget.isAdmin
+          ? allPolls
+          : allPolls.where((p) {
+              final gid = p['group_id'] as String?;
+              return gid == null || myIds.contains(gid);
+            }).toList();
+      if (!mounted) return;
       setState(() {
-        _polls = List<Map<String, dynamic>>.from(rows as List);
+        _polls = visible;
+        _groupById = {for (final g in groups) g['id'] as String: g};
         _loading = false;
       });
     } catch (e) {
-      setState(() { _loading = false; _error = e.toString(); });
+      if (mounted) setState(() { _loading = false; _error = e.toString(); });
     }
+  }
+
+  Widget _groupBadge(String? gid) {
+    final g = gid == null ? null : _groupById[gid];
+    final navn = g?['navn'] as String? ?? (gid == null ? 'Alle' : 'Hold');
+    final c = gid == null ? _textSecondary : _hexColor(g?['farve'] as String?);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+      decoration: BoxDecoration(
+        color: c.withValues(alpha: 0.16),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(navn.toUpperCase(),
+          style: _body(size: 10, weight: FontWeight.w700, spacing: 0.8, color: c)),
+    );
   }
 
   void _open(Map<String, dynamic> poll) {
@@ -226,6 +267,8 @@ class _AfstemningerTabState extends State<AfstemningerTab> {
                                                 spacing: 1,
                                                 color: _neon)),
                                       ),
+                                    const SizedBox(width: 8),
+                                    _groupBadge(p['group_id'] as String?),
                                     const Spacer(),
                                     Text(lukkeInfo,
                                         style: _body(size: 12, color: _textSecondary)),

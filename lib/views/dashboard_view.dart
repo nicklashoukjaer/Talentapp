@@ -3202,7 +3202,8 @@ class _CreateTrainingDialogState extends State<CreateTrainingDialog> {
   bool _recurring = false;
   bool _saving = false;
   List<Map<String, dynamic>> _groups = const [];
-  String? _groupId; // null = alle hold
+  // Valgte hold. Tom = alle hold (fælles). Kan indeholde ét eller flere hold.
+  final Set<String> _groupIds = {};
 
   @override
   void initState() {
@@ -3215,20 +3216,38 @@ class _CreateTrainingDialogState extends State<CreateTrainingDialog> {
 
   Future<void> _loadGroups() async {
     try {
-      final rows = await supabase
-          .from('groups')
-          .select('id, navn, type, farve, sort')
-          .order('sort');
-      if (mounted) {
-        setState(() => _groups = List<Map<String, dynamic>>.from(rows as List));
-      }
+      final userId = supabase.auth.currentUser!.id;
+      final results = await Future.wait([
+        supabase.from('groups').select('id, navn, type, farve, sort').order('sort'),
+        supabase.from('group_members').select('group_id').eq('user_id', userId),
+      ]);
+      if (!mounted) return;
+      final groups = List<Map<String, dynamic>>.from(results[0] as List);
+      final myIds = List<Map<String, dynamic>>.from(results[1] as List)
+          .map((r) => r['group_id'] as String)
+          .toSet();
+      setState(() {
+        _groups = groups;
+        // Forudvælg trænerens hold hvis de kun er på ét (kan stadig ændres).
+        if (_groupIds.isEmpty && myIds.length == 1) {
+          final only = myIds.first;
+          if (groups.any((g) => g['id'] == only)) _groupIds.add(only);
+        }
+      });
     } catch (_) {}
   }
 
+  /// Fler-vælger: "Alle" (id == null) rydder valget; hvert hold slår til/fra.
   Widget _groupChip(String label, String? id) {
-    final active = _groupId == id;
+    final active = id == null ? _groupIds.isEmpty : _groupIds.contains(id);
     return GestureDetector(
-      onTap: () => setState(() => _groupId = id),
+      onTap: () => setState(() {
+        if (id == null) {
+          _groupIds.clear();
+        } else {
+          if (!_groupIds.add(id)) _groupIds.remove(id);
+        }
+      }),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
         decoration: BoxDecoration(
@@ -3236,11 +3255,20 @@ class _CreateTrainingDialogState extends State<CreateTrainingDialog> {
           borderRadius: BorderRadius.circular(999),
           border: Border.all(color: active ? _neon : _borderSubtle),
         ),
-        child: Text(label,
-            style: _body(
-                size: 13,
-                weight: FontWeight.w600,
-                color: active ? Colors.white : _textPrimary)),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (active && id != null) ...[
+              const Icon(Icons.check, size: 15, color: Colors.white),
+              const SizedBox(width: 5),
+            ],
+            Text(label,
+                style: _body(
+                    size: 13,
+                    weight: FontWeight.w600,
+                    color: active ? Colors.white : _textPrimary)),
+          ],
+        ),
       ),
     );
   }
@@ -3320,7 +3348,10 @@ class _CreateTrainingDialogState extends State<CreateTrainingDialog> {
       'tilmeldings_deadline': deadline.toUtc().toIso8601String(),
       'synlig_fra':           synligFra?.toUtc().toIso8601String(),
       'created_by':           userId,
-      'group_id':             _groupId,
+      // Flere hold gemmes i group_ids. group_id holdes i sync (ét hold → dét,
+      // ellers null) af hensyn til ældre kode der stadig læser group_id.
+      'group_ids':            _groupIds.isEmpty ? null : _groupIds.toList(),
+      'group_id':             _groupIds.length == 1 ? _groupIds.first : null,
     };
   }
 
@@ -3429,9 +3460,14 @@ class _CreateTrainingDialogState extends State<CreateTrainingDialog> {
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                 if (_groups.isNotEmpty) ...[
-                  Text('Hvem kan deltage?',
-                      style: _body(
-                          size: 13, weight: FontWeight.w600, color: _textSecondary)),
+                  Row(children: [
+                    Text('Hvem kan deltage?',
+                        style: _body(
+                            size: 13, weight: FontWeight.w600, color: _textSecondary)),
+                    const SizedBox(width: 6),
+                    Text('vælg ét eller flere hold',
+                        style: _body(size: 11, color: _textMuted)),
+                  ]),
                   const SizedBox(height: 8),
                   Wrap(
                     spacing: 8, runSpacing: 8,

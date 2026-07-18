@@ -2,6 +2,17 @@
 // ignore_for_file: deprecated_member_use, avoid_web_libraries_in_flutter
 part of '../main.dart';
 
+/// Holdene en aktivitet gælder. Nye rækker bruger group_ids (flere hold);
+/// gamle rækker falder tilbage til det enkelte group_id. Tom = alle hold.
+List<String> _trainingGroupIds(Map<String, dynamic> t) {
+  final arr = t['group_ids'];
+  if (arr is List && arr.isNotEmpty) {
+    return arr.map((e) => e.toString()).toList();
+  }
+  final single = t['group_id'] as String?;
+  return (single == null || single.isEmpty) ? const [] : [single];
+}
+
 class OversigtTab extends StatefulWidget {
   final bool isAdmin;
   const OversigtTab({super.key, required this.isAdmin});
@@ -62,11 +73,11 @@ class _OversigtTabState extends State<OversigtTab> {
       final results = await Future.wait([
         // Træninger 90 dage tilbage og frem
         supabase.from('trainings')
-            .select('id, titel, beskrivelse, max_deltagere, start_tid, slut_tid, adresse, tilmeldings_deadline, group_id, synlig_fra')
+            .select('id, titel, beskrivelse, max_deltagere, start_tid, slut_tid, adresse, tilmeldings_deadline, group_id, group_ids, synlig_fra')
             .gte('start_tid', sinceIso).order('start_tid'),
         // Polls (alle — lukkede filtreres client-side)
         supabase.from('polls')
-            .select('id, titel, beskrivelse, lukket_at, created_at')
+            .select('id, titel, beskrivelse, lukket_at, created_at, group_id')
             .order('created_at', ascending: false),
         // Profiles for count
         supabase.from('profiles').select('id'),
@@ -318,6 +329,18 @@ class _OversigtTabState extends State<OversigtTab> {
     }
   }
 
+  /// Navne på de hold en aktivitet gælder (tom = alle hold → vis intet).
+  List<String> _groupNamesFor(Map<String, dynamic> t) {
+    return _trainingGroupIds(t)
+        .map((id) {
+          final g = _groups.firstWhere((e) => e['id'] == id,
+              orElse: () => const <String, dynamic>{});
+          return g['navn'] as String?;
+        })
+        .whereType<String>()
+        .toList();
+  }
+
   Future<void> _publishTraining(_TrainingFeedItem item) async {
     final id = item.training['id'] as String;
     try {
@@ -422,11 +445,10 @@ class _OversigtTabState extends State<OversigtTab> {
     if (_loading) return _loadingSkeleton();
     if (_error != null) return _ErrorView(error: _error!, onRetry: reload);
 
-    final polls        = _items.whereType<_PollFeedItem>().toList();
-    // Hold-filtrering: vis kun begivenheder for hold jeg er på (eller fælles-
-    // begivenheder uden hold). Switcheren filtrerer yderligere til ét hold.
-    bool visibleToMe(_TrainingFeedItem t) {
-      final gid = t.training['group_id'] as String?;
+    // Hold-filtrering: vis kun begivenheder/afstemninger for hold jeg er på
+    // (eller fælles uden hold). Switcheren filtrerer yderligere til ét hold.
+    // Afstemninger hører til ét hold; aktiviteter kan høre til flere.
+    bool visibleGroup(String? gid) {
       final mine = gid == null || _myGroupIds.contains(gid);
       if (!mine) return false;
       if (_switcherGroupId != null && gid != null && gid != _switcherGroupId) {
@@ -434,6 +456,22 @@ class _OversigtTabState extends State<OversigtTab> {
       }
       return true;
     }
+    // Flere hold: tom liste = alle. Synlig hvis mindst ét hold er mit; switcheren
+    // kræver at det valgte hold er blandt aktivitetens hold.
+    bool visibleGroups(List<String> gids) {
+      if (gids.isEmpty) return true; // fælles for alle
+      if (!gids.any(_myGroupIds.contains)) return false;
+      if (_switcherGroupId != null && !gids.contains(_switcherGroupId)) {
+        return false;
+      }
+      return true;
+    }
+    final polls = _items
+        .whereType<_PollFeedItem>()
+        .where((p) => visibleGroup(p.poll['group_id'] as String?))
+        .toList();
+    bool visibleToMe(_TrainingFeedItem t) =>
+        visibleGroups(_trainingGroupIds(t.training));
     final allTrainings =
         _items.whereType<_TrainingFeedItem>().where(visibleToMe).toList();
 
@@ -668,6 +706,7 @@ class _OversigtTabState extends State<OversigtTab> {
                             : _FeedTrainingCard(
                           item: t,
                           isAdmin: widget.isAdmin,
+                          groupNames: _groupNamesFor(t.training),
                           onSignUp:  () => _signUp(t),
                           onDecline: () => _decline(t),
                           onDelete: widget.isAdmin ? () => _deleteTraining(t) : null,
@@ -718,9 +757,11 @@ class _FeedTrainingCard extends StatefulWidget {
   final VoidCallback? onOpenBoard;
   final VoidCallback? onDelete;
   final VoidCallback? onPublish;
+  final List<String> groupNames;
   const _FeedTrainingCard({
     required this.item,
     required this.isAdmin,
+    this.groupNames = const [],
     required this.onSignUp,
     required this.onDecline,
     this.onOpenBoard,
@@ -789,6 +830,21 @@ class _FeedTrainingCardState extends State<_FeedTrainingCard> {
                       max: max,
                       trainerCount: item.trainere.length,
                     ),
+                    for (final navn in widget.groupNames)
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 9, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: _neon.withValues(alpha: 0.14),
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: Text(navn.toUpperCase(),
+                            style: _body(
+                                size: 10,
+                                weight: FontWeight.w700,
+                                spacing: 0.8,
+                                color: _neon)),
+                      ),
                     if (status != null) _MyStatusChip(status: status),
                     if (widget.isAdmin && widget.onOpenBoard != null)
                       Tooltip(

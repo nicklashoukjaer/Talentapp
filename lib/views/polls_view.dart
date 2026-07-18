@@ -22,11 +22,57 @@ class _CreatePollDialogState extends State<CreatePollDialog> {
   int _idCounter = 0;
   bool _saving = false;
   DateTime? _frist; // stemmefrist — afstemningen lukker automatisk her
+  List<Map<String, dynamic>> _groups = const [];
+  String? _groupId; // null = klub-bred (alle kan stemme)
 
   @override
   void initState() {
     super.initState();
     _addDate();
+    _loadGroups();
+  }
+
+  Future<void> _loadGroups() async {
+    try {
+      final userId = supabase.auth.currentUser!.id;
+      final results = await Future.wait([
+        supabase.from('groups').select('id, navn, type, farve, sort').order('sort'),
+        supabase.from('group_members').select('group_id').eq('user_id', userId),
+      ]);
+      if (!mounted) return;
+      final groups = List<Map<String, dynamic>>.from(results[0] as List);
+      final myIds = List<Map<String, dynamic>>.from(results[1] as List)
+          .map((r) => r['group_id'] as String)
+          .toSet();
+      setState(() {
+        _groups = groups;
+        // Forudvælg trænerens hold hvis de kun er på ét (kan stadig ændres).
+        if (_groupId == null && myIds.length == 1) {
+          final only = myIds.first;
+          if (groups.any((g) => g['id'] == only)) _groupId = only;
+        }
+      });
+    } catch (_) {}
+  }
+
+  Widget _groupChip(String label, String? id) {
+    final active = _groupId == id;
+    return GestureDetector(
+      onTap: () => setState(() => _groupId = id),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        decoration: BoxDecoration(
+          color: active ? _neon : _surfaceElevated,
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: active ? _neon : _borderSubtle),
+        ),
+        child: Text(label,
+            style: _body(
+                size: 13,
+                weight: FontWeight.w600,
+                color: active ? Colors.white : _textPrimary)),
+      ),
+    );
   }
 
   @override
@@ -58,6 +104,7 @@ class _CreatePollDialogState extends State<CreatePollDialog> {
         'titel':       _titel.text.trim(),
         'beskrivelse': _beskr.text.trim().isEmpty ? null : _beskr.text.trim(),
         'created_by':  supabase.auth.currentUser!.id,
+        'group_id':    _groupId,
         if (_frist != null) 'lukket_at': _frist!.toUtc().toIso8601String(),
       }).select('id').single();
 
@@ -122,6 +169,21 @@ class _CreatePollDialogState extends State<CreatePollDialog> {
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
+                if (_groups.isNotEmpty) ...[
+                  Text('Hvem kan stemme?',
+                      style: _body(
+                          size: 13, weight: FontWeight.w600, color: _textSecondary)),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8, runSpacing: 8,
+                    children: [
+                      _groupChip('Alle', null),
+                      for (final g in _groups)
+                        _groupChip(g['navn'] as String, g['id'] as String),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                ],
                 TextFormField(
                   controller: _titel,
                   autofocus: true,

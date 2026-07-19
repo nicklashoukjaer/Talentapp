@@ -48,8 +48,14 @@ String clubCode = 'Talentloes2026';
 const _addressUnspecified = 'Ikke angivet';
 const _defaultMaxParticipants = 4;
 
+// Sættes i main() FØR Supabase.initialize, som ellers rydder URL-fragmentet.
+// Fortæller AuthGate at appen blev åbnet via et nulstil-kodeord-link.
+bool pendingPasswordRecovery = false;
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Fang recovery-linket før SDK'et behandler og rydder URL'en.
+  pendingPasswordRecovery = Uri.base.fragment.contains('type=recovery');
   if (_supabaseUrl.isEmpty || _supabaseAnonKey.isEmpty) {
     runApp(const _MissingEnvApp());
     return;
@@ -89,8 +95,11 @@ class _AuthGateState extends State<AuthGate> {
   @override
   void initState() {
     super.initState();
-    // Åbnet direkte via et nulstil-kodeord-link? (token i URL-fragmentet)
-    if (Uri.base.fragment.contains('type=recovery')) _recovery = true;
+    // Åbnet via et nulstil-kodeord-link? (fanget i main() før URL'en blev ryddet)
+    if (pendingPasswordRecovery ||
+        Uri.base.fragment.contains('type=recovery')) {
+      _recovery = true;
+    }
     // Fanger også hændelsen når SDK'et behandler recovery-linket efter opstart.
     _sub = supabase.auth.onAuthStateChange.listen((state) {
       if (state.event == AuthChangeEvent.passwordRecovery && mounted) {

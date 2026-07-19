@@ -51,6 +51,41 @@ class ClubConfig {
     CacheService.put('club_config', {'mobilepay_box_id': v});
   }
 
+  /// Henter udeblivelses-bøde-konfigurationen: hvilken bødetype (+ beløb/titel)
+  /// der bruges, og om automatisk opkrævning ved sent afbud er slået til.
+  static Future<
+      ({String? fineTypeId, int? belobOere, String? titel, bool autoEnabled})>
+      fetchNoShowConfig() async {
+    try {
+      final row = await supabase
+          .from(_table)
+          .select(
+              'noshow_fine_type_id, noshow_auto_enabled, fine_types(id, titel, belob_oere)')
+          .eq('id', _rowId)
+          .maybeSingle();
+      final ft = row?['fine_types'] as Map<String, dynamic>?;
+      return (
+        fineTypeId: row?['noshow_fine_type_id'] as String?,
+        belobOere: (ft?['belob_oere'] as num?)?.toInt(),
+        titel: ft?['titel'] as String?,
+        autoEnabled: (row?['noshow_auto_enabled'] as bool?) ?? false,
+      );
+    } catch (_) {
+      return (fineTypeId: null, belobOere: null, titel: null, autoEnabled: false);
+    }
+  }
+
+  /// Opdaterer udeblivelses-bøde-konfigurationen. KUN admin (RLS + UI).
+  static Future<void> updateNoShowConfig({
+    required String? fineTypeId,
+    required bool autoEnabled,
+  }) async {
+    await supabase.from(_table).update({
+      'noshow_fine_type_id': fineTypeId,
+      'noshow_auto_enabled': autoEnabled,
+    }).eq('id', _rowId);
+  }
+
   /// Henter de hold (navn + box) som [userId] er medlem af, og som har et eget
   /// MobilePay Box-ID sat. Bruges af bødekassen til at sende betalingen til det
   /// rigtige holds boks. Hold uden egen boks udelades (de bruger fælles-boksen).

@@ -284,8 +284,62 @@ class _OversigtTabState extends State<OversigtTab> {
     }
   }
 
-  /// AFBUD — sætter status='afmeldt'. Virker uanset om brugeren havde en række før.
+  /// AFBUD — sætter status='afmeldt'. Efter fristen advares der om at det kan
+  /// koste en udeblivelses-bøde (4a); selve afbud+bøde sker server-side.
   Future<void> _decline(_TrainingFeedItem item) async {
+    final deadline =
+        DateTime.parse(item.training['tilmeldings_deadline'] as String).toLocal();
+    final late = DateTime.now().isAfter(deadline);
+    final wasSignedUp =
+        item.myStatus == 'tilmeldt' || item.myStatus == 'venteliste';
+
+    if (late && wasSignedUp) {
+      final cfg = await ClubConfig.fetchNoShowConfig();
+      final willFine = cfg.autoEnabled && cfg.fineTypeId != null;
+      final kr = _fmtKr(cfg.belobOere ?? 0);
+      if (!mounted) return;
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Row(children: [
+            const Icon(Icons.warning_amber_rounded, color: _gold),
+            const SizedBox(width: 8),
+            const Expanded(child: Text('Fristen er overskredet')),
+          ]),
+          content: Text(willFine
+              ? 'Melder du afbud nu, koster det en udeblivelses-bøde på $kr.'
+              : 'Tilmeldingsfristen er overskredet. Vil du melde afbud alligevel?'),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Behold min tilmelding')),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              style: FilledButton.styleFrom(backgroundColor: _danger),
+              child: Text(willFine ? 'Meld afbud · $kr' : 'Meld afbud'),
+            ),
+          ],
+        ),
+      );
+      if (ok != true) return;
+      try {
+        final oere = await supabase.rpc('late_cancel_training',
+            params: {'p_training_id': item.training['id']});
+        if (!mounted) return;
+        final fined = (oere is num) && oere > 0;
+        _snack(
+            context,
+            fined
+                ? 'Afbud sendt — bøde på ${_fmtKr((oere).toInt())} tilføjet'
+                : 'Afbud sendt',
+            fined ? _gold : _textSecondary);
+        await reload();
+      } on PostgrestException catch (e) {
+        if (mounted) _snack(context, e.message, Colors.red.shade400);
+      }
+      return;
+    }
+
     try {
       await supabase.from('training_participants').upsert({
         'training_id': item.training['id'],
@@ -976,12 +1030,17 @@ class _FeedTrainingCardState extends State<_FeedTrainingCard> {
                     active: status == 'tilmeldt' || status == 'venteliste',
                     onPressed: canSignUp ? widget.onSignUp : null,
                   );
+                  // Afbud er også muligt EFTER fristen hvis man er tilmeldt —
+                  // så kan man melde sent afbud (med evt. bøde, håndteres i _decline).
+                  final canDecline = canSignUp ||
+                      status == 'tilmeldt' ||
+                      status == 'venteliste';
                   final afbudBtn = _ActionStatusButton(
                     label: 'AFBUD',
                     color: _danger,
                     icon: Icons.block,
                     active: status == 'afmeldt',
-                    onPressed: canSignUp ? widget.onDecline : null,
+                    onPressed: canDecline ? widget.onDecline : null,
                   );
                   final calBtn = IconButton.outlined(
                     onPressed: () => _downloadIcs(t),
@@ -2387,6 +2446,53 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
     }
   }
 
+  Future<void> _noShowCheck() async {
+    final cfg = await ClubConfig.fetchNoShowConfig();
+    if (cfg.fineTypeId == null) {
+      if (mounted) {
+        _snack(context,
+            'Vælg først en udeblivelses-bøde under Admin → Bøder', _gold);
+      }
+      return;
+    }
+    if (!mounted) return;
+    final selected = await showModalBottomSheet<Set<String>>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _NoShowSheet(
+        tilmeldte: _tilmeldt,
+        belobOere: cfg.belobOere ?? 0,
+        titel: cfg.titel ?? 'Udeblivelse',
+      ),
+    );
+    if (selected == null || selected.isEmpty) return;
+    setState(() => _busy = true);
+    try {
+      final giver = supabase.auth.currentUser!.id;
+      // titel/beløb udelades — snapshot-trigger på fines fylder dem.
+      final rows = selected
+          .map((uid) => {
+                'user_id': uid,
+                'given_by': giver,
+                'fine_type_id': cfg.fineTypeId,
+                'begrundelse': 'Udeblivelse',
+              })
+          .toList();
+      await supabase.from('fines').insert(rows);
+      if (mounted) {
+        _snack(
+            context,
+            '${selected.length} udeblivelses-bøde${selected.length == 1 ? "" : "r"} uddelt',
+            _success);
+      }
+    } on PostgrestException catch (e) {
+      if (mounted) _snack(context, e.message, _danger);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   Future<void> _addGuest() async {
     final navn = await showModalBottomSheet<String>(
       context: context,
@@ -2608,6 +2714,7 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
     final hiddenUntil = synligFraStr == null
         ? null : DateTime.parse(synligFraStr).toLocal();
     final isHidden = hiddenUntil != null && hiddenUntil.isAfter(DateTime.now());
+    final started = start.isBefore(DateTime.now());
 
     return Scaffold(
       appBar: AppBar(
@@ -2758,6 +2865,21 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                                   onPressed: _busy ? null : _remindMissing,
                                   icon: const Icon(Icons.notifications_active_outlined, size: 18),
                                   label: const Text('Påmind alle der mangler'),
+                                ),
+                              ),
+                            ],
+                            if (widget.isStaff && started && _tilmeldt.isNotEmpty) ...[
+                              const SizedBox(height: 8),
+                              SizedBox(
+                                width: double.infinity,
+                                child: OutlinedButton.icon(
+                                  onPressed: _busy ? null : _noShowCheck,
+                                  icon: const Icon(Icons.event_busy_outlined, size: 18),
+                                  label: const Text('Hvem mødte ikke op?'),
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: _gold,
+                                    side: BorderSide(color: _gold.withValues(alpha: 0.5)),
+                                  ),
                                 ),
                               ),
                             ],
@@ -3265,6 +3387,126 @@ class _AddGuestSheetState extends State<_AddGuestSheet> {
               ]),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// "Hvem mødte ikke op?" (4b) — kryds de udeblevne af → uddel bøder.
+class _NoShowSheet extends StatefulWidget {
+  final List<_AttPerson> tilmeldte;
+  final int belobOere;
+  final String titel;
+  const _NoShowSheet({
+    required this.tilmeldte,
+    required this.belobOere,
+    required this.titel,
+  });
+  @override
+  State<_NoShowSheet> createState() => _NoShowSheetState();
+}
+
+class _NoShowSheetState extends State<_NoShowSheet> {
+  final Set<String> _picked = {};
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final total = _picked.length * widget.belobOere;
+    return Padding(
+      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      child: Container(
+        constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(context).size.height * 0.85),
+        decoration: const BoxDecoration(
+          color: _surfaceDark,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          border: Border(top: BorderSide(color: _borderSubtle)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 40, height: 4,
+              margin: const EdgeInsets.only(top: 10, bottom: 6),
+              decoration: BoxDecoration(
+                  color: _borderSubtle, borderRadius: BorderRadius.circular(999)),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 6, 20, 4),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('HVEM MØDTE IKKE OP?',
+                      style: theme.textTheme.titleLarge),
+                  const SizedBox(height: 4),
+                  Text('Kryds de tilmeldte af som udeblev — de får '
+                      '"${widget.titel}" (${_fmtKr(widget.belobOere)}).',
+                      style: _body(size: 12.5, color: _textSecondary)),
+                ],
+              ),
+            ),
+            Flexible(
+              child: ListView(
+                padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+                children: [
+                  for (final p in widget.tilmeldte)
+                    CheckboxListTile(
+                      value: _picked.contains(p.id),
+                      onChanged: (v) => setState(() {
+                        if (v == true) {
+                          _picked.add(p.id);
+                        } else {
+                          _picked.remove(p.id);
+                        }
+                      }),
+                      activeColor: _danger,
+                      controlAffinity: ListTileControlAffinity.leading,
+                      title: Text(p.navn,
+                          style: _body(size: 14.5, weight: FontWeight.w600)),
+                      dense: true,
+                    ),
+                ],
+              ),
+            ),
+            Container(
+              decoration: const BoxDecoration(
+                border: Border(top: BorderSide(color: _borderSubtle)),
+              ),
+              padding: EdgeInsets.fromLTRB(
+                  16, 12, 16, 12 + MediaQuery.of(context).padding.bottom),
+              child: Row(children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text('${_picked.length} udeblevet',
+                          style: _body(
+                              size: 12, weight: FontWeight.w700, color: _danger)),
+                      Text('Bøde i alt: ${_fmtKr(total)}',
+                          style: _body(size: 12, color: _textSecondary)),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 12),
+                FilledButton.icon(
+                  onPressed: _picked.isEmpty
+                      ? null
+                      : () => Navigator.of(context).pop(_picked),
+                  icon: const Icon(Icons.gavel, size: 18),
+                  label: const Text('Uddel bøder'),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: _gold,
+                    foregroundColor: _onGold,
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+                  ),
+                ),
+              ]),
+            ),
+          ],
         ),
       ),
     );

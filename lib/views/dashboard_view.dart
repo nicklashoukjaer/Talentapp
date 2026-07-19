@@ -522,6 +522,10 @@ class DashboardTabState extends State<DashboardTab> {
             existingTypes: _fineTypes.where((t) => t['aktiv'] == true).toList(),
             onCreated:     reloadFines,
           ),
+          const SizedBox(height: 16),
+          _NoShowFineCard(
+            fineTypes: _fineTypes.where((t) => t['aktiv'] == true).toList(),
+          ),
         ],
       ],
     );
@@ -1495,6 +1499,153 @@ class _MobilePayConfigCardState extends State<_MobilePayConfigCard> {
                     foregroundColor: Colors.white,
                     padding: const EdgeInsets.symmetric(vertical: 14),
                   ),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Admin: vælg hvilken bødetype der bruges som udeblivelses-bøde + til/fra for
+/// automatisk opkrævning ved sent afbud (4c).
+class _NoShowFineCard extends StatefulWidget {
+  final List<Map<String, dynamic>> fineTypes;
+  const _NoShowFineCard({required this.fineTypes});
+  @override
+  State<_NoShowFineCard> createState() => _NoShowFineCardState();
+}
+
+class _NoShowFineCardState extends State<_NoShowFineCard> {
+  bool _loading = true;
+  bool _saving = false;
+  bool _auto = false;
+  String? _typeId;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final c = await ClubConfig.fetchNoShowConfig();
+    if (!mounted) return;
+    setState(() {
+      // Behold kun typen hvis den stadig findes/aktiv.
+      _typeId = widget.fineTypes.any((t) => t['id'] == c.fineTypeId)
+          ? c.fineTypeId
+          : null;
+      _auto = c.autoEnabled;
+      _loading = false;
+    });
+  }
+
+  Future<void> _save() async {
+    if (_auto && _typeId == null) {
+      _snack(context, 'Vælg en bødetype før automatisk opkrævning kan slås til',
+          _gold);
+      return;
+    }
+    setState(() => _saving = true);
+    try {
+      await ClubConfig.updateNoShowConfig(fineTypeId: _typeId, autoEnabled: _auto);
+      if (mounted) _snack(context, 'Udeblivelses-bøde gemt ✓', _success);
+    } on PostgrestException catch (e) {
+      if (mounted) _snack(context, 'Kunne ikke gemme: ${e.message}', _danger);
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(children: [
+              const Icon(Icons.event_busy_outlined, color: _gold),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text('Udeblivelses-bøde',
+                    style: theme.textTheme.titleMedium),
+              ),
+            ]),
+            const SizedBox(height: 6),
+            Text(
+              'Vælg hvilken bødetype der uddeles ved udeblivelse og sent afbud. '
+              'Bruges af "Hvem mødte ikke op?"-tjekket og (hvis slået til) '
+              'automatisk når nogen melder afbud efter fristen.',
+              style: theme.textTheme.bodySmall,
+            ),
+            const SizedBox(height: 14),
+            if (_loading)
+              const Padding(padding: EdgeInsets.all(8),
+                  child: Center(child: CircularProgressIndicator()))
+            else if (widget.fineTypes.isEmpty)
+              Text('Opret en bødetype først (ovenfor).',
+                  style: _body(size: 13, color: _textMuted))
+            else ...[
+              DropdownButtonFormField<String?>(
+                value: _typeId,
+                isExpanded: true,
+                decoration: const InputDecoration(
+                  labelText: 'Bødetype',
+                  prefixIcon: Icon(Icons.gavel),
+                ),
+                items: [
+                  const DropdownMenuItem<String?>(
+                    value: null,
+                    child: Text('— Ingen valgt —',
+                        style: TextStyle(fontStyle: FontStyle.italic)),
+                  ),
+                  for (final t in widget.fineTypes)
+                    DropdownMenuItem<String?>(
+                      value: t['id'] as String,
+                      child: Text(
+                          '${t['titel']} · ${_fmtKr((t['belob_oere'] as num).toInt())}',
+                          overflow: TextOverflow.ellipsis),
+                    ),
+                ],
+                onChanged: (v) => setState(() => _typeId = v),
+              ),
+              const SizedBox(height: 6),
+              Container(
+                decoration: BoxDecoration(
+                  border: Border.all(color: _borderSubtle),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: SwitchListTile(
+                  value: _auto,
+                  onChanged: (v) => setState(() => _auto = v),
+                  contentPadding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+                  title: const Text('Opkræv automatisk ved sent afbud'),
+                  subtitle: Text(
+                    _auto
+                        ? 'Melder en spiller afbud efter fristen, uddeles bøden med det samme.'
+                        : 'Fra: sent afbud koster ikke automatisk en bøde.',
+                    style: _body(size: 11.5, color: _textSecondary),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  onPressed: _saving ? null : _save,
+                  icon: _saving
+                      ? const SizedBox(width: 16, height: 16,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: Colors.white))
+                      : const Icon(Icons.save_outlined),
+                  label: const Text('Gem'),
                 ),
               ),
             ],

@@ -15,8 +15,9 @@ class BodekasseTabState extends State<BodekasseTab> {
   List<Map<String, dynamic>> _groups = const [];
   Map<String, Set<String>> _memberIdsByGroup = {}; // group_id → medlemmers user_id
   Set<String> _myGroupIds = {};
-  String? _switcherGroupId;   // valgt hold (null = Alle)
-  bool _filterInit = false;   // sæt standard-valg kun én gang
+  // Valgte hold i filteret (tom = alle tilladte). Admin kan vælge flere.
+  final Set<String> _selectedGroupIds = {};
+  bool _filterInit = false;   // for at gate cache-hurtigvisning på 1. load
   bool _loading = true;
   String? _error;
 
@@ -64,18 +65,7 @@ class BodekasseTabState extends State<BodekasseTab> {
         _groups = groups;
         _memberIdsByGroup = byGroup;
         _myGroupIds = mine;
-        if (!_filterInit) {
-          _filterInit = true;
-          // Standard: admin ser "Alle"; træner/spiller ser deres eget (første)
-          // hold. Har en ikke-admin ingen hold, falder de tilbage til Alle.
-          if (!widget.isAdmin) {
-            final myGroups =
-                groups.where((g) => mine.contains(g['id'] as String)).toList();
-            if (myGroups.isNotEmpty) {
-              _switcherGroupId = myGroups.first['id'] as String;
-            }
-          }
-        }
+        _filterInit = true;
         _loading = false;
       });
     } catch (e) {
@@ -116,19 +106,37 @@ class BodekasseTabState extends State<BodekasseTab> {
     if (_loading) return _loadingSkeleton();
     if (_error != null) return _ErrorView(error: _error!, onRetry: reload);
 
-    // Admin kan vælge mellem ALLE hold (+ "Alle"); træner/spiller ser kun de
-    // hold de selv er på. Listen filtreres til det valgte holds medlemmer.
+    // Admin kan vælge mellem ALLE hold (+ "Alle") og må multi-vælge; træner/
+    // spiller ser kun de hold de selv er på.
     final switcherGroups = widget.isAdmin
         ? _groups
         : _groups.where((g) => _myGroupIds.contains(g['id'] as String)).toList();
     final includeAll = widget.isAdmin;
-    final chipCount = switcherGroups.length + (includeAll ? 1 : 0);
-    final filtered = _switcherGroupId == null
-        ? _rows
-        : _rows
-            .where((r) => (_memberIdsByGroup[_switcherGroupId] ?? const <String>{})
-                .contains(r['id'] as String))
-            .toList();
+
+    // Grundmængden en bruger overhovedet kan se: admin ser alle; øvrige kun
+    // personer på deres egne hold.
+    Iterable<Map<String, dynamic>> base;
+    if (widget.isAdmin) {
+      base = _rows;
+    } else {
+      final allowed = <String>{};
+      for (final g in _myGroupIds) {
+        allowed.addAll(_memberIdsByGroup[g] ?? const <String>{});
+      }
+      base = _rows.where((r) => allowed.contains(r['id'] as String));
+    }
+
+    // Valgte hold indsnævrer yderligere (tom = hele grundmængden).
+    final filtered = (_selectedGroupIds.isEmpty
+            ? base
+            : base.where((r) => _selectedGroupIds.any((g) =>
+                (_memberIdsByGroup[g] ?? const <String>{})
+                    .contains(r['id'] as String))))
+        .toList();
+
+    // Vis switcheren når der er noget at vælge imellem.
+    final showSwitcher =
+        widget.isAdmin ? switcherGroups.isNotEmpty : switcherGroups.length > 1;
 
     return RefreshIndicator(
       onRefresh: reload,
@@ -196,12 +204,16 @@ class BodekasseTabState extends State<BodekasseTab> {
                       );
                     }),
                   ),
-                  if (chipCount > 1) ...[
-                    _HoldSwitcher(
+                  if (showSwitcher) ...[
+                    _HoldMultiSwitcher(
                       groups: switcherGroups,
-                      selectedId: _switcherGroupId,
+                      selectedIds: _selectedGroupIds,
                       includeAll: includeAll,
-                      onChanged: (id) => setState(() => _switcherGroupId = id),
+                      onChanged: (ids) => setState(() {
+                        _selectedGroupIds
+                          ..clear()
+                          ..addAll(ids);
+                      }),
                     ),
                     const SizedBox(height: 16),
                   ],
@@ -243,6 +255,89 @@ class BodekasseTabState extends State<BodekasseTab> {
               ),
             ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Hold-switcher med MULTI-valg — bruges i bødekassen. "Alle" rydder valget;
+/// hvert hold slås til/fra. Flere hold kan være valgt samtidig.
+class _HoldMultiSwitcher extends StatelessWidget {
+  final List<Map<String, dynamic>> groups;
+  final Set<String> selectedIds;
+  final bool includeAll;
+  final ValueChanged<Set<String>> onChanged;
+  const _HoldMultiSwitcher({
+    required this.groups,
+    required this.selectedIds,
+    required this.onChanged,
+    this.includeAll = true,
+  });
+
+  static Color _hex(String? h) {
+    if (h == null || h.isEmpty) return _neon;
+    return Color(int.parse(h.replaceFirst('#', ''), radix: 16) | 0xFF000000);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    Widget chip(String label,
+        {String? id,
+        required Color color,
+        required bool active,
+        required VoidCallback onTap}) {
+      return Padding(
+        padding: const EdgeInsets.only(right: 8),
+        child: GestureDetector(
+          onTap: onTap,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+            decoration: BoxDecoration(
+              color: active ? color : _surfaceDark,
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(color: active ? color : _borderSubtle),
+            ),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              if (id != null) ...[
+                Icon(active ? Icons.check : Icons.circle,
+                    size: active ? 14 : 8,
+                    color: active ? Colors.white : color),
+                const SizedBox(width: 7),
+              ],
+              Text(label,
+                  style: _body(
+                      size: 13,
+                      weight: FontWeight.w700,
+                      color: active ? Colors.white : _textSecondary)),
+            ]),
+          ),
+        ),
+      );
+    }
+
+    return SizedBox(
+      height: 40,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        padding: EdgeInsets.zero,
+        children: [
+          if (includeAll)
+            chip('Alle',
+                color: _neon,
+                active: selectedIds.isEmpty,
+                onTap: () => onChanged(<String>{})),
+          for (final g in groups)
+            chip(g['navn'] as String,
+                id: g['id'] as String,
+                color: _hex(g['farve'] as String?),
+                active: selectedIds.contains(g['id'] as String),
+                onTap: () {
+                  final id = g['id'] as String;
+                  final next = {...selectedIds};
+                  if (!next.add(id)) next.remove(id);
+                  onChanged(next);
+                }),
         ],
       ),
     );

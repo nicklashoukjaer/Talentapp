@@ -2266,6 +2266,8 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
   String? _error;
   bool _busy = false;
   String? _myId;
+  int _tab = 0;          // 0 = Deltagere, 1 = Kommentarer
+  int _commentCount = 0; // vist på kommentar-fanen
 
   @override
   void initState() {
@@ -2326,11 +2328,21 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
           }
         }
       }
+      // Antal kommentarer (til fane-badgen).
+      int commentCount = _commentCount;
+      try {
+        final c = await supabase
+            .from('training_comments')
+            .select('id')
+            .eq('training_id', tid);
+        commentCount = (c as List).length;
+      } catch (_) {}
       if (!mounted) return;
       setState(() {
         _tilmeldt = tilmeldt;
         _afbud = afbud;
         _mangler = mangler;
+        _commentCount = commentCount;
         _loading = false;
       });
     } catch (e) {
@@ -2505,6 +2517,24 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                               Text('${_mangler.length} mangler',
                                   style: _body(size: 12, weight: FontWeight.w700, color: _textMuted)),
                             ]),
+                            const SizedBox(height: 16),
+                            _DetailTabs(
+                              tab: _tab,
+                              commentCount: _commentCount,
+                              onChanged: (v) => setState(() => _tab = v),
+                            ),
+                            const SizedBox(height: 14),
+                            if (_tab == 1)
+                              _EventComments(
+                                trainingId: t['id'] as String,
+                                isStaff: widget.isStaff,
+                                onCountChanged: (n) {
+                                  if (mounted && n != _commentCount) {
+                                    setState(() => _commentCount = n);
+                                  }
+                                },
+                              ),
+                            if (_tab == 0) ...[
                             if (widget.isStaff && isHidden) ...[
                               const SizedBox(height: 14),
                               Container(
@@ -2598,6 +2628,7 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                                 ),
                               ),
                             ],
+                            ], // slut på Deltagere-fanen (_tab == 0)
                           ],
                         ),
                       ),
@@ -2705,6 +2736,301 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
           border: Border.all(color: color.withValues(alpha: 0.5)),
         ),
         child: Icon(icon, size: 18, color: color),
+      ),
+    );
+  }
+}
+
+/// Fane-skift i begivenheds-detaljen: Deltagere / Kommentarer (m. antal-badge).
+class _DetailTabs extends StatelessWidget {
+  final int tab;
+  final int commentCount;
+  final ValueChanged<int> onChanged;
+  const _DetailTabs({
+    required this.tab,
+    required this.commentCount,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    Widget seg(String label, int i, {int? badge}) {
+      final active = tab == i;
+      return Expanded(
+        child: GestureDetector(
+          onTap: () => onChanged(i),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 160),
+            height: 40,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: active ? _neon : Colors.transparent,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(label,
+                    style: _body(
+                        size: 13,
+                        weight: FontWeight.w700,
+                        color: active ? Colors.white : _textSecondary)),
+                if (badge != null && badge > 0) ...[
+                  const SizedBox(width: 6),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                    decoration: BoxDecoration(
+                      color: active
+                          ? Colors.white.withValues(alpha: 0.25)
+                          : _surfaceElevated,
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Text('$badge',
+                        style: _body(
+                            size: 10,
+                            weight: FontWeight.w800,
+                            color: active ? Colors.white : _textSecondary)),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: _surfaceDark,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: _borderSubtle),
+      ),
+      child: Row(children: [
+        seg('Deltagere', 0),
+        seg('Kommentarer', 1, badge: commentCount),
+      ]),
+    );
+  }
+}
+
+/// Kommentar-tråd på en begivenhed — chat-bobler (egne til højre i accent).
+class _EventComments extends StatefulWidget {
+  final String trainingId;
+  final bool isStaff;
+  final ValueChanged<int> onCountChanged;
+  const _EventComments({
+    required this.trainingId,
+    required this.isStaff,
+    required this.onCountChanged,
+  });
+  @override
+  State<_EventComments> createState() => _EventCommentsState();
+}
+
+class _EventCommentsState extends State<_EventComments> {
+  List<Map<String, dynamic>> _comments = const [];
+  bool _loading = true;
+  bool _posting = false;
+  final _ctrl = TextEditingController();
+  String? get _myId => supabase.auth.currentUser?.id;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    try {
+      final rows = await supabase
+          .from('training_comments')
+          .select('id, user_id, body, created_at, profiles(navn, rolle)')
+          .eq('training_id', widget.trainingId)
+          .order('created_at');
+      if (!mounted) return;
+      final list = List<Map<String, dynamic>>.from(rows as List);
+      setState(() {
+        _comments = list;
+        _loading = false;
+      });
+      widget.onCountChanged(list.length);
+    } catch (_) {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _post() async {
+    final text = _ctrl.text.trim();
+    if (text.isEmpty || _myId == null) return;
+    setState(() => _posting = true);
+    try {
+      await supabase.from('training_comments').insert({
+        'training_id': widget.trainingId,
+        'user_id': _myId,
+        'body': text,
+      });
+      _ctrl.clear();
+      if (mounted) FocusScope.of(context).unfocus();
+      await _load();
+    } on PostgrestException catch (e) {
+      if (mounted) _snack(context, e.message, _danger);
+    } finally {
+      if (mounted) setState(() => _posting = false);
+    }
+  }
+
+  Future<void> _delete(String id) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Slet kommentar?'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Annullér')),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(backgroundColor: _danger),
+            child: const Text('Slet'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    try {
+      await supabase.from('training_comments').delete().eq('id', id);
+      await _load();
+    } on PostgrestException catch (e) {
+      if (mounted) _snack(context, e.message, _danger);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (_loading)
+          const Padding(
+            padding: EdgeInsets.all(24),
+            child: Center(child: CircularProgressIndicator()),
+          )
+        else if (_comments.isEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 22),
+            child: Text('Ingen kommentarer endnu — vær den første.',
+                textAlign: TextAlign.center,
+                style: _body(size: 13, color: _textMuted)),
+          )
+        else
+          for (final c in _comments) _bubble(c),
+        const SizedBox(height: 10),
+        Row(children: [
+          Expanded(
+            child: Container(
+              decoration: BoxDecoration(
+                color: _surfaceElevated,
+                borderRadius: BorderRadius.circular(22),
+                border: Border.all(color: _borderSubtle),
+              ),
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: TextField(
+                controller: _ctrl,
+                minLines: 1,
+                maxLines: 4,
+                textCapitalization: TextCapitalization.sentences,
+                decoration: const InputDecoration(
+                  hintText: 'Skriv en kommentar…',
+                  border: InputBorder.none,
+                  isDense: true,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          _posting
+              ? const SizedBox(
+                  width: 44, height: 44,
+                  child: Center(
+                      child: SizedBox(
+                          width: 18, height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2))))
+              : IconButton.filled(
+                  onPressed: _post,
+                  icon: const Icon(Icons.send, size: 18),
+                  style: IconButton.styleFrom(
+                      backgroundColor: _neon, foregroundColor: Colors.white),
+                ),
+        ]),
+      ],
+    );
+  }
+
+  Widget _bubble(Map<String, dynamic> c) {
+    final mine = c['user_id'] == _myId;
+    final prof = c['profiles'] as Map<String, dynamic>?;
+    final navn = prof?['navn'] as String? ?? '(ukendt)';
+    final rolle = prof?['rolle'] as String? ?? 'medlem';
+    final isTrainer = rolle == 'træner' || rolle == 'admin';
+    final created = DateTime.parse(c['created_at'] as String).toLocal();
+    final canDelete = mine || widget.isStaff;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Column(
+        crossAxisAlignment:
+            mine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+        children: [
+          Row(mainAxisSize: MainAxisSize.min, children: [
+            Text(mine ? 'Dig' : navn,
+                style: _body(
+                    size: 11, weight: FontWeight.w700, color: _textSecondary)),
+            if (isTrainer && !mine) ...[
+              const SizedBox(width: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                decoration: BoxDecoration(
+                    color: _neon.withValues(alpha: 0.16),
+                    borderRadius: BorderRadius.circular(999)),
+                child: Text('TRÆNER',
+                    style: _body(
+                        size: 9, weight: FontWeight.w800, color: _neon)),
+              ),
+            ],
+            const SizedBox(width: 6),
+            Text(_fmtRelative(created).replaceFirst('· ', ''),
+                style: _body(size: 10, color: _textMuted)),
+          ]),
+          const SizedBox(height: 3),
+          GestureDetector(
+            onLongPress: canDelete ? () => _delete(c['id'] as String) : null,
+            child: Container(
+              constraints: BoxConstraints(
+                  maxWidth: MediaQuery.of(context).size.width * 0.72),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+              decoration: BoxDecoration(
+                color: mine
+                    ? _neon.withValues(alpha: 0.16)
+                    : _surfaceElevated,
+                borderRadius: BorderRadius.circular(13),
+                border: Border.all(
+                    color: mine
+                        ? _neon.withValues(alpha: 0.35)
+                        : _borderSubtle),
+              ),
+              child: Text(c['body'] as String,
+                  style: _body(size: 14, color: _textPrimary)),
+            ),
+          ),
+        ],
       ),
     );
   }

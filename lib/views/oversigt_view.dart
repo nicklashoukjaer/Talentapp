@@ -1700,12 +1700,10 @@ class _HoldSwitcher extends StatelessWidget {
   final List<Map<String, dynamic>> groups;
   final String? selectedId;
   final ValueChanged<String?> onChanged;
-  final bool includeAll; // vis "Alle"-knappen (fra = kun de angivne hold)
   const _HoldSwitcher({
     required this.groups,
     required this.selectedId,
     required this.onChanged,
-    this.includeAll = true,
   });
 
   static Color _hex(String? h) {
@@ -2343,6 +2341,8 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
   String? _myId;
   int _tab = 0;          // 0 = Deltagere, 1 = Kommentarer
   int _commentCount = 0; // vist på kommentar-fanen
+  bool _showAllMissing = false; // fold lange "mangler svar"-lister ud
+  bool _afbudExpanded = false;   // fold afbud-striben ud
 
   @override
   void initState() {
@@ -2759,19 +2759,6 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                               ]),
                             ],
                             const SizedBox(height: 16),
-                            _attendanceBar(),
-                            const SizedBox(height: 8),
-                            Row(children: [
-                              Text('${_tilmeldt.length + _guests.length} tilmeldt',
-                                  style: _body(size: 12, weight: FontWeight.w700, color: _success)),
-                              const SizedBox(width: 12),
-                              Text('${_afbud.length} afbud',
-                                  style: _body(size: 12, weight: FontWeight.w700, color: _danger)),
-                              const SizedBox(width: 12),
-                              Text('${_mangler.length} mangler',
-                                  style: _body(size: 12, weight: FontWeight.w700, color: _textMuted)),
-                            ]),
-                            const SizedBox(height: 16),
                             _DetailTabs(
                               tab: _tab,
                               commentCount: _commentCount,
@@ -2853,10 +2840,10 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                               ),
                             ],
                             const SizedBox(height: 18),
-                            _group('TILMELDT', _tilmeldt, _success, Icons.check_circle),
+                            _tilmeldtSection(),
                             _guestsSection(),
-                            _group('AFBUD', _afbud, _danger, Icons.cancel),
-                            _group('MANGLER SVAR', _mangler, _textMuted, Icons.help_outline),
+                            _manglerSection(),
+                            _afbudSection(),
                             if (widget.isStaff && _mangler.isNotEmpty) ...[
                               const SizedBox(height: 8),
                               SizedBox(
@@ -2908,55 +2895,31 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
     );
   }
 
-  Widget _attendanceBar() {
-    final tt = _tilmeldt.length + _guests.length, aa = _afbud.length, mm = _mangler.length;
-    final total = tt + aa + mm;
-    if (total == 0) {
-      return Container(
-        height: 8,
-        decoration: BoxDecoration(
-            color: _surfaceElevated, borderRadius: BorderRadius.circular(999)),
-      );
-    }
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(999),
-      child: SizedBox(
-        height: 8,
-        child: Row(children: [
-          if (tt > 0) Expanded(flex: tt, child: Container(color: _success)),
-          if (aa > 0) Expanded(flex: aa, child: Container(color: _danger)),
-          if (mm > 0) Expanded(flex: mm, child: Container(color: _surfaceElevated)),
-        ]),
-      ),
+  // ── 13b: renere fremmøde-overblik ──────────────────────────────────────────
+
+  Widget _sectionHeader(String label, int n, Color color) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8, top: 4),
+      child: Row(children: [
+        Container(width: 8, height: 8,
+            decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
+        const SizedBox(width: 8),
+        Text('$label · $n',
+            style: _body(
+                size: 12, weight: FontWeight.w800, spacing: 0.8, color: color)),
+      ]),
     );
   }
 
-  Widget _group(String label, List<_AttPerson> people, Color color, IconData icon) {
-    if (people.isEmpty) return const SizedBox.shrink();
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.only(bottom: 8, top: 4),
-          child: Row(children: [
-            Icon(icon, size: 16, color: color),
-            const SizedBox(width: 6),
-            Text('$label · ${people.length}',
-                style: _body(size: 12, weight: FontWeight.w700, spacing: 0.8, color: color)),
-          ]),
-        ),
-        for (final p in people) _personRow(p),
-        const SizedBox(height: 12),
-      ],
-    );
-  }
-
-  Widget _personRow(_AttPerson p) {
+  /// Én række for en person der HAR svaret — rolig: navn, tidsstempel, status-prik.
+  /// For staff kan man trykke på prikken for at ændre svaret.
+  Widget _answeredRow(_AttPerson p, {required bool tilmeldt}) {
     final isMe = p.id == _myId;
+    final color = tilmeldt ? _success : _danger;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 5),
       child: Row(children: [
-        _InitialAvatar(navn: p.navn, size: 34),
+        _InitialAvatar(navn: p.navn, size: 32),
         const SizedBox(width: 12),
         Expanded(
           child: Row(children: [
@@ -2974,23 +2937,119 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
         ),
         if (p.svarTid != null)
           Padding(
-            padding: const EdgeInsets.only(right: 8),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text('svarede', style: _body(size: 10, color: _textMuted)),
-                Text(_fmtSvar(p.svarTid!),
-                    style: _body(size: 11, weight: FontWeight.w600, color: _textSecondary)),
-              ],
-            ),
+            padding: const EdgeInsets.only(right: 10),
+            child: Text(_fmtSvar(p.svarTid!),
+                style: _body(size: 11, color: _textMuted)),
           ),
-        if (widget.isStaff) ...[
-          _miniBtn(Icons.check, _success, () => _setStatus(p.id, 'tilmeldt')),
-          const SizedBox(width: 6),
-          _miniBtn(Icons.close, _danger, () => _setStatus(p.id, 'afmeldt')),
-        ],
+        if (widget.isStaff)
+          GestureDetector(
+            onTap: _busy
+                ? null
+                : () => _setStatus(p.id, tilmeldt ? 'afmeldt' : 'tilmeldt'),
+            child: Container(
+              width: 26, height: 26,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.16),
+                shape: BoxShape.circle,
+                border: Border.all(color: color.withValues(alpha: 0.5)),
+              ),
+              child: Icon(
+                  tilmeldt ? Icons.check : Icons.close, size: 14, color: color),
+            ),
+          )
+        else
+          Container(width: 10, height: 10,
+              decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
       ]),
+    );
+  }
+
+  Widget _tilmeldtSection() {
+    if (_tilmeldt.isEmpty) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _sectionHeader('TILMELDT', _tilmeldt.length + _guests.length, _success),
+        for (final p in _tilmeldt) _answeredRow(p, tilmeldt: true),
+        const SizedBox(height: 4),
+      ],
+    );
+  }
+
+  Widget _manglerSection() {
+    if (_mangler.isEmpty) return const SizedBox.shrink();
+    const cutoff = 6;
+    final showAll = _showAllMissing || _mangler.length <= cutoff;
+    final shown = showAll ? _mangler : _mangler.take(cutoff).toList();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(height: 8),
+        _sectionHeader('MANGLER SVAR', _mangler.length, _textMuted),
+        for (final p in shown)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 5),
+            child: Row(children: [
+              _InitialAvatar(navn: p.navn, size: 32),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(p.navn,
+                    style: _body(size: 14, weight: FontWeight.w600),
+                    maxLines: 1, overflow: TextOverflow.ellipsis),
+              ),
+              if (widget.isStaff) ...[
+                _miniBtn(Icons.check, _success, () => _setStatus(p.id, 'tilmeldt')),
+                const SizedBox(width: 6),
+                _miniBtn(Icons.close, _danger, () => _setStatus(p.id, 'afmeldt')),
+              ],
+            ]),
+          ),
+        if (!showAll)
+          TextButton(
+            onPressed: () => setState(() => _showAllMissing = true),
+            child: Text('Vis alle ${_mangler.length}'),
+          ),
+        const SizedBox(height: 4),
+      ],
+    );
+  }
+
+  Widget _afbudSection() {
+    if (_afbud.isEmpty) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(height: 8),
+        InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: () => setState(() => _afbudExpanded = !_afbudExpanded),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            child: Row(children: [
+              const Icon(Icons.cancel, size: 16, color: _danger),
+              const SizedBox(width: 8),
+              Text('AFBUD · ${_afbud.length}',
+                  style: _body(
+                      size: 12, weight: FontWeight.w800, spacing: 0.8,
+                      color: _danger)),
+              const SizedBox(width: 10),
+              if (!_afbudExpanded)
+                Expanded(
+                  child: _AvatarStack(
+                      names: _afbud.map((p) => p.navn).toList(), size: 24),
+                )
+              else
+                const Spacer(),
+              Icon(_afbudExpanded ? Icons.expand_less : Icons.expand_more,
+                  size: 20, color: _textMuted),
+            ]),
+          ),
+        ),
+        if (_afbudExpanded)
+          for (final p in _afbud) _answeredRow(p, tilmeldt: false),
+        const SizedBox(height: 4),
+      ],
     );
   }
 

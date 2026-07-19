@@ -1077,7 +1077,7 @@ class _FineHistoryRow extends StatelessWidget {
                             size: 18,
                             weight: FontWeight.w800,
                             color: isPaid ? _textMuted : _danger)
-                        ?.copyWith(
+                        .copyWith(
                             decoration:
                                 isPaid ? TextDecoration.lineThrough : null,
                             decorationColor: _textMuted)),

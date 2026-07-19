@@ -639,6 +639,8 @@ class FineHistoryScreen extends StatefulWidget {
 
 class _FineHistoryScreenState extends State<FineHistoryScreen> {
   List<Map<String, dynamic>> _fines = const [];
+  Map<String, String> _giverNames = {}; // given_by → navn
+  String? _holdNavn;
   bool _loading = true;
   String? _error;
 
@@ -648,20 +650,62 @@ class _FineHistoryScreenState extends State<FineHistoryScreen> {
     _load();
   }
 
+  String get _season {
+    final now = DateTime.now();
+    final startYear = now.month >= 7 ? now.year : now.year - 1;
+    return 'Sæson $startYear/${((startYear + 1) % 100).toString().padLeft(2, '0')}';
+  }
+
   Future<void> _load() async {
     setState(() { _loading = true; _error = null; });
     try {
       final rows = await supabase
           .from('fines')
-          .select('id, titel, belob_oere, begrundelse, status, created_at, paid_at')
+          .select('id, titel, belob_oere, begrundelse, status, created_at, paid_at, given_by')
           .eq('user_id', widget.userId)
           .order('created_at', ascending: false);
+      final fines = List<Map<String, dynamic>>.from(rows as List);
+
+      // Navne på dem der uddelte bøderne.
+      final giverIds = fines
+          .map((f) => f['given_by'] as String?)
+          .whereType<String>()
+          .toSet()
+          .toList();
+      final giverNames = <String, String>{};
+      if (giverIds.isNotEmpty) {
+        final gp = await supabase
+            .from('profiles').select('id, navn').inFilter('id', giverIds);
+        for (final p in List<Map<String, dynamic>>.from(gp as List)) {
+          giverNames[p['id'] as String] = p['navn'] as String? ?? '';
+        }
+      }
+
+      // Spillerens hold (til hold-badge i toppen).
+      String? hold;
+      try {
+        final gm = await supabase
+            .from('group_members')
+            .select('groups(navn, sort)')
+            .eq('user_id', widget.userId);
+        final gs = List<Map<String, dynamic>>.from(gm as List)
+            .map((r) => r['groups'] as Map<String, dynamic>?)
+            .whereType<Map<String, dynamic>>()
+            .toList()
+          ..sort((a, b) => ((a['sort'] as num?)?.toInt() ?? 0)
+              .compareTo((b['sort'] as num?)?.toInt() ?? 0));
+        if (gs.isNotEmpty) hold = gs.first['navn'] as String?;
+      } catch (_) {}
+
+      if (!mounted) return;
       setState(() {
-        _fines = List<Map<String, dynamic>>.from(rows as List);
+        _fines = fines;
+        _giverNames = giverNames;
+        _holdNavn = hold;
         _loading = false;
       });
     } catch (e) {
-      setState(() { _loading = false; _error = e.toString(); });
+      if (mounted) setState(() { _loading = false; _error = e.toString(); });
     }
   }
 
@@ -740,14 +784,15 @@ class _FineHistoryScreenState extends State<FineHistoryScreen> {
         .where((f) => f['status'] == 'godkendt_betalt')
         .fold<int>(0, (s, f) => s + ((f['belob_oere'] as num).toInt()));
 
+    final ubetalte = _fines.where((f) => f['status'] == 'ubetalt').toList();
+    final betalte = _fines.where((f) => f['status'] == 'godkendt_betalt').toList();
+    final isOwn = widget.userId == supabase.auth.currentUser?.id;
+
     return Scaffold(
       appBar: AppBar(
-        title: Text('${widget.userName} — bødehistorik'),
+        title: const Text('Bødehistorik'),
         actions: [
-          IconButton(
-            onPressed: _load,
-            icon: const Icon(Icons.refresh),
-          ),
+          IconButton(onPressed: _load, icon: const Icon(Icons.refresh)),
         ],
       ),
       body: _loading
@@ -763,46 +808,123 @@ class _FineHistoryScreenState extends State<FineHistoryScreen> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
+                            // Header: navn + hold-badge + sæson
+                            Container(
+                              padding: const EdgeInsets.all(18),
+                              decoration: BoxDecoration(
+                                gradient: const LinearGradient(
+                                  begin: Alignment.topLeft,
+                                  end: Alignment.bottomRight,
+                                  colors: [_surfaceElevated, _surfaceDark],
+                                ),
+                                borderRadius: BorderRadius.circular(18),
+                                border: Border.all(color: _borderSubtle),
+                              ),
+                              child: Row(children: [
+                                Container(
+                                  width: 48, height: 48,
+                                  alignment: Alignment.center,
+                                  decoration: const BoxDecoration(
+                                      color: _neon, shape: BoxShape.circle),
+                                  child: Text(
+                                      widget.userName.isNotEmpty
+                                          ? widget.userName[0].toUpperCase()
+                                          : '?',
+                                      style: _cond(
+                                          size: 22,
+                                          weight: FontWeight.w800,
+                                          color: Colors.white)),
+                                ),
+                                const SizedBox(width: 14),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Row(children: [
+                                        Flexible(
+                                          child: Text(
+                                              widget.userName.toUpperCase(),
+                                              style: theme.textTheme.titleLarge,
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis),
+                                        ),
+                                        if (_holdNavn != null) ...[
+                                          const SizedBox(width: 8),
+                                          Container(
+                                            padding: const EdgeInsets.symmetric(
+                                                horizontal: 8, vertical: 3),
+                                            decoration: BoxDecoration(
+                                              color: _neon.withValues(alpha: 0.16),
+                                              borderRadius:
+                                                  BorderRadius.circular(999),
+                                            ),
+                                            child: Text(_holdNavn!.toUpperCase(),
+                                                style: _body(
+                                                    size: 9,
+                                                    weight: FontWeight.w800,
+                                                    spacing: 0.6,
+                                                    color: _neon)),
+                                          ),
+                                        ],
+                                      ]),
+                                      const SizedBox(height: 2),
+                                      Text(_season,
+                                          style: _body(
+                                              size: 12, color: _textSecondary)),
+                                    ],
+                                  ),
+                                ),
+                              ]),
+                            ),
+                            const SizedBox(height: 14),
+                            // To nøgletal
                             Card(
                               child: Padding(
                                 padding: const EdgeInsets.all(20),
-                                child: Row(
-                                  children: [
-                                    Expanded(child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                child: Row(children: [
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
                                       children: [
-                                        Text('Skyldigt nu',
-                                            style: theme.textTheme.bodySmall?.copyWith(
-                                                color: theme.colorScheme.onSurfaceVariant)),
+                                        Text('Skyldig nu',
+                                            style: _body(
+                                                size: 12, color: _textSecondary)),
                                         Text(_fmtKr(totalUbetalt),
-                                            style: theme.textTheme.headlineMedium?.copyWith(
-                                                color: totalUbetalt > 0 ? Colors.red.shade700 : Colors.grey)),
+                                            style: _cond(
+                                                size: 30,
+                                                weight: FontWeight.w800,
+                                                color: totalUbetalt > 0
+                                                    ? _danger
+                                                    : _textMuted)),
                                       ],
-                                    )),
-                                    Container(
-                                      width: 1, height: 56,
-                                      color: theme.dividerColor,
                                     ),
-                                    const SizedBox(width: 16),
-                                    Expanded(child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                  ),
+                                  Container(
+                                      width: 1, height: 48, color: _borderSubtle),
+                                  const SizedBox(width: 16),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
                                       children: [
-                                        Text('Betalt total',
-                                            style: theme.textTheme.bodySmall?.copyWith(
-                                                color: theme.colorScheme.onSurfaceVariant)),
+                                        Text('Betalt i alt',
+                                            style: _body(
+                                                size: 12, color: _textSecondary)),
                                         Text(_fmtKr(totalBetalt),
-                                            style: theme.textTheme.headlineMedium?.copyWith(
-                                                color: Colors.green.shade700)),
+                                            style: _cond(
+                                                size: 30,
+                                                weight: FontWeight.w800,
+                                                color: _success)),
                                       ],
-                                    )),
-                                  ],
-                                ),
+                                    ),
+                                  ),
+                                ]),
                               ),
                             ),
-                            if (totalUbetalt > 0 &&
-                                widget.userId ==
-                                    supabase.auth.currentUser?.id) ...[
-                              const SizedBox(height: 16),
+                            if (totalUbetalt > 0 && isOwn) ...[
+                              const SizedBox(height: 14),
                               SizedBox(
                                 width: double.infinity,
                                 child: FilledButton.icon(
@@ -810,7 +932,8 @@ class _FineHistoryScreenState extends State<FineHistoryScreen> {
                                       _payWithMobilePay(totalUbetalt),
                                   icon: const Icon(
                                       Icons.account_balance_wallet_outlined),
-                                  label: const Text('Betal med MobilePay'),
+                                  label: Text(
+                                      'Betal ${_fmtKr(totalUbetalt)} via MobilePay'),
                                   style: FilledButton.styleFrom(
                                     backgroundColor: _success,
                                     foregroundColor: _onSuccess,
@@ -824,19 +947,46 @@ class _FineHistoryScreenState extends State<FineHistoryScreen> {
                                 ),
                               ),
                             ],
-                            const SizedBox(height: 16),
+                            const SizedBox(height: 20),
                             if (_fines.isEmpty)
                               const Padding(
                                 padding: EdgeInsets.all(32),
-                                child: Center(child: Text('Ingen bøder endnu — clean record! 🎉')),
+                                child: Center(
+                                    child: Text(
+                                        'Ingen bøder endnu — clean record! 🎉')),
                               )
-                            else
-                              ..._fines.map((f) => _FineHistoryRow(
-                                fine: f,
-                                isAdmin: widget.isAdmin,
-                                onApprove: () => _approve(f),
-                                onDelete: widget.isAdmin ? () => _delete(f) : null,
-                              )),
+                            else ...[
+                              if (ubetalte.isNotEmpty) ...[
+                                _groupHeader('UBETALT', ubetalte.length, _danger),
+                                for (final f in ubetalte)
+                                  _FineHistoryRow(
+                                    fine: f,
+                                    giverName:
+                                        _giverNames[f['given_by'] as String?],
+                                    isAdmin: widget.isAdmin,
+                                    onApprove: () => _approve(f),
+                                    onDelete: widget.isAdmin
+                                        ? () => _delete(f)
+                                        : null,
+                                  ),
+                              ],
+                              if (betalte.isNotEmpty) ...[
+                                if (ubetalte.isNotEmpty)
+                                  const SizedBox(height: 14),
+                                _groupHeader('BETALT', betalte.length, _success),
+                                for (final f in betalte)
+                                  _FineHistoryRow(
+                                    fine: f,
+                                    giverName:
+                                        _giverNames[f['given_by'] as String?],
+                                    isAdmin: widget.isAdmin,
+                                    onApprove: () => _approve(f),
+                                    onDelete: widget.isAdmin
+                                        ? () => _delete(f)
+                                        : null,
+                                  ),
+                              ],
+                            ],
                           ],
                         ),
                       ),
@@ -845,15 +995,31 @@ class _FineHistoryScreenState extends State<FineHistoryScreen> {
                 ),
     );
   }
+
+  Widget _groupHeader(String label, int n, Color color) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10, left: 2),
+      child: Row(children: [
+        Container(width: 8, height: 8,
+            decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
+        const SizedBox(width: 8),
+        Text('$label · $n',
+            style: _body(
+                size: 12, weight: FontWeight.w800, spacing: 0.8, color: color)),
+      ]),
+    );
+  }
 }
 
 class _FineHistoryRow extends StatelessWidget {
   final Map<String, dynamic> fine;
+  final String? giverName;
   final bool isAdmin;
   final VoidCallback onApprove;
   final VoidCallback? onDelete;
   const _FineHistoryRow({
     required this.fine,
+    required this.giverName,
     required this.isAdmin,
     required this.onApprove,
     this.onDelete,
@@ -861,80 +1027,100 @@ class _FineHistoryRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme    = Theme.of(context);
-    final titel    = fine['titel']      as String;
+    final titel    = fine['titel']       as String;
     final oere     = (fine['belob_oere'] as num).toInt();
     final begrund  = fine['begrundelse'] as String?;
     final status   = fine['status']      as String;
     final created  = DateTime.parse(fine['created_at'] as String).toLocal();
     final isPaid   = status == 'godkendt_betalt';
+    final paidAt   = fine['paid_at'] == null
+        ? null
+        : DateTime.parse(fine['paid_at'] as String).toLocal();
 
-    return Card(
-      margin: const EdgeInsets.only(bottom: 10),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
+    // Meta-linje: dato · uddelt af · evt. begrundelse.
+    final metaParts = <String>['Givet ${_fmtDate(created)}'];
+    if (giverName != null && giverName!.isNotEmpty) {
+      metaParts.add('af $giverName');
+    }
+    final meta = metaParts.join(' · ');
+
+    return Opacity(
+      opacity: isPaid ? 0.65 : 1,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 10),
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: _surfaceDark,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+              color: isPaid
+                  ? _borderSubtle
+                  : _danger.withValues(alpha: 0.35)),
+        ),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Icon(isPaid ? Icons.check_circle : Icons.cancel,
-                color: isPaid ? Colors.green : Colors.red.shade700, size: 28),
-            const SizedBox(width: 12),
+                color: isPaid ? _success : _danger, size: 22),
+            const SizedBox(width: 11),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(
-                    children: [
-                      Expanded(child: Text(titel,
-                          style: theme.textTheme.titleMedium)),
-                      Text(_fmtKr(oere),
-                          style: theme.textTheme.titleMedium?.copyWith(
-                              color: isPaid ? Colors.grey : Colors.red.shade700,
-                              fontWeight: FontWeight.bold)),
-                    ],
-                  ),
+                  Row(children: [
+                    Expanded(
+                      child: Text(titel,
+                          style: _body(size: 15, weight: FontWeight.w700)),
+                    ),
+                    Text(_fmtKr(oere),
+                        style: _cond(
+                            size: 18,
+                            weight: FontWeight.w800,
+                            color: isPaid ? _textMuted : _danger)
+                        ?.copyWith(
+                            decoration:
+                                isPaid ? TextDecoration.lineThrough : null,
+                            decorationColor: _textMuted)),
+                  ]),
                   const SizedBox(height: 2),
-                  Text('Givet ${_fmtDate(created)}',
-                      style: theme.textTheme.bodySmall?.copyWith(
-                          color: theme.colorScheme.onSurfaceVariant)),
+                  Text(meta, style: _body(size: 11.5, color: _textSecondary)),
                   if (begrund != null && begrund.isNotEmpty) ...[
-                    const SizedBox(height: 6),
+                    const SizedBox(height: 5),
                     Text(begrund,
-                        style: theme.textTheme.bodyMedium?.copyWith(
-                            fontStyle: FontStyle.italic)),
+                        style: _body(size: 13, color: _textPrimary)
+                            .copyWith(fontStyle: FontStyle.italic)),
                   ],
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      Chip(
-                        label: Text(isPaid ? 'Godkendt betalt' : 'Ubetalt',
-                            style: const TextStyle(color: Colors.white, fontSize: 11)),
-                        backgroundColor: isPaid ? Colors.green : Colors.red.shade700,
-                        visualDensity: VisualDensity.compact,
-                        side: BorderSide.none,
-                      ),
-                      if (isAdmin) ...[
-                        const Spacer(),
-                        if (!isPaid)
-                          FilledButton.icon(
-                            onPressed: onApprove,
-                            icon: const Icon(Icons.check, size: 16),
-                            label: const Text('Godkend'),
-                            style: FilledButton.styleFrom(
-                              backgroundColor: Colors.green.shade700,
-                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                            ),
+                  if (isPaid && paidAt != null) ...[
+                    const SizedBox(height: 5),
+                    Text('Betalt ${_fmtDate(paidAt)}',
+                        style: _body(size: 11.5, weight: FontWeight.w600, color: _success)),
+                  ],
+                  if (isAdmin && (!isPaid || onDelete != null)) ...[
+                    const SizedBox(height: 10),
+                    Row(children: [
+                      if (!isPaid)
+                        FilledButton.icon(
+                          onPressed: onApprove,
+                          icon: const Icon(Icons.check, size: 16),
+                          label: const Text('Markér betalt'),
+                          style: FilledButton.styleFrom(
+                            backgroundColor: _success,
+                            foregroundColor: _onSuccess,
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 8),
                           ),
-                        if (onDelete != null)
-                          IconButton(
-                            onPressed: onDelete,
-                            icon: const Icon(Icons.delete_outline, size: 20, color: _danger),
-                            tooltip: 'Slet bøde',
-                            visualDensity: VisualDensity.compact,
-                          ),
-                      ],
-                    ],
-                  ),
+                        ),
+                      const Spacer(),
+                      if (onDelete != null)
+                        IconButton(
+                          onPressed: onDelete,
+                          icon: const Icon(Icons.delete_outline,
+                              size: 20, color: _danger),
+                          tooltip: 'Slet bøde',
+                          visualDensity: VisualDensity.compact,
+                        ),
+                    ]),
+                  ],
                 ],
               ),
             ),

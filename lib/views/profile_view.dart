@@ -88,6 +88,8 @@ class _ProfileTabState extends State<ProfileTab> {
                     onSave: _saveMakkere,
                   ),
                 const SizedBox(height: 16),
+                const _ChangePasswordCard(),
+                const SizedBox(height: 16),
                 const _NotificationCard(),
                 const SizedBox(height: 16),
                 _CalendarSyncCard(userId: widget.profile['id'] as String),
@@ -96,6 +98,124 @@ class _ProfileTabState extends State<ProfileTab> {
           ),
         ),
       ],
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Skift adgangskode — selvbetjening for logget-ind bruger
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _ChangePasswordCard extends StatefulWidget {
+  const _ChangePasswordCard();
+  @override
+  State<_ChangePasswordCard> createState() => _ChangePasswordCardState();
+}
+
+class _ChangePasswordCardState extends State<_ChangePasswordCard> {
+  final _pass = TextEditingController();
+  final _pass2 = TextEditingController();
+  bool _saving = false;
+  bool _obscure = true;
+
+  @override
+  void dispose() {
+    _pass.dispose();
+    _pass2.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    final p = _pass.text;
+    if (p.length < 6) {
+      _snack(context, 'Kodeordet skal være mindst 6 tegn', Colors.orange);
+      return;
+    }
+    if (p != _pass2.text) {
+      _snack(context, 'De to kodeord er ikke ens', Colors.orange);
+      return;
+    }
+    setState(() => _saving = true);
+    try {
+      await supabase.auth.updateUser(UserAttributes(password: p));
+      if (!mounted) return;
+      _pass.clear();
+      _pass2.clear();
+      FocusScope.of(context).unfocus();
+      _snack(context, 'Adgangskode ændret ✓', Colors.green);
+    } on AuthException catch (e) {
+      if (mounted) _snack(context, e.message, Colors.red);
+    } catch (e) {
+      if (mounted) _snack(context, 'Kunne ikke ændre kodeord: $e', Colors.red);
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.lock_outline, color: theme.colorScheme.primary),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text('Skift adgangskode',
+                      style: theme.textTheme.titleMedium),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text('Vælg et nyt kodeord til din konto.',
+                style: theme.textTheme.bodySmall),
+            const SizedBox(height: 16),
+            TextField(
+              controller: _pass,
+              obscureText: _obscure,
+              decoration: InputDecoration(
+                labelText: 'Nyt kodeord',
+                prefixIcon: const Icon(Icons.lock_outline),
+                suffixIcon: IconButton(
+                  icon: Icon(_obscure
+                      ? Icons.visibility_off_outlined
+                      : Icons.visibility_outlined),
+                  onPressed: () => setState(() => _obscure = !_obscure),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _pass2,
+              obscureText: _obscure,
+              textInputAction: TextInputAction.done,
+              onSubmitted: (_) => _save(),
+              decoration: const InputDecoration(
+                labelText: 'Gentag nyt kodeord',
+                prefixIcon: Icon(Icons.lock_outline),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Align(
+              alignment: Alignment.centerRight,
+              child: FilledButton.icon(
+                onPressed: _saving ? null : _save,
+                icon: _saving
+                    ? const SizedBox(width: 16, height: 16,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: Colors.white))
+                    : const Icon(Icons.check),
+                label: Text(_saving ? 'Gemmer…' : 'Gem nyt kodeord'),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

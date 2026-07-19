@@ -76,11 +76,40 @@ class PadelApp extends StatelessWidget {
 }
 
 
-class AuthGate extends StatelessWidget {
+class AuthGate extends StatefulWidget {
   const AuthGate({super.key});
+  @override
+  State<AuthGate> createState() => _AuthGateState();
+}
+
+class _AuthGateState extends State<AuthGate> {
+  StreamSubscription<AuthState>? _sub;
+  bool _recovery = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // Åbnet direkte via et nulstil-kodeord-link? (token i URL-fragmentet)
+    if (Uri.base.fragment.contains('type=recovery')) _recovery = true;
+    // Fanger også hændelsen når SDK'et behandler recovery-linket efter opstart.
+    _sub = supabase.auth.onAuthStateChange.listen((state) {
+      if (state.event == AuthChangeEvent.passwordRecovery && mounted) {
+        setState(() => _recovery = true);
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _sub?.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
+    if (_recovery) {
+      return ResetPasswordScreen(onDone: () => setState(() => _recovery = false));
+    }
     return StreamBuilder<AuthState>(
       stream: supabase.auth.onAuthStateChange,
       builder: (context, _) {

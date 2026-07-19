@@ -1727,7 +1727,10 @@ class _EditUserSheetState extends State<_EditUserSheet> {
     }
     setState(() => _sendingReset = true);
     try {
-      await supabase.auth.resetPasswordForEmail(email);
+      await supabase.auth.resetPasswordForEmail(
+        email,
+        redirectTo: _passwordResetRedirect,
+      );
       if (mounted) _snack(context, 'Nulstil-mail sendt til $email', _success);
     } on AuthException catch (e) {
       if (mounted) _snack(context, e.message, _danger);

@@ -234,6 +234,202 @@ class _AuthScreenState extends State<AuthScreen> {
                                 child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
                             : Text(_isSignup ? 'Opret profil' : 'Log ind'),
                       ),
+                      if (!_isSignup) ...[
+                        const SizedBox(height: 4),
+                        TextButton(
+                          onPressed: _loading ? null : _forgotPassword,
+                          child: const Text('Glemt adgangskode?'),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Selvbetjent nulstilling: sender en nulstil-mail til den indtastede e-mail.
+  Future<void> _forgotPassword() async {
+    final ctrl = TextEditingController(text: _emailCtrl.text.trim());
+    final email = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Nulstil adgangskode'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('Indtast din e-mail, så sender vi et link til at '
+                'vælge et nyt kodeord.'),
+            const SizedBox(height: 16),
+            TextField(
+              controller: ctrl,
+              autofocus: true,
+              keyboardType: TextInputType.emailAddress,
+              decoration: const InputDecoration(
+                labelText: 'E-mail',
+                prefixIcon: Icon(Icons.email_outlined),
+              ),
+              onSubmitted: (v) => Navigator.pop(ctx, v.trim()),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Annullér')),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
+            child: const Text('Send link'),
+          ),
+        ],
+      ),
+    );
+    ctrl.dispose();
+    if (email == null || email.isEmpty || !email.contains('@')) return;
+    try {
+      await supabase.auth.resetPasswordForEmail(
+        email,
+        redirectTo: _passwordResetRedirect,
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Nulstil-link sendt til $email — tjek din mail'),
+          backgroundColor: const Color(0xFF34C759),
+        ));
+      }
+    } on AuthException catch (e) {
+      _showError(e.message);
+    } catch (e) {
+      _showError('Kunne ikke sende mail: $e');
+    }
+  }
+}
+
+/// Skærm hvor brugeren vælger et nyt kodeord efter at have klikket nulstil-linket.
+class ResetPasswordScreen extends StatefulWidget {
+  final VoidCallback onDone;
+  const ResetPasswordScreen({super.key, required this.onDone});
+  @override
+  State<ResetPasswordScreen> createState() => _ResetPasswordScreenState();
+}
+
+class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
+  final _formKey = GlobalKey<FormState>();
+  final _pass = TextEditingController();
+  final _pass2 = TextEditingController();
+  bool _loading = false;
+  bool _obscure = true;
+
+  @override
+  void dispose() {
+    _pass.dispose();
+    _pass2.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    if (!_formKey.currentState!.validate()) return;
+    setState(() => _loading = true);
+    try {
+      await supabase.auth.updateUser(UserAttributes(password: _pass.text));
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Kodeord opdateret — du er nu logget ind'),
+        backgroundColor: Color(0xFF34C759),
+      ));
+      widget.onDone();
+    } on AuthException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(e.message), backgroundColor: Colors.red.shade700));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text('Uventet fejl: $e'), backgroundColor: Colors.red.shade700));
+      }
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Scaffold(
+      body: Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 420),
+            child: Card(
+              elevation: 2,
+              child: Padding(
+                padding: const EdgeInsets.all(32),
+                child: Form(
+                  key: _formKey,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Icon(Icons.lock_reset, size: 64, color: theme.colorScheme.primary),
+                      const SizedBox(height: 12),
+                      Text('VÆLG NYT KODEORD',
+                          textAlign: TextAlign.center,
+                          style: theme.textTheme.headlineSmall
+                              ?.copyWith(letterSpacing: 2)),
+                      const SizedBox(height: 8),
+                      Text('Indtast dit nye kodeord nedenfor.',
+                          textAlign: TextAlign.center,
+                          style: theme.textTheme.bodyMedium
+                              ?.copyWith(color: _textSecondary)),
+                      const SizedBox(height: 24),
+                      TextFormField(
+                        controller: _pass,
+                        obscureText: _obscure,
+                        decoration: InputDecoration(
+                          labelText: 'Nyt kodeord',
+                          prefixIcon: const Icon(Icons.lock_outline),
+                          suffixIcon: IconButton(
+                            icon: Icon(_obscure
+                                ? Icons.visibility_off_outlined
+                                : Icons.visibility_outlined),
+                            onPressed: () => setState(() => _obscure = !_obscure),
+                          ),
+                        ),
+                        validator: (v) {
+                          if (v == null || v.isEmpty) return 'Indtast et kodeord';
+                          if (v.length < 6) return 'Mindst 6 tegn';
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 16),
+                      TextFormField(
+                        controller: _pass2,
+                        obscureText: _obscure,
+                        textInputAction: TextInputAction.done,
+                        onFieldSubmitted: (_) => _save(),
+                        decoration: const InputDecoration(
+                          labelText: 'Gentag kodeord',
+                          prefixIcon: Icon(Icons.lock_outline),
+                        ),
+                        validator: (v) =>
+                            v != _pass.text ? 'Kodeordene er ikke ens' : null,
+                      ),
+                      const SizedBox(height: 24),
+                      FilledButton(
+                        onPressed: _loading ? null : _save,
+                        child: _loading
+                            ? const SizedBox(
+                                width: 20, height: 20,
+                                child: CircularProgressIndicator(
+                                    strokeWidth: 2, color: Colors.white))
+                            : const Text('Gem nyt kodeord'),
+                      ),
                     ],
                   ),
                 ),

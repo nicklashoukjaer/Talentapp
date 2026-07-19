@@ -3,6 +3,17 @@
 // Dashboard. Caches lokalt (instant) så betalingsknappen virker hurtigt.
 part of '../main.dart';
 
+/// Hvor et nulstil-kodeord-link skal sende brugeren hen — appens egen adresse.
+/// Bruger den aktuelle web-origin (virker på både vercel-URL og evt. eget
+/// domæne); falder tilbage til den kendte produktions-URL uden for web.
+String get _passwordResetRedirect {
+  try {
+    final o = Uri.base.origin;
+    if (o.startsWith('http')) return o;
+  } catch (_) {}
+  return 'https://de-talentlose.vercel.app';
+}
+
 class ClubConfig {
   static const _table = 'club_config';
   static const _rowId = 1;

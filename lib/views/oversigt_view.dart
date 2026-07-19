@@ -1626,10 +1626,12 @@ class _HoldSwitcher extends StatelessWidget {
   final List<Map<String, dynamic>> groups;
   final String? selectedId;
   final ValueChanged<String?> onChanged;
+  final bool includeAll; // vis "Alle"-knappen (fra = kun de angivne hold)
   const _HoldSwitcher({
     required this.groups,
     required this.selectedId,
     required this.onChanged,
+    this.includeAll = true,
   });
 
   static Color _hex(String? h) {

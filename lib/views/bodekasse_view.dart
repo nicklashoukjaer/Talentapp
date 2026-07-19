@@ -12,6 +12,11 @@ class BodekasseTab extends StatefulWidget {
 
 class BodekasseTabState extends State<BodekasseTab> {
   List<Map<String, dynamic>> _rows = const [];
+  List<Map<String, dynamic>> _groups = const [];
+  Map<String, Set<String>> _memberIdsByGroup = {}; // group_id → medlemmers user_id
+  Set<String> _myGroupIds = {};
+  String? _switcherGroupId;   // valgt hold (null = Alle)
+  bool _filterInit = false;   // sæt standard-valg kun én gang
   bool _loading = true;
   String? _error;
 
@@ -22,9 +27,10 @@ class BodekasseTabState extends State<BodekasseTab> {
   }
 
   Future<void> reload() async {
-    // Instant UI: vis cachet holdsaldo med det samme.
+    // Instant UI: vis cachet holdsaldo med det samme — men kun når filteret
+    // allerede er initialiseret (ellers ville en spiller kort se hele klubben).
     final cached = CacheService.getList('leaderboard');
-    if (cached != null) {
+    if (cached != null && _filterInit) {
       _rows = cached;
       _loading = false;
       if (mounted) setState(() {});
@@ -33,15 +39,45 @@ class BodekasseTabState extends State<BodekasseTab> {
     }
     try {
       // Highscore = flest bøder gennem tiden (total). Skyldigt bruges til
-      // "Du skylder"-callout og ubetalt-markering.
-      final rows = await supabase
-          .from('fine_leaderboard')
-          .select()
-          .order('total_oere', ascending: false);
-      final list = List<Map<String, dynamic>>.from(rows as List);
+      // "Du skylder"-callout og ubetalt-markering. Hold + medlemskaber hentes
+      // med, så listen kan filtreres pr. hold.
+      final results = await Future.wait([
+        supabase.from('fine_leaderboard').select().order('total_oere', ascending: false),
+        supabase.from('groups').select('id, navn, farve, sort').order('sort'),
+        supabase.from('group_members').select('group_id, user_id'),
+      ]);
+      final list = List<Map<String, dynamic>>.from(results[0] as List);
+      final groups = List<Map<String, dynamic>>.from(results[1] as List);
+      final gm = List<Map<String, dynamic>>.from(results[2] as List);
+      final byGroup = <String, Set<String>>{};
+      final mine = <String>{};
+      for (final r in gm) {
+        final gid = r['group_id'] as String;
+        final uid = r['user_id'] as String;
+        (byGroup[gid] ??= <String>{}).add(uid);
+        if (uid == widget.currentUserId) mine.add(gid);
+      }
       CacheService.put('leaderboard', list);
       if (!mounted) return;
-      setState(() { _rows = list; _loading = false; });
+      setState(() {
+        _rows = list;
+        _groups = groups;
+        _memberIdsByGroup = byGroup;
+        _myGroupIds = mine;
+        if (!_filterInit) {
+          _filterInit = true;
+          // Standard: admin ser "Alle"; træner/spiller ser deres eget (første)
+          // hold. Har en ikke-admin ingen hold, falder de tilbage til Alle.
+          if (!widget.isAdmin) {
+            final myGroups =
+                groups.where((g) => mine.contains(g['id'] as String)).toList();
+            if (myGroups.isNotEmpty) {
+              _switcherGroupId = myGroups.first['id'] as String;
+            }
+          }
+        }
+        _loading = false;
+      });
     } catch (e) {
       if (!mounted) return;
       if (_rows.isEmpty) setState(() { _loading = false; _error = e.toString(); });
@@ -79,6 +115,20 @@ class BodekasseTabState extends State<BodekasseTab> {
     final theme = Theme.of(context);
     if (_loading) return _loadingSkeleton();
     if (_error != null) return _ErrorView(error: _error!, onRetry: reload);
+
+    // Admin kan vælge mellem ALLE hold (+ "Alle"); træner/spiller ser kun de
+    // hold de selv er på. Listen filtreres til det valgte holds medlemmer.
+    final switcherGroups = widget.isAdmin
+        ? _groups
+        : _groups.where((g) => _myGroupIds.contains(g['id'] as String)).toList();
+    final includeAll = widget.isAdmin;
+    final chipCount = switcherGroups.length + (includeAll ? 1 : 0);
+    final filtered = _switcherGroupId == null
+        ? _rows
+        : _rows
+            .where((r) => (_memberIdsByGroup[_switcherGroupId] ?? const <String>{})
+                .contains(r['id'] as String))
+            .toList();
 
     return RefreshIndicator(
       onRefresh: reload,
@@ -146,7 +196,16 @@ class BodekasseTabState extends State<BodekasseTab> {
                       );
                     }),
                   ),
-                  if (_rows.isEmpty)
+                  if (chipCount > 1) ...[
+                    _HoldSwitcher(
+                      groups: switcherGroups,
+                      selectedId: _switcherGroupId,
+                      includeAll: includeAll,
+                      onChanged: (id) => setState(() => _switcherGroupId = id),
+                    ),
+                    const SizedBox(height: 16),
+                  ],
+                  if (filtered.isEmpty)
                     const _EmptyState(
                       icon: Icons.emoji_events_outlined,
                       title: 'Ingen bøder endnu',
@@ -154,7 +213,7 @@ class BodekasseTabState extends State<BodekasseTab> {
                     )
                   else ...[
                     _Podium(
-                      rows: _rows.take(3).toList(),
+                      rows: filtered.take(3).toList(),
                       currentUserId: widget.currentUserId,
                     ),
                     const SizedBox(height: 20),
@@ -173,7 +232,7 @@ class BodekasseTabState extends State<BodekasseTab> {
                         ),
                       );
                     }),
-                    ..._rows.asMap().entries.map((e) => _LeaderboardRow(
+                    ...filtered.asMap().entries.map((e) => _LeaderboardRow(
                           rank: e.key + 1,
                           row: e.value,
                           isOwn: e.value['id'] == widget.currentUserId,

@@ -193,6 +193,21 @@ class _OversigtTabState extends State<OversigtTab> {
         if (uid == userId) myVotes[oid] = svar;
       }
 
+      // Gæster/afløsere pr. træning (tæller med i "tilmeldt X/Y").
+      final guestCounts = <String, int>{};
+      if (trainingIds.isNotEmpty) {
+        try {
+          final gRows = await supabase
+              .from('training_guests')
+              .select('training_id')
+              .inFilter('training_id', trainingIds);
+          for (final r in List<Map<String, dynamic>>.from(gRows as List)) {
+            final tid = r['training_id'] as String;
+            guestCounts[tid] = (guestCounts[tid] ?? 0) + 1;
+          }
+        } catch (_) {}
+      }
+
       final items = <_FeedItem>[];
 
       for (final t in trainings) {
@@ -206,7 +221,7 @@ class _OversigtTabState extends State<OversigtTab> {
         items.add(_TrainingFeedItem(
           training: t,
           myStatus: myStatusMap[tid],
-          signedUpCount: g['tilmeldt']!.length, // trænere er IKKE i denne liste
+          signedUpCount: g['tilmeldt']!.length + (guestCounts[tid] ?? 0),
           tilmeldte:  g['tilmeldt']!,
           venteliste: g['venteliste']!,
           afmeldte:   g['afmeldt']!,
@@ -2262,6 +2277,7 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
   List<_AttPerson> _tilmeldt = const [];
   List<_AttPerson> _afbud = const [];
   List<_AttPerson> _mangler = const [];
+  List<Map<String, dynamic>> _guests = const []; // afløsere (uden konto)
   bool _loading = true;
   String? _error;
   bool _busy = false;
@@ -2328,20 +2344,25 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
           }
         }
       }
-      // Antal kommentarer (til fane-badgen).
+      // Antal kommentarer (til fane-badgen) + afløsere.
       int commentCount = _commentCount;
+      List<Map<String, dynamic>> guests = _guests;
       try {
-        final c = await supabase
-            .from('training_comments')
-            .select('id')
-            .eq('training_id', tid);
-        commentCount = (c as List).length;
+        final res = await Future.wait([
+          supabase.from('training_comments').select('id').eq('training_id', tid),
+          supabase.from('training_guests')
+              .select('id, navn, added_by, profiles(navn)')
+              .eq('training_id', tid).order('created_at'),
+        ]);
+        commentCount = (res[0] as List).length;
+        guests = List<Map<String, dynamic>>.from(res[1] as List);
       } catch (_) {}
       if (!mounted) return;
       setState(() {
         _tilmeldt = tilmeldt;
         _afbud = afbud;
         _mangler = mangler;
+        _guests = guests;
         _commentCount = commentCount;
         _loading = false;
       });
@@ -2364,6 +2385,132 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  Future<void> _addGuest() async {
+    final navn = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => const _AddGuestSheet(),
+    );
+    if (navn == null || navn.trim().isEmpty) return;
+    try {
+      await supabase.from('training_guests').insert({
+        'training_id': widget.training['id'],
+        'navn': navn.trim(),
+        'added_by': _myId,
+      });
+      await _load();
+      if (mounted) _snack(context, 'Afløser tilføjet', _success);
+    } on PostgrestException catch (e) {
+      if (mounted) _snack(context, e.message, _danger);
+    }
+  }
+
+  Future<void> _deleteGuest(String id) async {
+    try {
+      await supabase.from('training_guests').delete().eq('id', id);
+      await _load();
+    } on PostgrestException catch (e) {
+      if (mounted) _snack(context, e.message, _danger);
+    }
+  }
+
+  Widget _guestsSection() {
+    if (_guests.isEmpty && !widget.isStaff) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (_guests.isNotEmpty) ...[
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8, top: 4),
+            child: Row(children: [
+              const Icon(Icons.person_add_alt, size: 16, color: _gold),
+              const SizedBox(width: 6),
+              Text('AFLØSERE · ${_guests.length}',
+                  style: _body(
+                      size: 12,
+                      weight: FontWeight.w700,
+                      spacing: 0.8,
+                      color: _gold)),
+            ]),
+          ),
+          for (final g in _guests) _guestRow(g),
+          const SizedBox(height: 8),
+        ],
+        if (widget.isStaff)
+          Align(
+            alignment: Alignment.centerLeft,
+            child: OutlinedButton.icon(
+              onPressed: _busy ? null : _addGuest,
+              icon: const Icon(Icons.person_add_alt_1, size: 18),
+              label: const Text('Tilføj afløser'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: _gold,
+                side: BorderSide(color: _gold.withValues(alpha: 0.5)),
+              ),
+            ),
+          ),
+        const SizedBox(height: 4),
+      ],
+    );
+  }
+
+  Widget _guestRow(Map<String, dynamic> g) {
+    final navn = g['navn'] as String? ?? 'Gæst';
+    final by = (g['profiles'] as Map<String, dynamic>?)?['navn'] as String?;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(children: [
+        Container(
+          width: 34, height: 34,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: _surfaceElevated,
+            shape: BoxShape.circle,
+            border: Border.all(color: _gold.withValues(alpha: 0.6)),
+          ),
+          child: Text(navn.isNotEmpty ? navn[0].toUpperCase() : 'G',
+              style: _cond(size: 15, weight: FontWeight.w800, color: _gold)),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(children: [
+                Flexible(
+                  child: Text(navn,
+                      style: _body(size: 14, weight: FontWeight.w600),
+                      overflow: TextOverflow.ellipsis),
+                ),
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 1),
+                  decoration: BoxDecoration(
+                      color: _gold.withValues(alpha: 0.16),
+                      borderRadius: BorderRadius.circular(999)),
+                  child: Text('GÆST',
+                      style: _body(
+                          size: 9, weight: FontWeight.w800, color: _gold)),
+                ),
+              ]),
+              if (by != null)
+                Text('Tilføjet af $by',
+                    style: _body(size: 11, color: _textMuted)),
+            ],
+          ),
+        ),
+        if (widget.isStaff)
+          IconButton(
+            onPressed: () => _deleteGuest(g['id'] as String),
+            icon: const Icon(Icons.close, size: 18, color: _textMuted),
+            tooltip: 'Fjern afløser',
+            visualDensity: VisualDensity.compact,
+          ),
+      ]),
+    );
   }
 
   Future<void> _remindMissing() async {
@@ -2508,7 +2655,7 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                             _attendanceBar(),
                             const SizedBox(height: 8),
                             Row(children: [
-                              Text('${_tilmeldt.length} tilmeldt',
+                              Text('${_tilmeldt.length + _guests.length} tilmeldt',
                                   style: _body(size: 12, weight: FontWeight.w700, color: _success)),
                               const SizedBox(width: 12),
                               Text('${_afbud.length} afbud',
@@ -2600,6 +2747,7 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                             ],
                             const SizedBox(height: 18),
                             _group('TILMELDT', _tilmeldt, _success, Icons.check_circle),
+                            _guestsSection(),
                             _group('AFBUD', _afbud, _danger, Icons.cancel),
                             _group('MANGLER SVAR', _mangler, _textMuted, Icons.help_outline),
                             if (widget.isStaff && _mangler.isNotEmpty) ...[
@@ -2639,7 +2787,7 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
   }
 
   Widget _attendanceBar() {
-    final tt = _tilmeldt.length, aa = _afbud.length, mm = _mangler.length;
+    final tt = _tilmeldt.length + _guests.length, aa = _afbud.length, mm = _mangler.length;
     final total = tt + aa + mm;
     if (total == 0) {
       return Container(
@@ -3031,6 +3179,93 @@ class _EventCommentsState extends State<_EventComments> {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Bundsheet: tilføj en afløser/gæst på navn (uden konto).
+class _AddGuestSheet extends StatefulWidget {
+  const _AddGuestSheet();
+  @override
+  State<_AddGuestSheet> createState() => _AddGuestSheetState();
+}
+
+class _AddGuestSheetState extends State<_AddGuestSheet> {
+  final _navn = TextEditingController();
+
+  @override
+  void dispose() {
+    _navn.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final v = _navn.text.trim();
+    if (v.isEmpty) {
+      _snack(context, 'Skriv et navn på afløseren', _gold);
+      return;
+    }
+    Navigator.of(context).pop(v);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      child: SafeArea(
+        top: false,
+        child: Container(
+          margin: const EdgeInsets.all(12),
+          padding: const EdgeInsets.all(18),
+          decoration: BoxDecoration(
+            color: _surfaceDark,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: _borderSubtle),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text('TILFØJ AFLØSER',
+                  style: _cond(size: 20, weight: FontWeight.w800)),
+              const SizedBox(height: 6),
+              Text('Vises som "Gæst" i tilmeldt-listen og kan få bøde som alle '
+                  'andre. Knyttet til denne ene begivenhed.',
+                  style: _body(size: 12.5, color: _textSecondary)),
+              const SizedBox(height: 16),
+              TextField(
+                controller: _navn,
+                autofocus: true,
+                textCapitalization: TextCapitalization.words,
+                textInputAction: TextInputAction.done,
+                onSubmitted: (_) => _submit(),
+                decoration: const InputDecoration(
+                  labelText: 'Navn på afløseren',
+                  prefixIcon: Icon(Icons.person_outline),
+                ),
+              ),
+              const SizedBox(height: 18),
+              Row(children: [
+                Expanded(
+                  child: TextButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    style: TextButton.styleFrom(foregroundColor: _textSecondary),
+                    child: const Text('Annullér'),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  flex: 2,
+                  child: FilledButton(
+                    onPressed: _submit,
+                    child: const Text('Tilføj til tilmeldte'),
+                  ),
+                ),
+              ]),
+            ],
+          ),
+        ),
       ),
     );
   }

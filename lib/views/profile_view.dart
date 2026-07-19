@@ -27,14 +27,42 @@ class _ProfileTabState extends State<ProfileTab> {
 
   Future<void> _loadMembers() async {
     final userId = supabase.auth.currentUser!.id;
-    final rows = await supabase
-        .from('profiles')
-        .select('id, navn')
-        .neq('id', userId)
-        .order('navn');
+    // Kun holdkammerater: find brugerens hold, og hent medlemmerne af de hold.
+    // Så kan fx damer og herrer ikke vælge hinanden som makkere.
+    List<Map<String, dynamic>> members = const [];
+    try {
+      final myGm = await supabase
+          .from('group_members')
+          .select('group_id')
+          .eq('user_id', userId);
+      final myGroups = List<Map<String, dynamic>>.from(myGm as List)
+          .map((r) => r['group_id'] as String)
+          .toList();
+      if (myGroups.isNotEmpty) {
+        final gmRows = await supabase
+            .from('group_members')
+            .select('user_id')
+            .inFilter('group_id', myGroups);
+        final ids = List<Map<String, dynamic>>.from(gmRows as List)
+            .map((r) => r['user_id'] as String)
+            .where((id) => id != userId)
+            .toSet()
+            .toList();
+        if (ids.isNotEmpty) {
+          final profRows = await supabase
+              .from('profiles')
+              .select('id, navn')
+              .inFilter('id', ids)
+              .order('navn');
+          members = List<Map<String, dynamic>>.from(profRows as List);
+        }
+      }
+    } catch (_) {
+      members = const [];
+    }
     if (!mounted) return;
     setState(() {
-      _otherMembers = List<Map<String, dynamic>>.from(rows as List);
+      _otherMembers = members;
       _loadingMembers = false;
     });
   }
@@ -593,20 +621,43 @@ class _MakkerCard extends StatelessWidget {
           children: [
             Text('Mine faste makkere', style: theme.textTheme.titleLarge),
             const SizedBox(height: 4),
-            Text('Bruges af synergi-rapporten til at finde dine stærkeste hold.',
+            Text('Du kan kun vælge makkere fra dit eget hold. Bruges af '
+                'synergi-rapporten til at finde dine stærkeste hold.',
                 style: theme.textTheme.bodySmall?.copyWith(
                     color: theme.colorScheme.onSurfaceVariant)),
             const SizedBox(height: 24),
-            _MakkerDropdown(label: 'Prioritet 1 makker',
-                value: selectedP1, members: members, onChanged: onChangedP1),
-            const SizedBox(height: 16),
-            _MakkerDropdown(label: 'Prioritet 2 makker',
-                value: selectedP2, members: members, onChanged: onChangedP2),
+            if (members.isEmpty)
+              Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: _gold.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: _gold.withValues(alpha: 0.35)),
+                ),
+                child: Row(children: [
+                  const Icon(Icons.info_outline, size: 18, color: _gold),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'Du er ikke på et hold med andre spillere endnu — så der '
+                      'er ingen at vælge som makker. Kontakt en træner/admin.',
+                      style: _body(size: 12, color: _textSecondary),
+                    ),
+                  ),
+                ]),
+              )
+            else ...[
+              _MakkerDropdown(label: 'Prioritet 1 makker',
+                  value: selectedP1, members: members, onChanged: onChangedP1),
+              const SizedBox(height: 16),
+              _MakkerDropdown(label: 'Prioritet 2 makker',
+                  value: selectedP2, members: members, onChanged: onChangedP2),
+            ],
             const SizedBox(height: 24),
             Align(
               alignment: Alignment.centerRight,
               child: FilledButton.icon(
-                onPressed: saving ? null : onSave,
+                onPressed: saving || members.isEmpty ? null : onSave,
                 icon: saving
                     ? const SizedBox(width: 16, height: 16,
                         child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
@@ -635,8 +686,12 @@ class _MakkerDropdown extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Undgå crash hvis et tidligere valgt (nu ikke-holdkammerat) navn ikke
+    // længere findes i listen — vis "Ingen valgt" i stedet.
+    final effectiveValue =
+        members.any((m) => m['id'] == value) ? value : null;
     return DropdownButtonFormField<String?>(
-      value: value,
+      value: effectiveValue,
       isExpanded: true,
       decoration: InputDecoration(
         labelText: label,

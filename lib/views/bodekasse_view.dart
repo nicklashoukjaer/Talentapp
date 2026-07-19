@@ -106,12 +106,11 @@ class BodekasseTabState extends State<BodekasseTab> {
     if (_loading) return _loadingSkeleton();
     if (_error != null) return _ErrorView(error: _error!, onRetry: reload);
 
-    // Admin kan vælge mellem ALLE hold (+ "Alle") og må multi-vælge; træner/
-    // spiller ser kun de hold de selv er på.
+    // Admin: alle hold, MULTI-valg, "Alle" = hele klubben.
+    // Træner/spiller: kun egne hold, SINGLE-valg, "Alle" = egne hold slået sammen.
     final switcherGroups = widget.isAdmin
         ? _groups
         : _groups.where((g) => _myGroupIds.contains(g['id'] as String)).toList();
-    final includeAll = widget.isAdmin;
 
     // Grundmængden en bruger overhovedet kan se: admin ser alle; øvrige kun
     // personer på deres egne hold.
@@ -208,7 +207,8 @@ class BodekasseTabState extends State<BodekasseTab> {
                     _HoldMultiSwitcher(
                       groups: switcherGroups,
                       selectedIds: _selectedGroupIds,
-                      includeAll: includeAll,
+                      includeAll: true,
+                      multiSelect: widget.isAdmin,
                       onChanged: (ids) => setState(() {
                         _selectedGroupIds
                           ..clear()
@@ -267,12 +267,14 @@ class _HoldMultiSwitcher extends StatelessWidget {
   final List<Map<String, dynamic>> groups;
   final Set<String> selectedIds;
   final bool includeAll;
+  final bool multiSelect; // true = flere hold ad gangen; false = single-valg
   final ValueChanged<Set<String>> onChanged;
   const _HoldMultiSwitcher({
     required this.groups,
     required this.selectedIds,
     required this.onChanged,
     this.includeAll = true,
+    this.multiSelect = true,
   });
 
   static Color _hex(String? h) {
@@ -334,9 +336,14 @@ class _HoldMultiSwitcher extends StatelessWidget {
                 active: selectedIds.contains(g['id'] as String),
                 onTap: () {
                   final id = g['id'] as String;
-                  final next = {...selectedIds};
-                  if (!next.add(id)) next.remove(id);
-                  onChanged(next);
+                  if (multiSelect) {
+                    final next = {...selectedIds};
+                    if (!next.add(id)) next.remove(id);
+                    onChanged(next);
+                  } else {
+                    // Single-valg: vælg kun dette hold (tryk igen = tilbage til Alle).
+                    onChanged(selectedIds.contains(id) ? <String>{} : {id});
+                  }
                 }),
         ],
       ),

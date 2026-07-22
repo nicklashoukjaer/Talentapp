@@ -11,7 +11,8 @@ class HomeShell extends StatefulWidget {
 class _HomeShellState extends State<HomeShell> {
   Map<String, dynamic>? _profile;
   bool   _loading = true;
-  bool   _isCaptain = false; // kaptajn på mindst ét hold → må oprette
+  bool   _isCaptain = false;   // kaptajn på mindst ét hold → må oprette
+  bool   _isFineAdmin = false; // bøde-admin på mindst ét hold → må styre bøder
   String? _error;
   int    _selectedIndex = 0;
 
@@ -73,19 +74,26 @@ class _HomeShellState extends State<HomeShell> {
           .eq('id', userId)
           .single();
       CacheService.put('profile_$userId', row);
-      // Kaptajn-status (fra group_members) — påvirker om man må oprette.
+      // Kaptajn-/bøde-admin-status (fra group_members) — påvirker rettigheder.
       bool captain = false;
+      bool fineAdmin = false;
       try {
         final gm = await supabase
             .from('group_members')
-            .select('is_captain')
-            .eq('user_id', userId)
-            .eq('is_captain', true)
-            .limit(1);
-        captain = (gm as List).isNotEmpty;
+            .select('is_captain, is_fine_admin')
+            .eq('user_id', userId);
+        for (final r in List<Map<String, dynamic>>.from(gm as List)) {
+          if (r['is_captain'] == true) captain = true;
+          if (r['is_fine_admin'] == true) fineAdmin = true;
+        }
       } catch (_) {}
       if (!mounted) return;
-      setState(() { _profile = row; _isCaptain = captain; _loading = false; });
+      setState(() {
+        _profile = row;
+        _isCaptain = captain;
+        _isFineAdmin = fineAdmin;
+        _loading = false;
+      });
     } catch (e) {
       if (!mounted) return;
       // Behold cache hvis vi har den (offline-venligt); ellers vis fejl.
@@ -193,10 +201,10 @@ class _HomeShellState extends State<HomeShell> {
   }
 
   Future<void> _quickGiveFine() async {
-    if (!_isAdmin) return;
+    if (!_isAdmin && !_isFineAdmin) return;
     final ok = await showDialog<bool>(
       context: context,
-      builder: (_) => const GiveFineDialog(),
+      builder: (_) => GiveFineDialog(isFullAdmin: _isAdmin),
     );
     if (ok == true) {
       _bodekasseKey.currentState?.reload();
@@ -421,7 +429,7 @@ class _HomeShellState extends State<HomeShell> {
             child: const Icon(Icons.add),
           );
         }
-        if (idx == _tabBoede && _isAdmin) {
+        if (idx == _tabBoede && (_isAdmin || _isFineAdmin)) {
           return FloatingActionButton.extended(
             heroTag: 'fab_fine',
             onPressed: _quickGiveFine,

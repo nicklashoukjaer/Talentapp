@@ -923,6 +923,7 @@ class _TeamAssignCardState extends State<_TeamAssignCard> {
   List<Map<String, dynamic>> _members = const [];
   Map<String, Set<String>> _membership = {}; // user_id → gruppe-id'er
   Map<String, Set<String>> _captains = {};   // user_id → gruppe-id'er hvor kaptajn
+  Map<String, Set<String>> _fineAdmins = {}; // user_id → gruppe-id'er hvor bøde-admin
   Map<String, int> _skyldigt = {};           // user_id → ubetalt øre
   bool _loading = true;
   String? _filterGroupId; // null = Alle
@@ -939,17 +940,19 @@ class _TeamAssignCardState extends State<_TeamAssignCard> {
       final res = await Future.wait([
         supabase.from('groups').select('id, navn, type, farve, sort').order('sort'),
         supabase.from('profiles').select('id, navn, rolle').order('navn'),
-        supabase.from('group_members').select('group_id, user_id, is_captain'),
+        supabase.from('group_members').select('group_id, user_id, is_captain, is_fine_admin'),
         supabase.from('fine_leaderboard').select('id, skyldigt_oere'),
       ]);
       final gm = List<Map<String, dynamic>>.from(res[2] as List);
       final map = <String, Set<String>>{};
       final caps = <String, Set<String>>{};
+      final fas = <String, Set<String>>{};
       for (final r in gm) {
         final uid = r['user_id'] as String;
         final gid = r['group_id'] as String;
         (map[uid] ??= {}).add(gid);
         if (r['is_captain'] == true) (caps[uid] ??= {}).add(gid);
+        if (r['is_fine_admin'] == true) (fas[uid] ??= {}).add(gid);
       }
       final skyldigt = <String, int>{};
       for (final r in List<Map<String, dynamic>>.from(res[3] as List)) {
@@ -961,6 +964,7 @@ class _TeamAssignCardState extends State<_TeamAssignCard> {
         _members = List<Map<String, dynamic>>.from(res[1] as List);
         _membership = map;
         _captains = caps;
+        _fineAdmins = fas;
         _skyldigt = skyldigt;
         _loading = false;
       });
@@ -1122,6 +1126,29 @@ class _TeamAssignCardState extends State<_TeamAssignCard> {
     }
   }
 
+  Future<void> _toggleFineAdmin(String userId, String groupId, bool fa) async {
+    setState(() {
+      final s = _fineAdmins[userId] ??= {};
+      if (fa) {
+        s.add(groupId);
+      } else {
+        s.remove(groupId);
+      }
+    });
+    try {
+      await supabase
+          .from('group_members')
+          .update({'is_fine_admin': fa})
+          .eq('group_id', groupId)
+          .eq('user_id', userId);
+    } on PostgrestException catch (e) {
+      if (mounted) {
+        _snack(context, e.message, _danger);
+        _load();
+      }
+    }
+  }
+
   void _editMember(Map<String, dynamic> m) {
     final userId = m['id'] as String;
     showModalBottomSheet<void>(
@@ -1146,8 +1173,8 @@ class _TeamAssignCardState extends State<_TeamAssignCard> {
                 Text((m['navn'] as String).toUpperCase(),
                     style: _cond(size: 20, weight: FontWeight.w800)),
                 const SizedBox(height: 2),
-                Text('Vælg hold — og tryk på stjernen for at gøre spilleren '
-                    'til kaptajn (må oprette begivenheder og afstemninger).',
+                Text('Vælg hold. ⭐ = kaptajn (må oprette begivenheder/'
+                    'afstemninger). ⚖️ = bøde-admin (må styre bøder for holdet).',
                     style: _body(size: 13, color: _textSecondary)),
                 const SizedBox(height: 8),
                 for (final g in _groups)
@@ -1155,6 +1182,7 @@ class _TeamAssignCardState extends State<_TeamAssignCard> {
                     final gid = g['id'] as String;
                     final onTeam = mine.contains(gid);
                     final isCap = (_captains[userId] ?? const {}).contains(gid);
+                    final isFa = (_fineAdmins[userId] ?? const {}).contains(gid);
                     return Padding(
                       padding: const EdgeInsets.symmetric(vertical: 2),
                       child: Row(children: [
@@ -1174,7 +1202,7 @@ class _TeamAssignCardState extends State<_TeamAssignCard> {
                         ),
                         const SizedBox(width: 10),
                         Expanded(child: Text(g['navn'] as String)),
-                        if (onTeam)
+                        if (onTeam) ...[
                           IconButton(
                             onPressed: () {
                               _toggleCaptain(userId, gid, !isCap);
@@ -1185,6 +1213,20 @@ class _TeamAssignCardState extends State<_TeamAssignCard> {
                             tooltip: isCap ? 'Fjern kaptajn' : 'Gør til kaptajn',
                             visualDensity: VisualDensity.compact,
                           ),
+                          IconButton(
+                            onPressed: () {
+                              _toggleFineAdmin(userId, gid, !isFa);
+                              setSheet(() {});
+                            },
+                            icon: Icon(
+                                isFa ? Icons.gavel : Icons.gavel_outlined,
+                                color: isFa ? _neon : _textMuted, size: 20),
+                            tooltip: isFa
+                                ? 'Fjern bøde-admin'
+                                : 'Gør til bøde-admin',
+                            visualDensity: VisualDensity.compact,
+                          ),
+                        ],
                       ]),
                     );
                   }),
@@ -1312,6 +1354,14 @@ class _TeamAssignCardState extends State<_TeamAssignCard> {
                     Text('Kaptajn',
                         style: _body(
                             size: 12, weight: FontWeight.w600, color: _gold)),
+                  ],
+                  if ((_fineAdmins[userId] ?? const {}).isNotEmpty) ...[
+                    const SizedBox(width: 6),
+                    const Icon(Icons.gavel, size: 12, color: _neon),
+                    const SizedBox(width: 2),
+                    Text('Bøde-admin',
+                        style: _body(
+                            size: 12, weight: FontWeight.w600, color: _neon)),
                   ],
                 ]),
               ],
@@ -2902,7 +2952,9 @@ class _FineTypeDialogState extends State<_FineTypeDialog> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 class GiveFineDialog extends StatefulWidget {
-  const GiveFineDialog({super.key});
+  // Fuld admin ser alle spillere; en bøde-admin ser kun sit/sine holds spillere.
+  final bool isFullAdmin;
+  const GiveFineDialog({super.key, this.isFullAdmin = true});
   @override
   State<GiveFineDialog> createState() => _GiveFineDialogState();
 }
@@ -2938,8 +2990,37 @@ class _GiveFineDialogState extends State<GiveFineDialog> {
             .eq('aktiv', true)
             .order('titel'),
       ]);
+      var profiles = List<Map<String, dynamic>>.from(results[0] as List);
+
+      // Bøde-admin (ikke fuld admin): begræns til spillere på de hold hvor
+      // brugeren er bøde-admin.
+      if (!widget.isFullAdmin) {
+        final uid = supabase.auth.currentUser!.id;
+        final myFa = await supabase
+            .from('group_members')
+            .select('group_id')
+            .eq('user_id', uid)
+            .eq('is_fine_admin', true);
+        final gids = List<Map<String, dynamic>>.from(myFa as List)
+            .map((r) => r['group_id'] as String)
+            .toList();
+        final allowed = <String>{};
+        if (gids.isNotEmpty) {
+          final mem = await supabase
+              .from('group_members')
+              .select('user_id')
+              .inFilter('group_id', gids);
+          for (final r in List<Map<String, dynamic>>.from(mem as List)) {
+            allowed.add(r['user_id'] as String);
+          }
+        }
+        profiles = profiles
+            .where((p) => allowed.contains(p['id'] as String))
+            .toList();
+      }
+
       setState(() {
-        _profiles  = List<Map<String, dynamic>>.from(results[0] as List);
+        _profiles  = profiles;
         _fineTypes = List<Map<String, dynamic>>.from(results[1] as List);
         _loading = false;
       });

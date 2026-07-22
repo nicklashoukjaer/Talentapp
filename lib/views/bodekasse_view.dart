@@ -15,8 +15,20 @@ class BodekasseTabState extends State<BodekasseTab> {
   List<Map<String, dynamic>> _groups = const [];
   Map<String, Set<String>> _memberIdsByGroup = {}; // group_id → medlemmers user_id
   Set<String> _myGroupIds = {};
+  Set<String> _myFineAdminGroupIds = {}; // hold hvor jeg er bøde-admin
   // Valgte hold i filteret (tom = alle tilladte). Admin kan vælge flere.
   final Set<String> _selectedGroupIds = {};
+
+  /// Må den aktuelle bruger administrere bøder for [playerId]?
+  bool _canAdminFineFor(String playerId) {
+    if (widget.isAdmin) return true;
+    for (final g in _myFineAdminGroupIds) {
+      if ((_memberIdsByGroup[g] ?? const <String>{}).contains(playerId)) {
+        return true;
+      }
+    }
+    return false;
+  }
   bool _filterInit = false;   // for at gate cache-hurtigvisning på 1. load
   bool _loading = true;
   String? _error;
@@ -45,18 +57,22 @@ class BodekasseTabState extends State<BodekasseTab> {
       final results = await Future.wait([
         supabase.from('fine_leaderboard').select().order('total_oere', ascending: false),
         supabase.from('groups').select('id, navn, farve, sort').order('sort'),
-        supabase.from('group_members').select('group_id, user_id'),
+        supabase.from('group_members').select('group_id, user_id, is_fine_admin'),
       ]);
       final list = List<Map<String, dynamic>>.from(results[0] as List);
       final groups = List<Map<String, dynamic>>.from(results[1] as List);
       final gm = List<Map<String, dynamic>>.from(results[2] as List);
       final byGroup = <String, Set<String>>{};
       final mine = <String>{};
+      final myFa = <String>{};
       for (final r in gm) {
         final gid = r['group_id'] as String;
         final uid = r['user_id'] as String;
         (byGroup[gid] ??= <String>{}).add(uid);
-        if (uid == widget.currentUserId) mine.add(gid);
+        if (uid == widget.currentUserId) {
+          mine.add(gid);
+          if (r['is_fine_admin'] == true) myFa.add(gid);
+        }
       }
       CacheService.put('leaderboard', list);
       if (!mounted) return;
@@ -65,6 +81,7 @@ class BodekasseTabState extends State<BodekasseTab> {
         _groups = groups;
         _memberIdsByGroup = byGroup;
         _myGroupIds = mine;
+        _myFineAdminGroupIds = myFa;
         _filterInit = true;
         _loading = false;
       });
@@ -75,16 +92,19 @@ class BodekasseTabState extends State<BodekasseTab> {
   }
 
   void _open(Map<String, dynamic> row) {
-    final canOpen = widget.isAdmin || row['id'] == widget.currentUserId;
+    final id = row['id'] as String;
+    final canAdminThis = _canAdminFineFor(id);
+    final canOpen = canAdminThis || id == widget.currentUserId;
     if (!canOpen) {
-      _snack(context, 'Kun admins kan se andre spilleres historik', Colors.orange);
+      _snack(context, 'Du kan kun se dit eget holds historik', Colors.orange);
       return;
     }
     Navigator.of(context).push(MaterialPageRoute(
       builder: (_) => FineHistoryScreen(
-        userId:   row['id']   as String,
+        userId:   id,
         userName: row['navn'] as String,
-        isAdmin:  widget.isAdmin,
+        // Bøde-admin for dette hold får godkend/slet-rettigheder her.
+        isAdmin:  canAdminThis,
       ),
     )).then((_) => reload());
   }

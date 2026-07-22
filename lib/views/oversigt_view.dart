@@ -51,6 +51,7 @@ class _OversigtTabState extends State<OversigtTab> {
   bool _historyLoaded = false; // lazy: historik (90 dage) hentes først ved behov
   List<Map<String, dynamic>> _groups = const []; // grupper brugeren er på
   Set<String> _myGroupIds = {};   // brugerens gruppe-id'er
+  Set<String> _myCaptainGroupIds = {}; // hold hvor brugeren er kaptajn
   String? _switcherGroupId;       // valgt hold i switcheren (null = alle mine)
 
   @override
@@ -73,17 +74,17 @@ class _OversigtTabState extends State<OversigtTab> {
       final results = await Future.wait([
         // Træninger 90 dage tilbage og frem
         supabase.from('trainings')
-            .select('id, titel, beskrivelse, max_deltagere, start_tid, slut_tid, adresse, tilmeldings_deadline, group_id, group_ids, synlig_fra')
+            .select('id, titel, beskrivelse, max_deltagere, start_tid, slut_tid, adresse, tilmeldings_deadline, group_id, group_ids, synlig_fra, created_by')
             .gte('start_tid', sinceIso).order('start_tid'),
         // Polls (alle — lukkede filtreres client-side)
         supabase.from('polls')
-            .select('id, titel, beskrivelse, lukket_at, created_at, group_id')
+            .select('id, titel, beskrivelse, lukket_at, created_at, group_id, created_by')
             .order('created_at', ascending: false),
         // Profiles for count
         supabase.from('profiles').select('id'),
         // Grupper + mit medlemskab (til hold-filtrering)
         supabase.from('groups').select('id, navn, type, farve, sort').order('sort'),
-        supabase.from('group_members').select('group_id').eq('user_id', userId),
+        supabase.from('group_members').select('group_id, is_captain').eq('user_id', userId),
       ]);
 
       final trainingsRaw = List<Map<String, dynamic>>.from(results[0] as List);
@@ -100,8 +101,12 @@ class _OversigtTabState extends State<OversigtTab> {
       final pollsAll    = List<Map<String, dynamic>>.from(results[1] as List);
       final profileRows = List<Map<String, dynamic>>.from(results[2] as List);
       final groups      = List<Map<String, dynamic>>.from(results[3] as List);
-      final myGroupIds  = List<Map<String, dynamic>>.from(results[4] as List)
-          .map((r) => r['group_id'] as String).toSet();
+      final myGmRows    = List<Map<String, dynamic>>.from(results[4] as List);
+      final myGroupIds  = myGmRows.map((r) => r['group_id'] as String).toSet();
+      final myCaptainGroupIds = myGmRows
+          .where((r) => r['is_captain'] == true)
+          .map((r) => r['group_id'] as String)
+          .toSet();
 
       // Filtrér åbne polls
       final polls = pollsAll.where((p) {
@@ -263,6 +268,7 @@ class _OversigtTabState extends State<OversigtTab> {
         _items = items;
         _groups = groups;
         _myGroupIds = myGroupIds;
+        _myCaptainGroupIds = myCaptainGroupIds;
         _loading = false;
       });
     } catch (e) {
@@ -396,6 +402,21 @@ class _OversigtTabState extends State<OversigtTab> {
       if (mounted) _snack(context, e.message, _danger);
       await reload();
     }
+  }
+
+  /// Må den aktuelle bruger redigere/slette denne aktivitet? (staff, opretter
+  /// eller kaptajn for et af aktivitetens hold)
+  bool _canManageTraining(Map<String, dynamic> t) {
+    if (widget.isAdmin) return true;
+    if (t['created_by'] == supabase.auth.currentUser?.id) return true;
+    return _trainingGroupIds(t).any(_myCaptainGroupIds.contains);
+  }
+
+  bool _canManagePoll(Map<String, dynamic> p) {
+    if (widget.isAdmin) return true;
+    if (p['created_by'] == supabase.auth.currentUser?.id) return true;
+    final gid = p['group_id'] as String?;
+    return gid != null && _myCaptainGroupIds.contains(gid);
   }
 
   /// Navne på de hold en aktivitet gælder (tom = alle hold → vis intet).
@@ -752,6 +773,8 @@ class _OversigtTabState extends State<OversigtTab> {
                               builder: (_) => EventDetailScreen(
                                 training: (visible.first as _TrainingFeedItem).training,
                                 isStaff: widget.isAdmin,
+                                canManage: _canManageTraining(
+                                    (visible.first as _TrainingFeedItem).training),
                               ),
                             ),
                           ).then((_) => reload()),
@@ -775,10 +798,12 @@ class _OversigtTabState extends State<OversigtTab> {
                             : _FeedTrainingCard(
                           item: t,
                           isAdmin: widget.isAdmin,
+                          canManage: _canManageTraining(t.training),
                           groupNames: _groupNamesFor(t.training),
                           onSignUp:  () => _signUp(t),
                           onDecline: () => _decline(t),
-                          onDelete: widget.isAdmin ? () => _deleteTraining(t) : null,
+                          onDelete: _canManageTraining(t.training)
+                              ? () => _deleteTraining(t) : null,
                           onPublish: widget.isAdmin ? () => _publishTraining(t) : null,
                           onOpenBoard: widget.isAdmin
                               ? () => Navigator.of(context).push(
@@ -793,7 +818,8 @@ class _OversigtTabState extends State<OversigtTab> {
                           item: p,
                           isAdmin: widget.isAdmin,
                           onVote: (optionId, svar) => _vote(p, optionId, svar),
-                          onDelete: widget.isAdmin ? () => _deletePoll(p) : null,
+                          onDelete: _canManagePoll(p.poll)
+                              ? () => _deletePoll(p) : null,
                           onOpenSynergy: widget.isAdmin
                               ? () => Navigator.of(context).push(
                                   MaterialPageRoute(
@@ -827,9 +853,11 @@ class _FeedTrainingCard extends StatefulWidget {
   final VoidCallback? onDelete;
   final VoidCallback? onPublish;
   final List<String> groupNames;
+  final bool canManage; // kaptajn/staff/opretter → må redigere/slette
   const _FeedTrainingCard({
     required this.item,
     required this.isAdmin,
+    this.canManage = false,
     this.groupNames = const [],
     required this.onSignUp,
     required this.onDecline,
@@ -1078,7 +1106,8 @@ class _FeedTrainingCardState extends State<_FeedTrainingCard> {
             InkWell(
               onTap: () => Navigator.of(context).push(MaterialPageRoute(
                 builder: (_) => EventDetailScreen(
-                    training: t, isStaff: widget.isAdmin),
+                    training: t, isStaff: widget.isAdmin,
+                    canManage: widget.canManage),
               )),
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
@@ -2325,7 +2354,14 @@ String _fmtSvar(DateTime d) {
 class EventDetailScreen extends StatefulWidget {
   final Map<String, dynamic> training;
   final bool isStaff;
-  const EventDetailScreen({super.key, required this.training, required this.isStaff});
+  // Må redigere/slette (kaptajn for holdet, opretter, eller staff).
+  final bool canManage;
+  const EventDetailScreen({
+    super.key,
+    required this.training,
+    required this.isStaff,
+    bool? canManage,
+  }) : canManage = canManage ?? isStaff;
   @override
   State<EventDetailScreen> createState() => _EventDetailScreenState();
 }
@@ -2720,7 +2756,7 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
       appBar: AppBar(
         title: Text((t['titel'] as String).toUpperCase()),
         actions: [
-          if (widget.isStaff)
+          if (widget.canManage)
             IconButton(
               onPressed: _busy ? null : _edit,
               icon: const Icon(Icons.edit_outlined),
@@ -2870,7 +2906,7 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                                 ),
                               ),
                             ],
-                            if (widget.isStaff) ...[
+                            if (widget.canManage) ...[
                               const SizedBox(height: 20),
                               SizedBox(
                                 width: double.infinity,

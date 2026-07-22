@@ -13,6 +13,16 @@ class AfstemningerTab extends StatefulWidget {
 class _AfstemningerTabState extends State<AfstemningerTab> {
   List<Map<String, dynamic>> _polls = const [];
   Map<String, Map<String, dynamic>> _groupById = {};
+  Set<String> _myCaptainGroupIds = {};
+
+  /// Må den aktuelle bruger slette denne afstemning? (staff, opretter eller
+  /// kaptajn for afstemningens hold)
+  bool _canManagePoll(Map<String, dynamic> p) {
+    if (widget.isStaff) return true;
+    if (p['created_by'] == supabase.auth.currentUser?.id) return true;
+    final gid = p['group_id'] as String?;
+    return gid != null && _myCaptainGroupIds.contains(gid);
+  }
   bool _loading = true;
   String? _error;
   int _tab = 0; // 0 = Åbne, 1 = Afsluttede
@@ -37,14 +47,17 @@ class _AfstemningerTabState extends State<AfstemningerTab> {
       final userId = supabase.auth.currentUser!.id;
       final results = await Future.wait([
         supabase.from('polls')
-            .select('id, titel, beskrivelse, lukket_at, created_at, group_id')
+            .select('id, titel, beskrivelse, lukket_at, created_at, group_id, created_by')
             .order('created_at', ascending: false),
         supabase.from('groups').select('id, navn, farve'),
-        supabase.from('group_members').select('group_id').eq('user_id', userId),
+        supabase.from('group_members').select('group_id, is_captain').eq('user_id', userId),
       ]);
       final allPolls = List<Map<String, dynamic>>.from(results[0] as List);
       final groups = List<Map<String, dynamic>>.from(results[1] as List);
-      final myIds = List<Map<String, dynamic>>.from(results[2] as List)
+      final myGm = List<Map<String, dynamic>>.from(results[2] as List);
+      final myIds = myGm.map((r) => r['group_id'] as String).toSet();
+      final myCaptainIds = myGm
+          .where((r) => r['is_captain'] == true)
           .map((r) => r['group_id'] as String)
           .toSet();
       // Spillere/trænere ser klub-brede (null) + deres egne holds afstemninger.
@@ -59,6 +72,7 @@ class _AfstemningerTabState extends State<AfstemningerTab> {
       setState(() {
         _polls = visible;
         _groupById = {for (final g in groups) g['id'] as String: g};
+        _myCaptainGroupIds = myCaptainIds;
         _loading = false;
       });
     } catch (e) {
@@ -272,7 +286,7 @@ class _AfstemningerTabState extends State<AfstemningerTab> {
                                     const Spacer(),
                                     Text(lukkeInfo,
                                         style: _body(size: 12, color: _textSecondary)),
-                                    if (widget.isStaff)
+                                    if (_canManagePoll(p))
                                       IconButton(
                                         onPressed: () => _deletePoll(p),
                                         icon: const Icon(Icons.delete_outline,

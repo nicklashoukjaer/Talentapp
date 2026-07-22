@@ -11,6 +11,7 @@ class HomeShell extends StatefulWidget {
 class _HomeShellState extends State<HomeShell> {
   Map<String, dynamic>? _profile;
   bool   _loading = true;
+  bool   _isCaptain = false; // kaptajn på mindst ét hold → må oprette
   String? _error;
   int    _selectedIndex = 0;
 
@@ -72,8 +73,19 @@ class _HomeShellState extends State<HomeShell> {
           .eq('id', userId)
           .single();
       CacheService.put('profile_$userId', row);
+      // Kaptajn-status (fra group_members) — påvirker om man må oprette.
+      bool captain = false;
+      try {
+        final gm = await supabase
+            .from('group_members')
+            .select('is_captain')
+            .eq('user_id', userId)
+            .eq('is_captain', true)
+            .limit(1);
+        captain = (gm as List).isNotEmpty;
+      } catch (_) {}
       if (!mounted) return;
-      setState(() { _profile = row; _loading = false; });
+      setState(() { _profile = row; _isCaptain = captain; _loading = false; });
     } catch (e) {
       if (!mounted) return;
       // Behold cache hvis vi har den (offline-venligt); ellers vis fejl.
@@ -83,6 +95,8 @@ class _HomeShellState extends State<HomeShell> {
 
   bool get _isAdmin => _profile?['rolle'] == 'admin';
   bool get _isStaff => _profile?['rolle'] == 'admin' || _profile?['rolle'] == 'træner';
+  // Kaptajn eller staff må oprette begivenheder og afstemninger.
+  bool get _canCreate => _isStaff || _isCaptain;
 
   // Indekser: 0=Oversigt, 1=Bødekassen, 2=Afstemninger, 3=Profil, 4=Dashboard
   static const _tabOversigt    = 0;
@@ -150,7 +164,7 @@ class _HomeShellState extends State<HomeShell> {
 
   // ─── Hurtig-opret fra "+"-knappen på Oversigten — skifter IKKE fane ─────────
   Future<void> _quickCreateTraining() async {
-    if (!_isStaff) return;
+    if (!_canCreate) return;
     final created = await showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
@@ -164,7 +178,7 @@ class _HomeShellState extends State<HomeShell> {
   }
 
   Future<void> _quickCreatePoll() async {
-    if (!_isStaff) return;
+    if (!_canCreate) return;
     final created = await showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
@@ -392,7 +406,7 @@ class _HomeShellState extends State<HomeShell> {
       //  Bødekasse → uddel bøde (kun admin).
       floatingActionButton: () {
         final idx = _selectedIndex.clamp(0, pages.length - 1);
-        if (idx == _tabOversigt && _isStaff) {
+        if (idx == _tabOversigt && _canCreate) {
           return _CreateSpeedDial(
             isAdmin: _isAdmin,
             onNewTraining: _quickCreateTraining,
@@ -400,7 +414,7 @@ class _HomeShellState extends State<HomeShell> {
             onNewFine: _quickGiveFine,
           );
         }
-        if (idx == _tabAfstemning && _isStaff) {
+        if (idx == _tabAfstemning && _canCreate) {
           return FloatingActionButton(
             heroTag: 'fab_poll',
             onPressed: _quickCreatePoll,

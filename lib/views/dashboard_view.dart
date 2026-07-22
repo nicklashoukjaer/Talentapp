@@ -922,6 +922,7 @@ class _TeamAssignCardState extends State<_TeamAssignCard> {
   List<Map<String, dynamic>> _groups = const [];
   List<Map<String, dynamic>> _members = const [];
   Map<String, Set<String>> _membership = {}; // user_id → gruppe-id'er
+  Map<String, Set<String>> _captains = {};   // user_id → gruppe-id'er hvor kaptajn
   Map<String, int> _skyldigt = {};           // user_id → ubetalt øre
   bool _loading = true;
   String? _filterGroupId; // null = Alle
@@ -938,13 +939,17 @@ class _TeamAssignCardState extends State<_TeamAssignCard> {
       final res = await Future.wait([
         supabase.from('groups').select('id, navn, type, farve, sort').order('sort'),
         supabase.from('profiles').select('id, navn, rolle').order('navn'),
-        supabase.from('group_members').select('group_id, user_id'),
+        supabase.from('group_members').select('group_id, user_id, is_captain'),
         supabase.from('fine_leaderboard').select('id, skyldigt_oere'),
       ]);
       final gm = List<Map<String, dynamic>>.from(res[2] as List);
       final map = <String, Set<String>>{};
+      final caps = <String, Set<String>>{};
       for (final r in gm) {
-        (map[r['user_id'] as String] ??= {}).add(r['group_id'] as String);
+        final uid = r['user_id'] as String;
+        final gid = r['group_id'] as String;
+        (map[uid] ??= {}).add(gid);
+        if (r['is_captain'] == true) (caps[uid] ??= {}).add(gid);
       }
       final skyldigt = <String, int>{};
       for (final r in List<Map<String, dynamic>>.from(res[3] as List)) {
@@ -955,6 +960,7 @@ class _TeamAssignCardState extends State<_TeamAssignCard> {
         _groups = List<Map<String, dynamic>>.from(res[0] as List);
         _members = List<Map<String, dynamic>>.from(res[1] as List);
         _membership = map;
+        _captains = caps;
         _skyldigt = skyldigt;
         _loading = false;
       });
@@ -1093,6 +1099,29 @@ class _TeamAssignCardState extends State<_TeamAssignCard> {
     }
   }
 
+  Future<void> _toggleCaptain(String userId, String groupId, bool cap) async {
+    setState(() {
+      final s = _captains[userId] ??= {};
+      if (cap) {
+        s.add(groupId);
+      } else {
+        s.remove(groupId);
+      }
+    });
+    try {
+      await supabase
+          .from('group_members')
+          .update({'is_captain': cap})
+          .eq('group_id', groupId)
+          .eq('user_id', userId);
+    } on PostgrestException catch (e) {
+      if (mounted) {
+        _snack(context, e.message, _danger);
+        _load();
+      }
+    }
+  }
+
   void _editMember(Map<String, dynamic> m) {
     final userId = m['id'] as String;
     showModalBottomSheet<void>(
@@ -1117,26 +1146,48 @@ class _TeamAssignCardState extends State<_TeamAssignCard> {
                 Text((m['navn'] as String).toUpperCase(),
                     style: _cond(size: 20, weight: FontWeight.w800)),
                 const SizedBox(height: 2),
-                Text('Vælg hvilke hold spilleren er på',
+                Text('Vælg hold — og tryk på stjernen for at gøre spilleren '
+                    'til kaptajn (må oprette begivenheder og afstemninger).',
                     style: _body(size: 13, color: _textSecondary)),
                 const SizedBox(height: 8),
                 for (final g in _groups)
-                  CheckboxListTile(
-                    value: mine.contains(g['id']),
-                    onChanged: (v) {
-                      _toggle(userId, g['id'] as String, v ?? false);
-                      setSheet(() {});
-                    },
-                    activeColor: _neon,
-                    contentPadding: EdgeInsets.zero,
-                    secondary: Container(
-                      width: 14, height: 14,
-                      decoration: BoxDecoration(
-                          color: _hex(g['farve'] as String?),
-                          shape: BoxShape.circle),
-                    ),
-                    title: Text(g['navn'] as String),
-                  ),
+                  Builder(builder: (_) {
+                    final gid = g['id'] as String;
+                    final onTeam = mine.contains(gid);
+                    final isCap = (_captains[userId] ?? const {}).contains(gid);
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 2),
+                      child: Row(children: [
+                        Checkbox(
+                          value: onTeam,
+                          onChanged: (v) {
+                            _toggle(userId, gid, v ?? false);
+                            setSheet(() {});
+                          },
+                          activeColor: _neon,
+                        ),
+                        Container(
+                          width: 14, height: 14,
+                          decoration: BoxDecoration(
+                              color: _hex(g['farve'] as String?),
+                              shape: BoxShape.circle),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(child: Text(g['navn'] as String)),
+                        if (onTeam)
+                          IconButton(
+                            onPressed: () {
+                              _toggleCaptain(userId, gid, !isCap);
+                              setSheet(() {});
+                            },
+                            icon: Icon(isCap ? Icons.star : Icons.star_border,
+                                color: isCap ? _gold : _textMuted),
+                            tooltip: isCap ? 'Fjern kaptajn' : 'Gør til kaptajn',
+                            visualDensity: VisualDensity.compact,
+                          ),
+                      ]),
+                    );
+                  }),
                 const SizedBox(height: 8),
                 FilledButton(
                     onPressed: () => Navigator.pop(ctx),
@@ -1248,11 +1299,21 @@ class _TeamAssignCardState extends State<_TeamAssignCard> {
                 Text(navn,
                     style: _body(size: 14, weight: FontWeight.w600),
                     maxLines: 1, overflow: TextOverflow.ellipsis),
-                Text(
-                    rolle == 'admin'
-                        ? 'Admin'
-                        : (rolle == 'træner' ? 'Træner' : 'Spiller'),
-                    style: _body(size: 12, color: _textSecondary)),
+                Row(children: [
+                  Text(
+                      rolle == 'admin'
+                          ? 'Admin'
+                          : (rolle == 'træner' ? 'Træner' : 'Spiller'),
+                      style: _body(size: 12, color: _textSecondary)),
+                  if ((_captains[userId] ?? const {}).isNotEmpty) ...[
+                    const SizedBox(width: 6),
+                    const Icon(Icons.star, size: 12, color: _gold),
+                    const SizedBox(width: 2),
+                    Text('Kaptajn',
+                        style: _body(
+                            size: 12, weight: FontWeight.w600, color: _gold)),
+                  ],
+                ]),
               ],
             ),
           ),

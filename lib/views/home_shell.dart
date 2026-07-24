@@ -11,8 +11,7 @@ class HomeShell extends StatefulWidget {
 class _HomeShellState extends State<HomeShell> {
   Map<String, dynamic>? _profile;
   bool   _loading = true;
-  bool   _isCaptain = false;   // kaptajn på mindst ét hold → må oprette
-  bool   _isFineAdmin = false; // bøde-admin på mindst ét hold → må styre bøder
+  bool   _isCaptain = false;   // kaptajn på mindst ét hold → må oprette + styre egne hold
   String? _error;
   int    _selectedIndex = 0;
 
@@ -74,24 +73,21 @@ class _HomeShellState extends State<HomeShell> {
           .eq('id', userId)
           .single();
       CacheService.put('profile_$userId', row);
-      // Kaptajn-/bøde-admin-status (fra group_members) — påvirker rettigheder.
+      // Kaptajn-status (fra group_members) — påvirker rettigheder.
       bool captain = false;
-      bool fineAdmin = false;
       try {
         final gm = await supabase
             .from('group_members')
-            .select('is_captain, is_fine_admin')
-            .eq('user_id', userId);
-        for (final r in List<Map<String, dynamic>>.from(gm as List)) {
-          if (r['is_captain'] == true) captain = true;
-          if (r['is_fine_admin'] == true) fineAdmin = true;
-        }
+            .select('is_captain')
+            .eq('user_id', userId)
+            .eq('is_captain', true)
+            .limit(1);
+        captain = (gm as List).isNotEmpty;
       } catch (_) {}
       if (!mounted) return;
       setState(() {
         _profile = row;
         _isCaptain = captain;
-        _isFineAdmin = fineAdmin;
         _loading = false;
       });
     } catch (e) {
@@ -201,10 +197,11 @@ class _HomeShellState extends State<HomeShell> {
   }
 
   Future<void> _quickGiveFine() async {
-    if (!_isAdmin && !_isFineAdmin) return;
+    if (!_isStaff && !_isCaptain) return;
     final ok = await showDialog<bool>(
       context: context,
-      builder: (_) => GiveFineDialog(isFullAdmin: _isAdmin),
+      // Staff (admin/træner) ser alle spillere; kaptajn kun egne hold.
+      builder: (_) => GiveFineDialog(isFullAdmin: _isStaff),
     );
     if (ok == true) {
       _bodekasseKey.currentState?.reload();
@@ -429,7 +426,7 @@ class _HomeShellState extends State<HomeShell> {
             child: const Icon(Icons.add),
           );
         }
-        if (idx == _tabBoede && (_isAdmin || _isFineAdmin)) {
+        if (idx == _tabBoede && (_isStaff || _isCaptain)) {
           return FloatingActionButton.extended(
             heroTag: 'fab_fine',
             onPressed: _quickGiveFine,

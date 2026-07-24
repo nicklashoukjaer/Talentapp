@@ -252,17 +252,21 @@ class DashboardTabState extends State<DashboardTab> {
                     _buildHero(),
                     const SizedBox(height: 20),
                     _buildQuickActions(),
-                    if (widget.isFullAdmin) ...[
+                    ...[
                       const SizedBox(height: 28),
                       _SectionPills(
                         active: _dashSection,
                         pendingCount: _pendingFines.length,
+                        // Betaling/MobilePay er kun for admin.
+                        showBetaling: widget.isFullAdmin,
                         onChanged: (i) => setState(() => _dashSection = i),
                       ),
                       const SizedBox(height: 20),
                       switch (_dashSection) {
                         1 => _buildMembersSection(),
-                        2 => const _MobilePayConfigCard(),
+                        2 => widget.isFullAdmin
+                            ? const _MobilePayConfigCard()
+                            : _buildFineSection(),
                         _ => _buildFineSection(),
                       },
                     ],
@@ -331,26 +335,24 @@ class DashboardTabState extends State<DashboardTab> {
         hint:  'Multi-dato + synergi',
         onTap: _openCreatePoll,
       ),
-      if (widget.isFullAdmin)
-        _ActionTile(
-          icon: Icons.gavel,
-          label: 'Lyn-bøde',
-          hint:  'Spiller + type',
-          onTap: () async {
-            final ok = await showDialog<bool>(
-              context: context,
-              builder: (_) => const GiveFineDialog(),
-            );
-            if (ok == true) reloadFines();
-          },
-        ),
-      if (widget.isFullAdmin)
-        _ActionTile(
-          icon: Icons.group_outlined,
-          label: 'Medlemmer',
-          hint:  'Roller & staff',
-          onTap: () => setState(() => _dashSection = 1),
-        ),
+      _ActionTile(
+        icon: Icons.gavel,
+        label: 'Lyn-bøde',
+        hint:  'Spiller + type',
+        onTap: () async {
+          final ok = await showDialog<bool>(
+            context: context,
+            builder: (_) => const GiveFineDialog(),
+          );
+          if (ok == true) reloadFines();
+        },
+      ),
+      _ActionTile(
+        icon: Icons.group_outlined,
+        label: 'Medlemmer',
+        hint:  'Roller & staff',
+        onTap: () => setState(() => _dashSection = 1),
+      ),
     ];
     return LayoutBuilder(builder: (ctx, constraints) {
       // Bredt: alle fliser på én række. Ellers 2 pr. række (2×2-grid).
@@ -522,10 +524,12 @@ class DashboardTabState extends State<DashboardTab> {
             existingTypes: _fineTypes.where((t) => t['aktiv'] == true).toList(),
             onCreated:     reloadFines,
           ),
-          const SizedBox(height: 16),
-          _NoShowFineCard(
-            fineTypes: _fineTypes.where((t) => t['aktiv'] == true).toList(),
-          ),
+          if (widget.isFullAdmin) ...[
+            const SizedBox(height: 16),
+            _NoShowFineCard(
+              fineTypes: _fineTypes.where((t) => t['aktiv'] == true).toList(),
+            ),
+          ],
         ],
       ],
     );
@@ -558,7 +562,7 @@ class DashboardTabState extends State<DashboardTab> {
         else ...[
           const _GroupsOverviewCard(),
           const SizedBox(height: 16),
-          const _TeamAssignCard(),
+          _TeamAssignCard(isAdmin: widget.isFullAdmin),
           const SizedBox(height: 16),
           _MemberRolesCard(
             profiles: _profiles,
@@ -913,7 +917,8 @@ class _NewGroupSheetState extends State<_NewGroupSheet> {
 
 /// Hold & spillere (2f) — sæt hvert medlem på hold. Selv-loadende.
 class _TeamAssignCard extends StatefulWidget {
-  const _TeamAssignCard();
+  final bool isAdmin; // kun admin må slette medlemmer
+  const _TeamAssignCard({required this.isAdmin});
   @override
   State<_TeamAssignCard> createState() => _TeamAssignCardState();
 }
@@ -923,7 +928,6 @@ class _TeamAssignCardState extends State<_TeamAssignCard> {
   List<Map<String, dynamic>> _members = const [];
   Map<String, Set<String>> _membership = {}; // user_id → gruppe-id'er
   Map<String, Set<String>> _captains = {};   // user_id → gruppe-id'er hvor kaptajn
-  Map<String, Set<String>> _fineAdmins = {}; // user_id → gruppe-id'er hvor bøde-admin
   Map<String, int> _skyldigt = {};           // user_id → ubetalt øre
   bool _loading = true;
   String? _filterGroupId; // null = Alle
@@ -940,19 +944,17 @@ class _TeamAssignCardState extends State<_TeamAssignCard> {
       final res = await Future.wait([
         supabase.from('groups').select('id, navn, type, farve, sort').order('sort'),
         supabase.from('profiles').select('id, navn, rolle').order('navn'),
-        supabase.from('group_members').select('group_id, user_id, is_captain, is_fine_admin'),
+        supabase.from('group_members').select('group_id, user_id, is_captain'),
         supabase.from('fine_leaderboard').select('id, skyldigt_oere'),
       ]);
       final gm = List<Map<String, dynamic>>.from(res[2] as List);
       final map = <String, Set<String>>{};
       final caps = <String, Set<String>>{};
-      final fas = <String, Set<String>>{};
       for (final r in gm) {
         final uid = r['user_id'] as String;
         final gid = r['group_id'] as String;
         (map[uid] ??= {}).add(gid);
         if (r['is_captain'] == true) (caps[uid] ??= {}).add(gid);
-        if (r['is_fine_admin'] == true) (fas[uid] ??= {}).add(gid);
       }
       final skyldigt = <String, int>{};
       for (final r in List<Map<String, dynamic>>.from(res[3] as List)) {
@@ -964,7 +966,6 @@ class _TeamAssignCardState extends State<_TeamAssignCard> {
         _members = List<Map<String, dynamic>>.from(res[1] as List);
         _membership = map;
         _captains = caps;
-        _fineAdmins = fas;
         _skyldigt = skyldigt;
         _loading = false;
       });
@@ -1126,29 +1127,6 @@ class _TeamAssignCardState extends State<_TeamAssignCard> {
     }
   }
 
-  Future<void> _toggleFineAdmin(String userId, String groupId, bool fa) async {
-    setState(() {
-      final s = _fineAdmins[userId] ??= {};
-      if (fa) {
-        s.add(groupId);
-      } else {
-        s.remove(groupId);
-      }
-    });
-    try {
-      await supabase
-          .from('group_members')
-          .update({'is_fine_admin': fa})
-          .eq('group_id', groupId)
-          .eq('user_id', userId);
-    } on PostgrestException catch (e) {
-      if (mounted) {
-        _snack(context, e.message, _danger);
-        _load();
-      }
-    }
-  }
-
   void _editMember(Map<String, dynamic> m) {
     final userId = m['id'] as String;
     showModalBottomSheet<void>(
@@ -1173,8 +1151,8 @@ class _TeamAssignCardState extends State<_TeamAssignCard> {
                 Text((m['navn'] as String).toUpperCase(),
                     style: _cond(size: 20, weight: FontWeight.w800)),
                 const SizedBox(height: 2),
-                Text('Vælg hold. ⭐ = kaptajn (må oprette begivenheder/'
-                    'afstemninger). ⚖️ = bøde-admin (må styre bøder for holdet).',
+                Text('Vælg hold. ⭐ = kaptajn (må oprette + styre holdets '
+                    'begivenheder, afstemninger og bøder).',
                     style: _body(size: 13, color: _textSecondary)),
                 const SizedBox(height: 8),
                 for (final g in _groups)
@@ -1182,7 +1160,6 @@ class _TeamAssignCardState extends State<_TeamAssignCard> {
                     final gid = g['id'] as String;
                     final onTeam = mine.contains(gid);
                     final isCap = (_captains[userId] ?? const {}).contains(gid);
-                    final isFa = (_fineAdmins[userId] ?? const {}).contains(gid);
                     return Padding(
                       padding: const EdgeInsets.symmetric(vertical: 2),
                       child: Row(children: [
@@ -1211,19 +1188,6 @@ class _TeamAssignCardState extends State<_TeamAssignCard> {
                             icon: Icon(isCap ? Icons.star : Icons.star_border,
                                 color: isCap ? _gold : _textMuted),
                             tooltip: isCap ? 'Fjern kaptajn' : 'Gør til kaptajn',
-                            visualDensity: VisualDensity.compact,
-                          ),
-                          IconButton(
-                            onPressed: () {
-                              _toggleFineAdmin(userId, gid, !isFa);
-                              setSheet(() {});
-                            },
-                            icon: Icon(
-                                isFa ? Icons.gavel : Icons.gavel_outlined,
-                                color: isFa ? _neon : _textMuted, size: 20),
-                            tooltip: isFa
-                                ? 'Fjern bøde-admin'
-                                : 'Gør til bøde-admin',
                             visualDensity: VisualDensity.compact,
                           ),
                         ],
@@ -1324,9 +1288,10 @@ class _TeamAssignCardState extends State<_TeamAssignCard> {
     final mine = _membership[userId] ?? const <String>{};
     final myGroups = _groups.where((g) => mine.contains(g['id'])).toList();
     final isMe = userId == supabase.auth.currentUser?.id;
+    final canDelete = widget.isAdmin && !isMe; // kun admin må slette medlemmer
     final row = InkWell(
       onTap: () => _editMember(m),
-      onLongPress: isMe ? null : () => _deleteMember(m),
+      onLongPress: canDelete ? () => _deleteMember(m) : null,
       borderRadius: BorderRadius.circular(10),
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 8),
@@ -1355,14 +1320,6 @@ class _TeamAssignCardState extends State<_TeamAssignCard> {
                         style: _body(
                             size: 12, weight: FontWeight.w600, color: _gold)),
                   ],
-                  if ((_fineAdmins[userId] ?? const {}).isNotEmpty) ...[
-                    const SizedBox(width: 6),
-                    const Icon(Icons.gavel, size: 12, color: _neon),
-                    const SizedBox(width: 2),
-                    Text('Bøde-admin',
-                        style: _body(
-                            size: 12, weight: FontWeight.w600, color: _neon)),
-                  ],
                 ]),
               ],
             ),
@@ -1386,7 +1343,7 @@ class _TeamAssignCardState extends State<_TeamAssignCard> {
         ]),
       ),
     );
-    if (isMe) return row;
+    if (!canDelete) return row;
     return Dismissible(
       key: ValueKey('mbr_$userId'),
       direction: DismissDirection.endToStart,
@@ -2263,16 +2220,18 @@ class _ActionTile extends StatelessWidget {
 class _SectionPills extends StatelessWidget {
   final int active;
   final int pendingCount;
+  final bool showBetaling;
   final ValueChanged<int> onChanged;
   const _SectionPills({
     required this.active,
     required this.pendingCount,
+    this.showBetaling = true,
     required this.onChanged,
   });
 
   @override
   Widget build(BuildContext context) {
-    const labels = ['Bøder', 'Medlemmer', 'Betaling'];
+    final labels = ['Bøder', 'Medlemmer', if (showBetaling) 'Betaling'];
     return Container(
       padding: const EdgeInsets.all(4),
       decoration: BoxDecoration(
@@ -2992,16 +2951,16 @@ class _GiveFineDialogState extends State<GiveFineDialog> {
       ]);
       var profiles = List<Map<String, dynamic>>.from(results[0] as List);
 
-      // Bøde-admin (ikke fuld admin): begræns til spillere på de hold hvor
-      // brugeren er bøde-admin.
+      // Kaptajn (ikke staff): begræns til spillere på de hold hvor brugeren
+      // er kaptajn.
       if (!widget.isFullAdmin) {
         final uid = supabase.auth.currentUser!.id;
-        final myFa = await supabase
+        final myCap = await supabase
             .from('group_members')
             .select('group_id')
             .eq('user_id', uid)
-            .eq('is_fine_admin', true);
-        final gids = List<Map<String, dynamic>>.from(myFa as List)
+            .eq('is_captain', true);
+        final gids = List<Map<String, dynamic>>.from(myCap as List)
             .map((r) => r['group_id'] as String)
             .toList();
         final allowed = <String>{};

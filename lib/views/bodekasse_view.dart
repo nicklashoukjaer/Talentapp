@@ -15,14 +15,14 @@ class BodekasseTabState extends State<BodekasseTab> {
   List<Map<String, dynamic>> _groups = const [];
   Map<String, Set<String>> _memberIdsByGroup = {}; // group_id → medlemmers user_id
   Set<String> _myGroupIds = {};
-  Set<String> _myFineAdminGroupIds = {}; // hold hvor jeg er bøde-admin
+  Set<String> _myCaptainGroupIds = {}; // hold hvor jeg er kaptajn (styrer bøder)
   // Valgte hold i filteret (tom = alle tilladte). Admin kan vælge flere.
   final Set<String> _selectedGroupIds = {};
 
   /// Må den aktuelle bruger administrere bøder for [playerId]?
   bool _canAdminFineFor(String playerId) {
     if (widget.isAdmin) return true;
-    for (final g in _myFineAdminGroupIds) {
+    for (final g in _myCaptainGroupIds) {
       if ((_memberIdsByGroup[g] ?? const <String>{}).contains(playerId)) {
         return true;
       }
@@ -57,21 +57,21 @@ class BodekasseTabState extends State<BodekasseTab> {
       final results = await Future.wait([
         supabase.from('fine_leaderboard').select().order('total_oere', ascending: false),
         supabase.from('groups').select('id, navn, farve, sort').order('sort'),
-        supabase.from('group_members').select('group_id, user_id, is_fine_admin'),
+        supabase.from('group_members').select('group_id, user_id, is_captain'),
       ]);
       final list = List<Map<String, dynamic>>.from(results[0] as List);
       final groups = List<Map<String, dynamic>>.from(results[1] as List);
       final gm = List<Map<String, dynamic>>.from(results[2] as List);
       final byGroup = <String, Set<String>>{};
       final mine = <String>{};
-      final myFa = <String>{};
+      final myCap = <String>{};
       for (final r in gm) {
         final gid = r['group_id'] as String;
         final uid = r['user_id'] as String;
         (byGroup[gid] ??= <String>{}).add(uid);
         if (uid == widget.currentUserId) {
           mine.add(gid);
-          if (r['is_fine_admin'] == true) myFa.add(gid);
+          if (r['is_captain'] == true) myCap.add(gid);
         }
       }
       CacheService.put('leaderboard', list);
@@ -81,7 +81,7 @@ class BodekasseTabState extends State<BodekasseTab> {
         _groups = groups;
         _memberIdsByGroup = byGroup;
         _myGroupIds = mine;
-        _myFineAdminGroupIds = myFa;
+        _myCaptainGroupIds = myCap;
         _filterInit = true;
         _loading = false;
       });

@@ -804,8 +804,9 @@ class _OversigtTabState extends State<OversigtTab> {
                           onDecline: () => _decline(t),
                           onDelete: _canManageTraining(t.training)
                               ? () => _deleteTraining(t) : null,
-                          onPublish: widget.isAdmin ? () => _publishTraining(t) : null,
-                          onOpenBoard: widget.isAdmin
+                          onPublish: _canManageTraining(t.training)
+                              ? () => _publishTraining(t) : null,
+                          onOpenBoard: _canManageTraining(t.training)
                               ? () => Navigator.of(context).push(
                                   MaterialPageRoute(
                                     builder: (_) => TrainingBoardScreen(
@@ -2560,7 +2561,7 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
   }
 
   Widget _guestsSection() {
-    if (_guests.isEmpty && !widget.isStaff) return const SizedBox.shrink();
+    if (_guests.isEmpty && !widget.canManage) return const SizedBox.shrink();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -2581,7 +2582,7 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
           for (final g in _guests) _guestRow(g),
           const SizedBox(height: 8),
         ],
-        if (widget.isStaff)
+        if (widget.canManage)
           Align(
             alignment: Alignment.centerLeft,
             child: OutlinedButton.icon(
@@ -2644,7 +2645,7 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
             ],
           ),
         ),
-        if (widget.isStaff)
+        if (widget.canManage)
           IconButton(
             onPressed: () => _deleteGuest(g['id'] as String),
             icon: const Icon(Icons.close, size: 18, color: _textMuted),
@@ -2812,7 +2813,7 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                                 },
                               ),
                             if (_tab == 0) ...[
-                            if (widget.isStaff && isHidden) ...[
+                            if (widget.canManage && isHidden) ...[
                               const SizedBox(height: 14),
                               Container(
                                 padding: const EdgeInsets.fromLTRB(12, 10, 10, 10),
@@ -2855,7 +2856,7 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                                 ]),
                               ),
                             ],
-                            if (widget.isStaff) ...[
+                            if (widget.canManage) ...[
                               const SizedBox(height: 14),
                               Container(
                                 padding: const EdgeInsets.all(12),
@@ -2880,7 +2881,7 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                             _guestsSection(),
                             _manglerSection(),
                             _afbudSection(),
-                            if (widget.isStaff && _mangler.isNotEmpty) ...[
+                            if (widget.canManage && _mangler.isNotEmpty) ...[
                               const SizedBox(height: 8),
                               SizedBox(
                                 width: double.infinity,
@@ -2891,7 +2892,7 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                                 ),
                               ),
                             ],
-                            if (widget.isStaff && started && _tilmeldt.isNotEmpty) ...[
+                            if (widget.canManage && started && _tilmeldt.isNotEmpty) ...[
                               const SizedBox(height: 8),
                               SizedBox(
                                 width: double.infinity,
@@ -2977,7 +2978,7 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
             child: Text(_fmtSvar(p.svarTid!),
                 style: _body(size: 11, color: _textMuted)),
           ),
-        if (widget.isStaff)
+        if (widget.canManage)
           GestureDetector(
             onTap: _busy
                 ? null
@@ -3034,7 +3035,7 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                     style: _body(size: 14, weight: FontWeight.w600),
                     maxLines: 1, overflow: TextOverflow.ellipsis),
               ),
-              if (widget.isStaff) ...[
+              if (widget.canManage) ...[
                 _miniBtn(Icons.check, _success, () => _setStatus(p.id, 'tilmeldt')),
                 const SizedBox(width: 6),
                 _miniBtn(Icons.close, _danger, () => _setStatus(p.id, 'afmeldt')),

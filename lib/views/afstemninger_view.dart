@@ -101,6 +101,16 @@ class _AfstemningerTabState extends State<AfstemningerTab> {
     )).then((_) => _load());
   }
 
+  Future<void> _editPoll(Map<String, dynamic> poll) async {
+    final changed = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _EditPollSheet(poll: poll),
+    );
+    if (changed == true) _load();
+  }
+
   Future<void> _deletePoll(Map<String, dynamic> poll) async {
     final id = poll['id'] as String;
     final titel = poll['titel'] as String? ?? 'afstemning';
@@ -286,7 +296,17 @@ class _AfstemningerTabState extends State<AfstemningerTab> {
                                     const Spacer(),
                                     Text(lukkeInfo,
                                         style: _body(size: 12, color: _textSecondary)),
-                                    if (_canManagePoll(p))
+                                    if (_canManagePoll(p)) ...[
+                                      IconButton(
+                                        onPressed: () => _editPoll(p),
+                                        icon: const Icon(Icons.edit_outlined,
+                                            size: 19, color: _textSecondary),
+                                        tooltip: 'Redigér afstemning',
+                                        visualDensity: VisualDensity.compact,
+                                        padding: EdgeInsets.zero,
+                                        constraints: const BoxConstraints(
+                                            minWidth: 34, minHeight: 34),
+                                      ),
                                       IconButton(
                                         onPressed: () => _deletePoll(p),
                                         icon: const Icon(Icons.delete_outline,
@@ -296,8 +316,8 @@ class _AfstemningerTabState extends State<AfstemningerTab> {
                                         padding: EdgeInsets.zero,
                                         constraints: const BoxConstraints(
                                             minWidth: 34, minHeight: 34),
-                                      )
-                                    else
+                                      ),
+                                    ] else
                                       const Padding(
                                         padding: EdgeInsets.only(left: 6),
                                         child: Icon(Icons.chevron_right,
@@ -326,6 +346,220 @@ class _AfstemningerTabState extends State<AfstemningerTab> {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Redigér en afstemning — titel, beskrivelse, stemmefrist, hold.
+/// (Svarmuligheder redigeres ikke, da de kan have stemmer — slet og opret i så fald.)
+class _EditPollSheet extends StatefulWidget {
+  final Map<String, dynamic> poll;
+  const _EditPollSheet({required this.poll});
+  @override
+  State<_EditPollSheet> createState() => _EditPollSheetState();
+}
+
+class _EditPollSheetState extends State<_EditPollSheet> {
+  late final _titel =
+      TextEditingController(text: widget.poll['titel'] as String? ?? '');
+  late final _beskr =
+      TextEditingController(text: widget.poll['beskrivelse'] as String? ?? '');
+  DateTime? _frist;
+  List<Map<String, dynamic>> _groups = const [];
+  String? _groupId;
+  bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _groupId = widget.poll['group_id'] as String?;
+    final l = widget.poll['lukket_at'] as String?;
+    if (l != null) _frist = DateTime.parse(l).toLocal();
+    _loadGroups();
+  }
+
+  @override
+  void dispose() {
+    _titel.dispose();
+    _beskr.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadGroups() async {
+    try {
+      final rows = await supabase
+          .from('groups')
+          .select('id, navn, farve, sort')
+          .order('sort');
+      if (mounted) {
+        setState(() => _groups = List<Map<String, dynamic>>.from(rows as List));
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _save() async {
+    if (_titel.text.trim().isEmpty) {
+      _snack(context, 'Titel må ikke være tom', _gold);
+      return;
+    }
+    setState(() => _saving = true);
+    try {
+      await supabase.from('polls').update({
+        'titel': _titel.text.trim(),
+        'beskrivelse':
+            _beskr.text.trim().isEmpty ? null : _beskr.text.trim(),
+        'group_id': _groupId,
+        'lukket_at': _frist?.toUtc().toIso8601String(),
+      }).eq('id', widget.poll['id']);
+      if (!mounted) return;
+      _snack(context, 'Afstemning opdateret', _success);
+      Navigator.of(context).pop(true);
+    } on PostgrestException catch (e) {
+      if (mounted) _snack(context, e.message, _danger);
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Widget _chip(String label, String? id) {
+    final active = _groupId == id;
+    return GestureDetector(
+      onTap: () => setState(() => _groupId = id),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        decoration: BoxDecoration(
+          color: active ? _neon : _surfaceElevated,
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: active ? _neon : _borderSubtle),
+        ),
+        child: Text(label,
+            style: _body(
+                size: 13,
+                weight: FontWeight.w600,
+                color: active ? Colors.white : _textPrimary)),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      child: Container(
+        constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(context).size.height * 0.9),
+        decoration: const BoxDecoration(
+          color: _surfaceDark,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          border: Border(top: BorderSide(color: _borderSubtle)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 40, height: 4,
+              margin: const EdgeInsets.only(top: 10, bottom: 6),
+              decoration: BoxDecoration(
+                  color: _borderSubtle, borderRadius: BorderRadius.circular(999)),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 4, 10, 6),
+              child: Row(children: [
+                Expanded(child: Text('REDIGÉR AFSTEMNING',
+                    style: theme.textTheme.titleLarge)),
+                IconButton(
+                  onPressed: _saving ? null : () => Navigator.of(context).pop(false),
+                  icon: const Icon(Icons.close),
+                  color: _textSecondary,
+                ),
+              ]),
+            ),
+            Flexible(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    if (_groups.isNotEmpty) ...[
+                      Text('Hvem kan stemme?',
+                          style: _body(size: 13, weight: FontWeight.w600,
+                              color: _textSecondary)),
+                      const SizedBox(height: 8),
+                      Wrap(spacing: 8, runSpacing: 8, children: [
+                        _chip('Alle', null),
+                        for (final g in _groups)
+                          _chip(g['navn'] as String, g['id'] as String),
+                      ]),
+                      const SizedBox(height: 16),
+                    ],
+                    TextField(
+                      controller: _titel,
+                      decoration: const InputDecoration(labelText: 'Titel'),
+                    ),
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: _beskr,
+                      maxLines: 2,
+                      decoration: const InputDecoration(
+                        labelText: 'Beskrivelse',
+                        helperText: 'Valgfri',
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    _fieldGroup('STEMMEFRIST · valgfri', [
+                      _QuickDateTimeField(
+                        label: 'Dato',
+                        value: _frist,
+                        onChanged: (v) => setState(() => _frist = v),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.only(top: 6, left: 2),
+                        child: Text(
+                          _frist == null
+                              ? 'Tom = åben indtil du selv lukker den'
+                              : 'Afstemningen lukker automatisk på dette tidspunkt',
+                          style: const TextStyle(color: _textMuted, fontSize: 11),
+                        ),
+                      ),
+                    ]),
+                  ],
+                ),
+              ),
+            ),
+            Container(
+              decoration: const BoxDecoration(
+                border: Border(top: BorderSide(color: _borderSubtle)),
+              ),
+              padding: EdgeInsets.fromLTRB(
+                  16, 12, 16, 12 + MediaQuery.of(context).padding.bottom),
+              child: Row(children: [
+                Expanded(
+                  child: TextButton(
+                    onPressed: _saving ? null : () => Navigator.of(context).pop(false),
+                    style: TextButton.styleFrom(
+                      foregroundColor: _textSecondary,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                    ),
+                    child: const Text('Annullér'),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  flex: 2,
+                  child: FilledButton(
+                    onPressed: _saving ? null : _save,
+                    child: _saving
+                        ? const SizedBox(width: 18, height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                        : const Text('Gem'),
+                  ),
+                ),
+              ]),
+            ),
+          ],
+        ),
       ),
     );
   }

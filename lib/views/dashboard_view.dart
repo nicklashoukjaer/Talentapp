@@ -345,43 +345,10 @@ class DashboardTabState extends State<DashboardTab> {
   }
 
   Widget _buildMembersSection() {
-    final theme = Theme.of(context);
-    final currentUserId = supabase.auth.currentUser?.id;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Icon(Icons.admin_panel_settings,
-                size: 28, color: theme.colorScheme.primary),
-            const SizedBox(width: 12),
-            Expanded(child: Text('Medlemsstyring & Rettigheder',
-                style: theme.textTheme.headlineSmall)),
-            IconButton(
-              onPressed: reloadFines,
-              icon: const Icon(Icons.refresh),
-              tooltip: 'Opdater',
-            ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        if (_loadingFines)
-          const Padding(padding: EdgeInsets.all(16),
-              child: Center(child: CircularProgressIndicator()))
-        else ...[
-          const _GroupsOverviewCard(),
-          const SizedBox(height: 16),
-          _TeamAssignCard(isAdmin: widget.isFullAdmin),
-          const SizedBox(height: 16),
-          _MemberRolesCard(
-            profiles: _profiles,
-            currentUserId: currentUserId ?? '',
-            isAdmin: widget.isFullAdmin,
-            onChangeRole: _changeRole,
-            onReload: reloadFines,
-          ),
-        ],
-      ],
+    return _MembersAdminView(
+      isAdmin: widget.isFullAdmin,
+      currentUserId: supabase.auth.currentUser?.id ?? '',
+      onChangeRole: _changeRole,
     );
   }
 }
@@ -826,210 +793,6 @@ class _HoldGroupSheetState extends State<_HoldGroupSheet> {
   }
 }
 
-/// Grupper-overblik (2e) — kort pr. gruppe + opret/slet grupper.
-class _GroupsOverviewCard extends StatefulWidget {
-  const _GroupsOverviewCard();
-  @override
-  State<_GroupsOverviewCard> createState() => _GroupsOverviewCardState();
-}
-
-class _GroupsOverviewCardState extends State<_GroupsOverviewCard> {
-  List<Map<String, dynamic>> _groups = const [];
-  Map<String, int> _counts = {};
-  bool _loading = true;
-
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  Future<void> _load() async {
-    setState(() => _loading = true);
-    try {
-      final res = await Future.wait([
-        supabase.from('groups').select('id, navn, type, farve, sort').order('sort'),
-        supabase.from('group_members').select('group_id'),
-      ]);
-      final counts = <String, int>{};
-      for (final r in List<Map<String, dynamic>>.from(res[1] as List)) {
-        final g = r['group_id'] as String;
-        counts[g] = (counts[g] ?? 0) + 1;
-      }
-      if (!mounted) return;
-      setState(() {
-        _groups = List<Map<String, dynamic>>.from(res[0] as List);
-        _counts = counts;
-        _loading = false;
-      });
-    } catch (_) {
-      if (mounted) setState(() => _loading = false);
-    }
-  }
-
-  static Color _hex(String? h) {
-    if (h == null || h.isEmpty) return _neon;
-    return Color(int.parse(h.replaceFirst('#', ''), radix: 16) | 0xFF000000);
-  }
-
-  Future<void> _newGroup() async {
-    final res = await showModalBottomSheet<Map<String, String>>(
-      context: context,
-      backgroundColor: Colors.transparent,
-      isScrollControlled: true,
-      builder: (_) => const _NewGroupSheet(),
-    );
-    if (res == null) return;
-    try {
-      final nextSort = _groups
-              .map((g) => (g['sort'] as num?)?.toInt() ?? 0)
-              .fold<int>(0, (m, v) => v > m ? v : m) +
-          1;
-      await supabase.from('groups').insert({
-        'navn': res['navn'],
-        'type': res['type'],
-        'farve': res['farve'],
-        'sort': nextSort,
-      });
-      if (mounted) _snack(context, 'Gruppe oprettet', _success);
-      _load();
-    } on PostgrestException catch (e) {
-      if (mounted) _snack(context, e.message, _danger);
-    }
-  }
-
-  Future<void> _editGroup(Map<String, dynamic> g) async {
-    final res = await showModalBottomSheet<Map<String, String>>(
-      context: context,
-      backgroundColor: Colors.transparent,
-      isScrollControlled: true,
-      builder: (_) => _NewGroupSheet(existing: g),
-    );
-    if (res == null) return;
-    try {
-      await supabase.from('groups').update({
-        'navn': res['navn'],
-        'type': res['type'],
-        'farve': res['farve'],
-      }).eq('id', g['id']);
-      if (mounted) _snack(context, 'Gruppe opdateret', _success);
-      _load();
-    } on PostgrestException catch (e) {
-      if (mounted) _snack(context, e.message, _danger);
-    }
-  }
-
-  Future<void> _delete(Map<String, dynamic> g) async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Slet gruppe?'),
-        content: Text('"${g['navn']}" fjernes. Begivenheder for gruppen '
-            'bliver synlige for alle.'),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Annullér')),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            style: FilledButton.styleFrom(backgroundColor: _danger),
-            child: const Text('Slet'),
-          ),
-        ],
-      ),
-    );
-    if (ok != true) return;
-    try {
-      await supabase.from('groups').delete().eq('id', g['id']);
-      if (mounted) _snack(context, 'Gruppe slettet', _textSecondary);
-      _load();
-    } on PostgrestException catch (e) {
-      if (mounted) _snack(context, e.message, _danger);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(children: [
-              const Icon(Icons.workspaces_outlined, color: _neon),
-              const SizedBox(width: 8),
-              Text('Grupper', style: theme.textTheme.titleMedium),
-              const Spacer(),
-              TextButton.icon(
-                onPressed: _newGroup,
-                icon: const Icon(Icons.add, size: 18),
-                label: const Text('Ny gruppe'),
-              ),
-            ]),
-            const SizedBox(height: 4),
-            if (_loading)
-              const Padding(
-                padding: EdgeInsets.all(16),
-                child: Center(child: CircularProgressIndicator()),
-              )
-            else
-              for (final g in _groups) _groupRow(g),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _groupRow(Map<String, dynamic> g) {
-    final c = _hex(g['farve'] as String?);
-    final count = _counts[g['id']] ?? 0;
-    final type = g['type'] == 'kamp-trup'
-        ? 'på tværs af hold'
-        : (g['type'] == 'hold' ? 'hold' : 'gruppe');
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      child: Row(children: [
-        Container(
-          width: 36, height: 36,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-              color: c.withValues(alpha: 0.18), shape: BoxShape.circle),
-          child: Icon(
-              g['type'] == 'kamp-trup' ? Icons.emoji_events : Icons.groups,
-              color: c, size: 18),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(g['navn'] as String,
-                  style: _body(size: 14, weight: FontWeight.w700)),
-              Text('$count spillere · $type',
-                  style: _body(size: 12, color: _textSecondary)),
-            ],
-          ),
-        ),
-        IconButton(
-          onPressed: () => _editGroup(g),
-          icon: const Icon(Icons.edit_outlined, size: 19, color: _textMuted),
-          tooltip: 'Redigér gruppe',
-          visualDensity: VisualDensity.compact,
-        ),
-        IconButton(
-          onPressed: () => _delete(g),
-          icon: const Icon(Icons.delete_outline, size: 19, color: _textMuted),
-          tooltip: 'Slet gruppe',
-          visualDensity: VisualDensity.compact,
-        ),
-      ]),
-    );
-  }
-}
-
 /// Bundsheet til at oprette en ny gruppe — eller redigere en eksisterende
 /// (når [existing] er sat). Returnerer {navn, type, farve} eller null.
 class _NewGroupSheet extends StatefulWidget {
@@ -1165,22 +928,57 @@ class _NewGroupSheetState extends State<_NewGroupSheet> {
   }
 }
 
-/// Hold & spillere (2f) — sæt hvert medlem på hold. Selv-loadende.
-class _TeamAssignCard extends StatefulWidget {
-  final bool isAdmin; // kun admin må slette medlemmer
-  const _TeamAssignCard({required this.isAdmin});
-  @override
-  State<_TeamAssignCard> createState() => _TeamAssignCardState();
+// ─────────────────────────────────────────────────────────────────────────────
+// Admin → Medlemmer & hold (matcher prototypen: faner, søg, liste, hold-detalje)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Faste avatar-farver (deterministisk pr. navn) — som prototypens palet.
+const List<Color> _avatarPalette = [
+  _neon,
+  Color(0xFF4A3226),
+  Color(0xFF2B4A5E),
+  Color(0xFF3A2B22),
+  Color(0xFFB57BE0),
+  Color(0xFF5A4A3A),
+  Color(0xFF3DA9FC),
+];
+Color _avatarColorFor(String name) {
+  if (name.isEmpty) return _surfaceElevated;
+  var h = 0;
+  for (final c in name.codeUnits) {
+    h = (h * 31 + c) & 0x7fffffff;
+  }
+  return _avatarPalette[h % _avatarPalette.length];
 }
 
-class _TeamAssignCardState extends State<_TeamAssignCard> {
+Color _groupHex(String? h) {
+  if (h == null || h.isEmpty) return _textSecondary;
+  return Color(int.parse(h.replaceFirst('#', ''), radix: 16) | 0xFF000000);
+}
+
+class _MembersAdminView extends StatefulWidget {
+  final bool isAdmin;
+  final String currentUserId;
+  final Future<void> Function(String userId, String newRole) onChangeRole;
+  const _MembersAdminView({
+    required this.isAdmin,
+    required this.currentUserId,
+    required this.onChangeRole,
+  });
+  @override
+  State<_MembersAdminView> createState() => _MembersAdminViewState();
+}
+
+class _MembersAdminViewState extends State<_MembersAdminView> {
   List<Map<String, dynamic>> _groups = const [];
   List<Map<String, dynamic>> _members = const [];
-  Map<String, Set<String>> _membership = {}; // user_id → gruppe-id'er
-  Map<String, Set<String>> _captains = {};   // user_id → gruppe-id'er hvor kaptajn
-  Map<String, int> _skyldigt = {};           // user_id → ubetalt øre
+  Map<String, Set<String>> _membership = {}; // uid → gruppe-id'er
+  Map<String, Set<String>> _captains = {};   // uid → gruppe-id'er (kaptajn)
+  Map<String, int> _skyldigt = {};           // uid → ubetalt øre
   bool _loading = true;
-  String? _filterGroupId; // null = Alle
+  String _tab = 'medlemmer';
+  String _search = '';
+  String? _teamOpen; // null = liste. Ellers gruppe-id eller 'none' (uden hold).
 
   @override
   void initState() {
@@ -1193,7 +991,7 @@ class _TeamAssignCardState extends State<_TeamAssignCard> {
     try {
       final res = await Future.wait([
         supabase.from('groups').select('id, navn, type, farve, sort').order('sort'),
-        supabase.from('profiles').select('id, navn, rolle').order('navn'),
+        supabase.from('profiles').select('id, navn, rolle, email').order('navn'),
         supabase.from('group_members').select('group_id, user_id, is_captain'),
         supabase.from('fine_leaderboard').select('id, skyldigt_oere'),
       ]);
@@ -1224,330 +1022,181 @@ class _TeamAssignCardState extends State<_TeamAssignCard> {
     }
   }
 
-  Future<void> _deleteMember(Map<String, dynamic> m) async {
+  String _groupName(String gid) {
+    final g = _groups.where((g) => g['id'] == gid);
+    return g.isEmpty ? '' : g.first['navn'] as String;
+  }
+
+  // Rolle-badge (label + farve) — kaptajn vises hvis medlemmet er kaptajn nogen steder.
+  (String, Color) _roleBadge(Map<String, dynamic> m) {
+    final rolle = m['rolle'] as String? ?? 'medlem';
+    if (rolle == 'admin') return ('ADMIN', _gold);
+    if (rolle == 'træner') return ('TRÆNER', _info);
+    if ((_captains[m['id']] ?? const {}).isNotEmpty) return ('KAPTAJN', _info);
+    return ('SPILLER', _textSecondary);
+  }
+
+  Future<void> _openEdit(Map<String, dynamic> m) async {
     final id = m['id'] as String;
-    final navn = m['navn'] as String;
-    final skyldigt = _skyldigt[id] ?? 0;
-    final ok = await showModalBottomSheet<bool>(
+    final changed = await showModalBottomSheet<bool>(
       context: context,
+      isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (ctx) => SafeArea(
-        top: false,
-        child: Container(
-          margin: const EdgeInsets.all(12),
-          padding: const EdgeInsets.all(20),
-          decoration: BoxDecoration(
-            color: _surfaceDark,
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: _borderSubtle),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Center(
-                child: Container(
-                  width: 52, height: 52,
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                      color: _danger.withValues(alpha: 0.16), shape: BoxShape.circle),
-                  child: const Icon(Icons.delete_outline, color: _danger, size: 26),
-                ),
-              ),
-              const SizedBox(height: 14),
-              Text('Fjern $navn?',
-                  textAlign: TextAlign.center,
-                  style: _cond(size: 20, weight: FontWeight.w800)),
-              const SizedBox(height: 8),
-              Text(
-                'Personen fjernes HELT fra appen — medlemmer, bødekassen, '
-                'afstemninger og alle begivenheder. Det kan ikke fortrydes.',
-                textAlign: TextAlign.center,
-                style: _body(size: 13, color: _textSecondary),
-              ),
-              if (skyldigt > 0) ...[
-                const SizedBox(height: 14),
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: _gold.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: _gold.withValues(alpha: 0.4)),
-                  ),
-                  child: Row(children: [
-                    const Icon(Icons.warning_amber_rounded, color: _gold, size: 20),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                          '$navn har ${_fmtKr(skyldigt)} ubetalt — beløbet slettes med personen.',
-                          style: _body(size: 12, color: _textPrimary)),
-                    ),
-                  ]),
-                ),
-              ],
-              const SizedBox(height: 18),
-              FilledButton(
-                onPressed: () => Navigator.pop(ctx, true),
-                style: FilledButton.styleFrom(backgroundColor: _danger),
-                child: const Text('Ja, fjern medlem'),
-              ),
-              const SizedBox(height: 8),
-              TextButton(
-                onPressed: () => Navigator.pop(ctx, false),
-                style: TextButton.styleFrom(foregroundColor: _textSecondary),
-                child: const Text('Annullér'),
-              ),
-            ],
-          ),
-        ),
+      builder: (_) => _MemberSheet(
+        profile: m,
+        isMe: id == widget.currentUserId,
+        isAdmin: widget.isAdmin,
+        groups: _groups,
+        memberGids: {...(_membership[id] ?? const {})},
+        captainGids: {...(_captains[id] ?? const {})},
+        skyldigtOere: _skyldigt[id] ?? 0,
+        onChangeRole: widget.onChangeRole,
       ),
     );
-    if (ok != true) return;
+    if (changed == true) _load();
+  }
+
+  Future<void> _newHold() async {
+    final res = await showModalBottomSheet<Map<String, String>>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (_) => const _NewGroupSheet(),
+    );
+    if (res == null) return;
     try {
-      await supabase.rpc('admin_delete_member', params: {'p_user_id': id});
-      if (mounted) _snack(context, '$navn er fjernet', _textSecondary);
+      final nextSort = _groups
+              .map((g) => (g['sort'] as num?)?.toInt() ?? 0)
+              .fold<int>(0, (m, v) => v > m ? v : m) +
+          1;
+      await supabase.from('groups').insert({
+        'navn': res['navn'],
+        'type': res['type'],
+        'farve': res['farve'],
+        'sort': nextSort,
+      });
+      if (mounted) _snack(context, 'Hold oprettet', _success);
       _load();
     } on PostgrestException catch (e) {
       if (mounted) _snack(context, e.message, _danger);
     }
   }
 
-  static Color _hex(String? h) {
-    if (h == null || h.isEmpty) return _textSecondary;
-    return Color(int.parse(h.replaceFirst('#', ''), radix: 16) | 0xFF000000);
-  }
-
-  static String _tag(Map<String, dynamic> g) {
-    final navn = g['navn'] as String;
-    if (g['type'] == 'kamp-trup') return 'Kamp';
-    final m = RegExp(r'(\d+)').firstMatch(navn);
-    if (navn.toLowerCase().startsWith('hold') && m != null) return 'H${m.group(1)}';
-    return navn;
-  }
-
-  Future<void> _toggle(String userId, String groupId, bool add) async {
-    setState(() {
-      final s = _membership[userId] ??= {};
-      if (add) {
-        s.add(groupId);
-      } else {
-        s.remove(groupId);
-      }
-    });
-    try {
-      if (add) {
-        await supabase
-            .from('group_members')
-            .insert({'group_id': groupId, 'user_id': userId});
-      } else {
-        await supabase
-            .from('group_members')
-            .delete()
-            .eq('group_id', groupId)
-            .eq('user_id', userId);
-      }
-    } on PostgrestException catch (e) {
-      if (mounted) {
-        _snack(context, e.message, _danger);
-        _load();
-      }
-    }
-  }
-
-  Future<void> _toggleCaptain(String userId, String groupId, bool cap) async {
-    setState(() {
-      final s = _captains[userId] ??= {};
-      if (cap) {
-        s.add(groupId);
-      } else {
-        s.remove(groupId);
-      }
-    });
-    try {
-      await supabase
-          .from('group_members')
-          .update({'is_captain': cap})
-          .eq('group_id', groupId)
-          .eq('user_id', userId);
-    } on PostgrestException catch (e) {
-      if (mounted) {
-        _snack(context, e.message, _danger);
-        _load();
-      }
-    }
-  }
-
-  void _editMember(Map<String, dynamic> m) {
-    final userId = m['id'] as String;
-    showModalBottomSheet<void>(
+  Future<void> _editHold(Map<String, dynamic> g) async {
+    final res = await showModalBottomSheet<Map<String, String>>(
       context: context,
       backgroundColor: Colors.transparent,
-      builder: (_) => StatefulBuilder(builder: (ctx, setSheet) {
-        final mine = _membership[userId] ?? const <String>{};
-        return SafeArea(
-          top: false,
-          child: Container(
-            margin: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: _surfaceDark,
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: _borderSubtle),
-            ),
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text((m['navn'] as String).toUpperCase(),
-                    style: _cond(size: 20, weight: FontWeight.w800)),
-                const SizedBox(height: 2),
-                Text('Vælg hold. ⭐ = kaptajn (må oprette + styre holdets '
-                    'begivenheder, afstemninger og bøder).',
-                    style: _body(size: 13, color: _textSecondary)),
-                const SizedBox(height: 8),
-                for (final g in _groups)
-                  Builder(builder: (_) {
-                    final gid = g['id'] as String;
-                    final onTeam = mine.contains(gid);
-                    final isCap = (_captains[userId] ?? const {}).contains(gid);
-                    return Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 2),
-                      child: Row(children: [
-                        Checkbox(
-                          value: onTeam,
-                          onChanged: (v) {
-                            _toggle(userId, gid, v ?? false);
-                            setSheet(() {});
-                          },
-                          activeColor: _neon,
-                        ),
-                        Container(
-                          width: 14, height: 14,
-                          decoration: BoxDecoration(
-                              color: _hex(g['farve'] as String?),
-                              shape: BoxShape.circle),
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(child: Text(g['navn'] as String)),
-                        if (onTeam) ...[
-                          IconButton(
-                            onPressed: () {
-                              _toggleCaptain(userId, gid, !isCap);
-                              setSheet(() {});
-                            },
-                            icon: Icon(isCap ? Icons.star : Icons.star_border,
-                                color: isCap ? _gold : _textMuted),
-                            tooltip: isCap ? 'Fjern kaptajn' : 'Gør til kaptajn',
-                            visualDensity: VisualDensity.compact,
-                          ),
-                        ],
-                      ]),
-                    );
-                  }),
-                const SizedBox(height: 8),
-                FilledButton(
-                    onPressed: () => Navigator.pop(ctx),
-                    child: const Text('Færdig')),
-              ],
-            ),
-          ),
-        );
-      }),
+      isScrollControlled: true,
+      builder: (_) => _NewGroupSheet(existing: g),
     );
+    if (res == null) return;
+    try {
+      await supabase.from('groups').update({
+        'navn': res['navn'],
+        'type': res['type'],
+        'farve': res['farve'],
+      }).eq('id', g['id']);
+      if (mounted) _snack(context, 'Hold opdateret', _success);
+      _load();
+    } on PostgrestException catch (e) {
+      if (mounted) _snack(context, e.message, _danger);
+    }
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    if (_loading) {
-      return const Card(
-        child: Padding(
-          padding: EdgeInsets.all(24),
-          child: Center(child: CircularProgressIndicator()),
+  Future<void> _deleteHold(Map<String, dynamic> g) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Slet hold?'),
+        content: Text('"${g['navn']}" fjernes. Begivenheder for holdet '
+            'bliver synlige for alle.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Annullér')),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(backgroundColor: _danger),
+            child: const Text('Slet'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    try {
+      await supabase.from('groups').delete().eq('id', g['id']);
+      if (mounted) {
+        _snack(context, 'Hold slettet', _textSecondary);
+        setState(() => _teamOpen = null);
+      }
+      _load();
+    } on PostgrestException catch (e) {
+      if (mounted) _snack(context, e.message, _danger);
+    }
+  }
+
+  // ── Byggeblokke ─────────────────────────────────────────────────────────────
+  Widget _segTabs() {
+    Widget seg(String value, String label) {
+      final active = _tab == value;
+      return Expanded(
+        child: GestureDetector(
+          onTap: () => setState(() => _tab = value),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 160),
+            height: 38,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: active ? _surfaceElevated : Colors.transparent,
+              borderRadius: BorderRadius.circular(9),
+            ),
+            child: Text(label,
+                style: _cond(
+                    size: 15,
+                    weight: FontWeight.w800,
+                    spacing: 0.3,
+                    color: active ? _textPrimary : _textMuted)),
+          ),
         ),
       );
     }
-    final holdGroups = _groups.where((g) => g['type'] == 'hold').toList();
-    final visible = _filterGroupId == null
-        ? _members
-        : _members
-            .where((m) => (_membership[m['id']] ?? const {}).contains(_filterGroupId))
-            .toList();
-    int countIn(String gid) =>
-        _members.where((m) => (_membership[m['id']] ?? const {}).contains(gid)).length;
 
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(children: [
-              const Icon(Icons.groups_outlined, color: _neon),
-              const SizedBox(width: 8),
-              Text('Hold & spillere', style: theme.textTheme.titleMedium),
-              const Spacer(),
-              IconButton(
-                  onPressed: _load,
-                  icon: const Icon(Icons.refresh),
-                  tooltip: 'Opdater'),
-            ]),
-            Text('Sæt hvert medlem på hold — gælder automatisk i alle begivenheder.',
-                style: _body(size: 12, color: _textSecondary)),
-            const SizedBox(height: 12),
-            Wrap(
-              spacing: 8, runSpacing: 8,
-              children: [
-                _filterChip('Alle · ${_members.length}', null),
-                for (final g in holdGroups)
-                  _filterChip('${g['navn']} · ${countIn(g['id'] as String)}',
-                      g['id'] as String),
-              ],
-            ),
-            const SizedBox(height: 6),
-            for (final m in visible) _memberRow(m),
-          ],
-        ),
-      ),
+    return Container(
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+          color: _bgBlack, borderRadius: BorderRadius.circular(12)),
+      child: Row(children: [
+        seg('medlemmer', 'Medlemmer'),
+        seg('hold', 'Hold'),
+      ]),
     );
   }
 
-  Widget _filterChip(String label, String? groupId) {
-    final active = _filterGroupId == groupId;
-    return GestureDetector(
-      onTap: () => setState(() => _filterGroupId = groupId),
+  Widget _memberRow(Map<String, dynamic> m, bool first) {
+    final navn = m['navn'] as String? ?? '?';
+    final gids = _membership[m['id']] ?? const <String>{};
+    final teams = gids.map(_groupName).where((s) => s.isNotEmpty).join(' · ');
+    final (badge, badgeColor) = _roleBadge(m);
+    return InkWell(
+      onTap: () => _openEdit(m),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        padding: const EdgeInsets.symmetric(vertical: 11),
         decoration: BoxDecoration(
-          color: active ? _neon : _surfaceElevated,
-          borderRadius: BorderRadius.circular(999),
+          border: first
+              ? null
+              : const Border(top: BorderSide(color: _borderSubtle)),
         ),
-        child: Text(label,
-            style: _body(
-                size: 12,
-                weight: FontWeight.w600,
-                color: active ? Colors.white : _textSecondary)),
-      ),
-    );
-  }
-
-  Widget _memberRow(Map<String, dynamic> m) {
-    final userId = m['id'] as String;
-    final navn = m['navn'] as String;
-    final rolle = m['rolle'] as String? ?? 'medlem';
-    final mine = _membership[userId] ?? const <String>{};
-    final myGroups = _groups.where((g) => mine.contains(g['id'])).toList();
-    final isMe = userId == supabase.auth.currentUser?.id;
-    final canDelete = widget.isAdmin && !isMe; // kun admin må slette medlemmer
-    final row = InkWell(
-      onTap: () => _editMember(m),
-      onLongPress: canDelete ? () => _deleteMember(m) : null,
-      borderRadius: BorderRadius.circular(10),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 8),
         child: Row(children: [
-          _InitialAvatar(navn: navn, size: 36),
-          const SizedBox(width: 12),
+          Container(
+            width: 34, height: 34,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+                color: _avatarColorFor(navn), shape: BoxShape.circle),
+            child: Text(navn.isEmpty ? '?' : navn[0].toUpperCase(),
+                style: _body(
+                    size: 13, weight: FontWeight.w700, color: Colors.white)),
+          ),
+          const SizedBox(width: 11),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -1556,75 +1205,702 @@ class _TeamAssignCardState extends State<_TeamAssignCard> {
                 Text(navn,
                     style: _body(size: 14, weight: FontWeight.w600),
                     maxLines: 1, overflow: TextOverflow.ellipsis),
-                Row(children: [
-                  Text(
-                      rolle == 'admin'
-                          ? 'Admin'
-                          : (rolle == 'træner' ? 'Træner' : 'Spiller'),
-                      style: _body(size: 12, color: _textSecondary)),
-                  if ((_captains[userId] ?? const {}).isNotEmpty) ...[
-                    const SizedBox(width: 6),
-                    const Icon(Icons.star, size: 12, color: _gold),
-                    const SizedBox(width: 2),
-                    Text('Kaptajn',
-                        style: _body(
-                            size: 12, weight: FontWeight.w600, color: _gold)),
-                  ],
-                ]),
+                Text(teams.isEmpty ? 'Uden hold' : teams,
+                    style: _body(
+                        size: 11.5,
+                        color: teams.isEmpty ? _gold : _textSecondary),
+                    maxLines: 1, overflow: TextOverflow.ellipsis),
               ],
             ),
           ),
           const SizedBox(width: 8),
-          if (myGroups.isEmpty)
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-              decoration: BoxDecoration(
-                color: _gold.withValues(alpha: 0.16),
-                borderRadius: BorderRadius.circular(999),
-              ),
-              child: Text('Tildel',
-                  style: _body(size: 11, weight: FontWeight.w700, color: _gold)),
-            )
-          else
-            Wrap(
-              spacing: 4,
-              children: [for (final g in myGroups) _groupTag(g)],
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+            decoration: BoxDecoration(
+              color: badgeColor.withValues(alpha: 0.16),
+              borderRadius: BorderRadius.circular(999),
             ),
+            child: Text(badge,
+                style: _body(
+                    size: 10, weight: FontWeight.w700, color: badgeColor)),
+          ),
+          const SizedBox(width: 6),
+          const Icon(Icons.chevron_right, size: 16, color: _textMuted),
         ]),
       ),
     );
-    if (!canDelete) return row;
-    return Dismissible(
-      key: ValueKey('mbr_$userId'),
-      direction: DismissDirection.endToStart,
-      background: Container(
-        alignment: Alignment.centerRight,
-        padding: const EdgeInsets.only(right: 20),
-        margin: const EdgeInsets.symmetric(vertical: 2),
+  }
+
+  Widget _listCard(List<Map<String, dynamic>> members) {
+    if (members.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.symmetric(vertical: 22),
+        alignment: Alignment.center,
         decoration: BoxDecoration(
-          color: _danger.withValues(alpha: 0.18),
-          borderRadius: BorderRadius.circular(10),
+          color: _surfaceDark,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: _borderSubtle),
         ),
-        child: const Icon(Icons.delete_outline, color: _danger),
+        child: Text('Ingen medlemmer',
+            style: _body(size: 13, color: _textMuted)),
+      );
+    }
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14),
+      decoration: BoxDecoration(
+        color: _surfaceDark,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: _borderSubtle),
       ),
-      confirmDismiss: (_) async {
-        await _deleteMember(m);
-        return false;
-      },
-      child: row,
+      child: Column(
+        children: [
+          for (var i = 0; i < members.length; i++)
+            _memberRow(members[i], i == 0),
+        ],
+      ),
     );
   }
 
-  Widget _groupTag(Map<String, dynamic> g) {
-    final c = _hex(g['farve'] as String?);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(
-        color: c.withValues(alpha: 0.18),
-        borderRadius: BorderRadius.circular(999),
+  Widget _goldCard(int count) {
+    if (count == 0) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: InkWell(
+        onTap: () => setState(() => _teamOpen = 'none'),
+        borderRadius: BorderRadius.circular(13),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          decoration: BoxDecoration(
+            color: _gold.withValues(alpha: 0.10),
+            borderRadius: BorderRadius.circular(13),
+            border: Border.all(color: _gold.withValues(alpha: 0.35)),
+          ),
+          child: Row(children: [
+            Container(
+              width: 34, height: 34,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: _gold.withValues(alpha: 0.16),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: const Icon(Icons.error_outline, color: _gold, size: 18),
+            ),
+            const SizedBox(width: 11),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text('$count uden hold',
+                      style: _body(size: 14, weight: FontWeight.w700)),
+                  Text('Skal indplaceres på et hold',
+                      style: _body(size: 11.5, color: _textSecondary)),
+                ],
+              ),
+            ),
+            const Icon(Icons.chevron_right, size: 16, color: _gold),
+          ]),
+        ),
       ),
-      child: Text(_tag(g),
-          style: _body(size: 10, weight: FontWeight.w700, color: c)),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) {
+      return const Padding(
+        padding: EdgeInsets.all(40),
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    final noTeam = _members
+        .where((m) => (_membership[m['id']] ?? const {}).isEmpty)
+        .toList();
+
+    // ── Hold-detalje ────────────────────────────────────────────────────────
+    if (_teamOpen != null) {
+      final isNone = _teamOpen == 'none';
+      final g = isNone
+          ? null
+          : _groups.firstWhere((g) => g['id'] == _teamOpen,
+              orElse: () => const {});
+      final teamMembers = isNone
+          ? noTeam
+          : _members
+              .where((m) => (_membership[m['id']] ?? const {})
+                  .contains(_teamOpen))
+              .toList();
+      final dotColor =
+          isNone ? _gold : _groupHex(g?['farve'] as String?);
+      final name = isNone ? 'Uden hold' : (g?['navn'] as String? ?? '');
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(children: [
+            InkWell(
+              onTap: () => setState(() => _teamOpen = null),
+              borderRadius: BorderRadius.circular(8),
+              child: const Padding(
+                padding: EdgeInsets.all(4),
+                child: Icon(Icons.chevron_left, color: _textSecondary),
+              ),
+            ),
+            const SizedBox(width: 4),
+            Container(
+              width: 11, height: 11,
+              decoration: BoxDecoration(color: dotColor, shape: BoxShape.circle),
+            ),
+            const SizedBox(width: 9),
+            Expanded(
+              child: Text(name.toUpperCase(),
+                  style: _cond(size: 17, weight: FontWeight.w800)),
+            ),
+            Text('${teamMembers.length} spillere',
+                style: _body(size: 12, color: _textSecondary)),
+            if (!isNone && widget.isAdmin && g != null) ...[
+              IconButton(
+                onPressed: () => _editHold(g),
+                icon: const Icon(Icons.edit_outlined, size: 18, color: _textMuted),
+                visualDensity: VisualDensity.compact,
+                tooltip: 'Redigér hold',
+              ),
+              IconButton(
+                onPressed: () => _deleteHold(g),
+                icon: const Icon(Icons.delete_outline, size: 18, color: _textMuted),
+                visualDensity: VisualDensity.compact,
+                tooltip: 'Slet hold',
+              ),
+            ],
+          ]),
+          const SizedBox(height: 14),
+          _listCard(teamMembers),
+        ],
+      );
+    }
+
+    // ── Liste (faner) ─────────────────────────────────────────────────────────
+    final filtered = _tab == 'medlemmer'
+        ? (_search.trim().isEmpty
+            ? _members
+            : _members
+                .where((m) => (m['navn'] as String? ?? '')
+                    .toLowerCase()
+                    .contains(_search.trim().toLowerCase()))
+                .toList())
+        : _members;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _segTabs(),
+        const SizedBox(height: 16),
+        if (_tab == 'medlemmer') ...[
+          // Søgefelt
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 2),
+            decoration: BoxDecoration(
+              color: _surfaceElevated,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: _borderSubtle),
+            ),
+            child: Row(children: [
+              const Icon(Icons.search, size: 16, color: _textMuted),
+              const SizedBox(width: 9),
+              Expanded(
+                child: TextField(
+                  onChanged: (v) => setState(() => _search = v),
+                  style: _body(size: 14),
+                  decoration: InputDecoration(
+                    isDense: true,
+                    border: InputBorder.none,
+                    hintText: 'Søg medlem…',
+                    hintStyle: _body(size: 14, color: _textMuted),
+                  ),
+                ),
+              ),
+            ]),
+          ),
+          const SizedBox(height: 14),
+          _goldCard(noTeam.length),
+          _listCard(filtered),
+        ] else ...[
+          // Hold-faner: hold-kort → detalje
+          for (final g in _groups) ...[
+            InkWell(
+              onTap: () => setState(() => _teamOpen = g['id'] as String),
+              borderRadius: BorderRadius.circular(14),
+              child: Container(
+                margin: const EdgeInsets.only(bottom: 10),
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: _surfaceDark,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: _borderSubtle),
+                ),
+                child: Row(children: [
+                  Container(
+                    width: 11, height: 11,
+                    decoration: BoxDecoration(
+                        color: _groupHex(g['farve'] as String?),
+                        shape: BoxShape.circle),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(g['navn'] as String,
+                            style: _body(size: 14.5, weight: FontWeight.w700)),
+                        Text(
+                            '${_members.where((m) => (_membership[m['id']] ?? const {}).contains(g['id'])).length} spillere',
+                            style: _body(size: 11.5, color: _textSecondary)),
+                      ],
+                    ),
+                  ),
+                  const Icon(Icons.chevron_right, size: 16, color: _textMuted),
+                ]),
+              ),
+            ),
+          ],
+          // Nyt hold
+          InkWell(
+            onTap: _newHold,
+            borderRadius: BorderRadius.circular(13),
+            child: Container(
+              margin: const EdgeInsets.only(bottom: 16),
+              padding: const EdgeInsets.symmetric(vertical: 13),
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(13),
+                border: Border.all(
+                    color: _neon.withValues(alpha: 0.5),
+                    style: BorderStyle.solid),
+              ),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                const Icon(Icons.add, size: 16, color: _neon),
+                const SizedBox(width: 8),
+                Text('Nyt hold',
+                    style: _body(size: 13.5, weight: FontWeight.w700, color: _neon)),
+              ]),
+            ),
+          ),
+          _goldCard(noTeam.length),
+        ],
+      ],
+    );
+  }
+}
+
+/// Medlems-sheet — navn, rolle, hold (+ kaptajn), nulstil kodeord, slet.
+class _MemberSheet extends StatefulWidget {
+  final Map<String, dynamic> profile;
+  final bool isMe;
+  final bool isAdmin;
+  final List<Map<String, dynamic>> groups;
+  final Set<String> memberGids;
+  final Set<String> captainGids;
+  final int skyldigtOere;
+  final Future<void> Function(String userId, String newRole) onChangeRole;
+  const _MemberSheet({
+    required this.profile,
+    required this.isMe,
+    required this.isAdmin,
+    required this.groups,
+    required this.memberGids,
+    required this.captainGids,
+    required this.skyldigtOere,
+    required this.onChangeRole,
+  });
+  @override
+  State<_MemberSheet> createState() => _MemberSheetState();
+}
+
+class _MemberSheetState extends State<_MemberSheet> {
+  late final TextEditingController _navn =
+      TextEditingController(text: widget.profile['navn'] as String? ?? '');
+  late String _rolle = widget.profile['rolle'] as String? ?? 'medlem';
+  late final Set<String> _teams = {...widget.memberGids};
+  late final Set<String> _caps = {...widget.captainGids};
+  bool _saving = false;
+  bool _sendingReset = false;
+
+  String get _id => widget.profile['id'] as String;
+  String? get _email => widget.profile['email'] as String?;
+
+  @override
+  void dispose() {
+    _navn.dispose();
+    super.dispose();
+  }
+
+  Future<void> _sendReset() async {
+    final email = _email;
+    if (email == null || email.isEmpty) {
+      _snack(context, 'Medlemmet har ingen e-mail registreret', _gold);
+      return;
+    }
+    setState(() => _sendingReset = true);
+    try {
+      await supabase.auth.resetPasswordForEmail(email,
+          redirectTo: _passwordResetRedirect);
+      if (mounted) _snack(context, 'Nulstil-mail sendt til $email', _success);
+    } on AuthException catch (e) {
+      if (mounted) _snack(context, e.message, _danger);
+    } catch (e) {
+      if (mounted) _snack(context, 'Kunne ikke sende mail: $e', _danger);
+    } finally {
+      if (mounted) setState(() => _sendingReset = false);
+    }
+  }
+
+  Future<void> _save() async {
+    final navn = _navn.text.trim();
+    if (navn.isEmpty) {
+      _snack(context, 'Navn må ikke være tomt', _gold);
+      return;
+    }
+    setState(() => _saving = true);
+    try {
+      final origNavn = widget.profile['navn'] as String? ?? '';
+      final origRolle = widget.profile['rolle'] as String? ?? 'medlem';
+      if (navn != origNavn) {
+        await supabase.from('profiles').update({'navn': navn}).eq('id', _id);
+      }
+      if (!widget.isMe && _rolle != origRolle) {
+        await widget.onChangeRole(_id, _rolle);
+      }
+      // Hold-diffs
+      final added = _teams.difference(widget.memberGids);
+      final removed = widget.memberGids.difference(_teams);
+      for (final gid in added) {
+        await supabase.from('group_members').insert({
+          'group_id': gid,
+          'user_id': _id,
+          'is_captain': _caps.contains(gid),
+        });
+      }
+      for (final gid in removed) {
+        await supabase
+            .from('group_members')
+            .delete()
+            .eq('group_id', gid)
+            .eq('user_id', _id);
+      }
+      // Kaptajn-diffs på hold der bevares
+      for (final gid in _teams.intersection(widget.memberGids)) {
+        final want = _caps.contains(gid);
+        if (want != widget.captainGids.contains(gid)) {
+          await supabase
+              .from('group_members')
+              .update({'is_captain': want})
+              .eq('group_id', gid)
+              .eq('user_id', _id);
+        }
+      }
+      if (!mounted) return;
+      _snack(context, 'Medlem opdateret', _success);
+      Navigator.of(context).pop(true);
+    } on PostgrestException catch (e) {
+      if (mounted) _snack(context, e.message, _danger);
+    } catch (e) {
+      if (mounted) _snack(context, 'Kunne ikke gemme: $e', _danger);
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _delete() async {
+    final navn = widget.profile['navn'] as String? ?? 'medlemmet';
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Fjern $navn?'),
+        content: Text(
+          'Personen fjernes HELT fra appen — medlemmer, bødekassen, '
+          'afstemninger og alle begivenheder. Det kan ikke fortrydes.'
+          '${widget.skyldigtOere > 0 ? '\n\n$navn har ${_fmtKr(widget.skyldigtOere)} ubetalt — beløbet slettes med personen.' : ''}',
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Annullér')),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(backgroundColor: _danger),
+            child: const Text('Ja, fjern'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    try {
+      await supabase.rpc('admin_delete_member', params: {'p_user_id': _id});
+      if (!mounted) return;
+      _snack(context, '$navn er fjernet', _textSecondary);
+      Navigator.of(context).pop(true);
+    } on PostgrestException catch (e) {
+      if (mounted) _snack(context, e.message, _danger);
+    }
+  }
+
+  Widget _roleChip(String label, String value) {
+    final active = _rolle == value;
+    return Expanded(
+      child: GestureDetector(
+        onTap: widget.isMe ? null : () => setState(() => _rolle = value),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: active ? _neon : Colors.transparent,
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Text(label,
+              style: _body(
+                  size: 13,
+                  weight: FontWeight.w700,
+                  color: active ? Colors.white : _textSecondary)),
+        ),
+      ),
+    );
+  }
+
+  Widget _teamRow(Map<String, dynamic> g) {
+    final gid = g['id'] as String;
+    final on = _teams.contains(gid);
+    final cap = _caps.contains(gid);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(children: [
+        Container(
+          width: 10, height: 10,
+          decoration: BoxDecoration(
+              color: _groupHex(g['farve'] as String?), shape: BoxShape.circle),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text(g['navn'] as String,
+              style: _body(
+                  size: 14,
+                  weight: FontWeight.w600,
+                  color: on ? _textPrimary : _textSecondary)),
+        ),
+        // Kaptajn-stjerne (kun når medlemmet er på holdet)
+        if (on)
+          IconButton(
+            onPressed: () => setState(
+                () => cap ? _caps.remove(gid) : _caps.add(gid)),
+            icon: Icon(cap ? Icons.star : Icons.star_border,
+                size: 20, color: cap ? _gold : _textMuted),
+            visualDensity: VisualDensity.compact,
+            tooltip: cap ? 'Kaptajn' : 'Gør til kaptajn',
+          ),
+        Switch(
+          value: on,
+          onChanged: (v) => setState(() {
+            if (v) {
+              _teams.add(gid);
+            } else {
+              _teams.remove(gid);
+              _caps.remove(gid);
+            }
+          }),
+        ),
+      ]),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      child: Container(
+        constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(context).size.height * 0.92),
+        decoration: const BoxDecoration(
+          color: _surfaceDark,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          border: Border(top: BorderSide(color: _borderSubtle)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 40, height: 4,
+              margin: const EdgeInsets.only(top: 10, bottom: 6),
+              decoration: BoxDecoration(
+                  color: _borderSubtle, borderRadius: BorderRadius.circular(999)),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 4, 10, 6),
+              child: Row(children: [
+                Expanded(child: Text('REDIGÉR MEDLEM',
+                    style: theme.textTheme.titleLarge)),
+                IconButton(
+                  onPressed: _saving ? null : () => Navigator.of(context).pop(false),
+                  icon: const Icon(Icons.close),
+                  color: _textSecondary,
+                ),
+              ]),
+            ),
+            Flexible(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    TextField(
+                      controller: _navn,
+                      textCapitalization: TextCapitalization.words,
+                      decoration: const InputDecoration(
+                        labelText: 'Navn',
+                        prefixIcon: Icon(Icons.person_outline),
+                      ),
+                    ),
+                    if (_email != null && _email!.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Row(children: [
+                        const Icon(Icons.mail_outline, size: 15, color: _textMuted),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(_email!,
+                              style: _body(size: 12, color: _textMuted),
+                              overflow: TextOverflow.ellipsis),
+                        ),
+                      ]),
+                    ],
+                    const SizedBox(height: 20),
+                    Text('ROLLE',
+                        style: _body(
+                            size: 12, weight: FontWeight.w700,
+                            color: _textSecondary, spacing: 1)),
+                    const SizedBox(height: 8),
+                    if (!widget.isAdmin && widget.profile['rolle'] == 'admin')
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: _surfaceElevated,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: _borderSubtle),
+                        ),
+                        child: Row(children: [
+                          const Icon(Icons.shield_outlined,
+                              size: 16, color: _textMuted),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text('Admin — kun en anden admin kan ændre '
+                                'denne rolle.',
+                                style: _body(size: 12, color: _textSecondary)),
+                          ),
+                        ]),
+                      )
+                    else
+                      Container(
+                        padding: const EdgeInsets.all(4),
+                        decoration: BoxDecoration(
+                          color: _bgBlack,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: _borderSubtle),
+                        ),
+                        child: Row(children: [
+                          _roleChip('Spiller', 'medlem'),
+                          _roleChip('Træner', 'træner'),
+                          if (widget.isAdmin) _roleChip('Admin', 'admin'),
+                        ]),
+                      ),
+                    if (widget.isMe) ...[
+                      const SizedBox(height: 6),
+                      Text('Du kan ikke ændre din egen rolle',
+                          style: _body(size: 11, color: _textMuted)),
+                    ],
+                    const SizedBox(height: 20),
+                    Text('HOLD',
+                        style: _body(
+                            size: 12, weight: FontWeight.w700,
+                            color: _textSecondary, spacing: 1)),
+                    const SizedBox(height: 4),
+                    Text('Tænd for de hold personen er på. Stjernen gør '
+                        'medlemmet til kaptajn for holdet.',
+                        style: _body(size: 11.5, color: _textMuted)),
+                    const SizedBox(height: 8),
+                    if (widget.groups.isEmpty)
+                      Text('Ingen hold oprettet endnu',
+                          style: _body(size: 13, color: _textMuted))
+                    else
+                      for (final g in widget.groups) _teamRow(g),
+                    const SizedBox(height: 20),
+                    Text('KODEORD',
+                        style: _body(
+                            size: 12, weight: FontWeight.w700,
+                            color: _textSecondary, spacing: 1)),
+                    const SizedBox(height: 8),
+                    OutlinedButton.icon(
+                      onPressed: _sendingReset ? null : _sendReset,
+                      icon: _sendingReset
+                          ? const SizedBox(width: 16, height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2))
+                          : const Icon(Icons.lock_reset, size: 20),
+                      label: Text(_sendingReset
+                          ? 'Sender…'
+                          : 'Send nulstil-kodeord-mail'),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                      ),
+                    ),
+                    if (widget.isAdmin && !widget.isMe) ...[
+                      const SizedBox(height: 20),
+                      TextButton.icon(
+                        onPressed: _delete,
+                        icon: const Icon(Icons.delete_outline, size: 20),
+                        label: const Text('Fjern medlem fra klubben'),
+                        style: TextButton.styleFrom(
+                          foregroundColor: _danger,
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+            Container(
+              decoration: const BoxDecoration(
+                border: Border(top: BorderSide(color: _borderSubtle)),
+              ),
+              padding: EdgeInsets.fromLTRB(
+                  16, 12, 16, 12 + MediaQuery.of(context).padding.bottom),
+              child: Row(children: [
+                Expanded(
+                  child: TextButton(
+                    onPressed: _saving ? null : () => Navigator.of(context).pop(false),
+                    style: TextButton.styleFrom(
+                      foregroundColor: _textSecondary,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                    ),
+                    child: const Text('Annullér'),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  flex: 2,
+                  child: FilledButton(
+                    onPressed: _saving ? null : _save,
+                    child: _saving
+                        ? const SizedBox(width: 18, height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                        : const Text('Gem'),
+                  ),
+                ),
+              ]),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -1992,472 +2268,6 @@ class _NoShowFineCardState extends State<_NoShowFineCard> {
                 ),
               ),
             ],
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _MemberRolesCard extends StatefulWidget {
-  final List<Map<String, dynamic>> profiles;
-  final String currentUserId;
-  final bool isAdmin; // kun admin må tildele/ændre admin-rollen
-  final Future<void> Function(String userId, String newRole) onChangeRole;
-  final Future<void> Function() onReload;
-  const _MemberRolesCard({
-    required this.profiles,
-    required this.currentUserId,
-    required this.isAdmin,
-    required this.onChangeRole,
-    required this.onReload,
-  });
-  @override
-  State<_MemberRolesCard> createState() => _MemberRolesCardState();
-}
-
-class _MemberRolesCardState extends State<_MemberRolesCard> {
-  Future<void> _editUser(Map<String, dynamic> p) async {
-    final changed = await showModalBottomSheet<bool>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (_) => _EditUserSheet(
-        profile: p,
-        isMe: p['id'] == widget.currentUserId,
-        canSetAdmin: widget.isAdmin,
-        onChangeRole: widget.onChangeRole,
-      ),
-    );
-    if (changed == true) await widget.onReload();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    int rolleRank(String r) {
-      if (r == 'admin') return 0;
-      if (r == 'træner') return 1;
-      return 2; // medlem
-    }
-    final sorted = [...widget.profiles]
-      ..sort((a, b) {
-        final cmp = rolleRank(a['rolle'] as String)
-            .compareTo(rolleRank(b['rolle'] as String));
-        if (cmp != 0) return cmp;
-        return (a['navn'] as String).toLowerCase()
-            .compareTo((b['navn'] as String).toLowerCase());
-      });
-    final adminCount  = sorted.where((p) => p['rolle'] == 'admin').length;
-    final trainerCount = sorted.where((p) => p['rolle'] == 'træner').length;
-
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(Icons.shield_outlined, color: theme.colorScheme.primary),
-                const SizedBox(width: 8),
-                Text('Holdets staff',
-                    style: theme.textTheme.titleMedium),
-                const Spacer(),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: theme.colorScheme.primaryContainer,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Text(
-                      '$adminCount admin · $trainerCount træner',
-                      style: TextStyle(
-                          color: theme.colorScheme.onPrimaryContainer,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 12)),
-                ),
-              ],
-            ),
-            const SizedBox(height: 4),
-            Text(
-              'Admin = fuld adgang (bøder, roller). Træner = kan oprette '
-              'begivenheder og optager ikke en spillerplads. Du kan ikke '
-              'ændre din egen rolle.',
-              style: theme.textTheme.bodySmall,
-            ),
-            const SizedBox(height: 12),
-            if (sorted.isEmpty)
-              const Padding(
-                padding: EdgeInsets.all(16),
-                child: Center(child: Text('Ingen profiler endnu')),
-              )
-            else
-              ...sorted.map((p) {
-                final id    = p['id']    as String;
-                final navn  = p['navn']  as String;
-                final rolle = p['rolle'] as String;
-                final isMe  = id == widget.currentUserId;
-
-                final (rolleLabel, rolleColor) = switch (rolle) {
-                  'admin'  => ('ADMIN',  _neon),
-                  'træner' => ('TRÆNER', Colors.lightBlue.shade300),
-                  _        => ('SPILLER', _textSecondary),
-                };
-
-                return InkWell(
-                  onTap: () => _editUser(p),
-                  borderRadius: BorderRadius.circular(10),
-                  child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
-                  child: Row(
-                    children: [
-                      CircleAvatar(
-                        radius: 18,
-                        backgroundColor: rolleColor.withValues(alpha: 0.18),
-                        child: Text(
-                          navn.isNotEmpty ? navn[0].toUpperCase() : '?',
-                          style: TextStyle(
-                              color: rolleColor,
-                              fontWeight: FontWeight.bold),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Flexible(
-                                  child: Text(navn,
-                                      style: theme.textTheme.bodyLarge?.copyWith(
-                                          fontWeight: FontWeight.w600),
-                                      overflow: TextOverflow.ellipsis),
-                                ),
-                                if (isMe) ...[
-                                  const SizedBox(width: 8),
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(
-                                        horizontal: 6, vertical: 1),
-                                    decoration: BoxDecoration(
-                                      color: theme.colorScheme.primaryContainer,
-                                      borderRadius: BorderRadius.circular(3),
-                                    ),
-                                    child: const Text('DIG',
-                                        style: TextStyle(
-                                            fontSize: 9,
-                                            letterSpacing: 1,
-                                            fontWeight: FontWeight.bold,
-                                            color: _neon)),
-                                  ),
-                                ],
-                              ],
-                            ),
-                            const SizedBox(height: 2),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 6, vertical: 1),
-                              decoration: BoxDecoration(
-                                color: rolleColor.withValues(alpha: 0.18),
-                                borderRadius: BorderRadius.circular(3),
-                              ),
-                              child: Text(rolleLabel,
-                                  style: TextStyle(
-                                      color: rolleColor,
-                                      fontSize: 9,
-                                      letterSpacing: 1.2,
-                                      fontWeight: FontWeight.bold)),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Icon(Icons.edit_outlined, size: 18, color: _textMuted),
-                    ],
-                  ),
-                  ),
-                );
-              }),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// Admin-visning: redigér et medlem — navn, rolle og nulstil kodeord.
-class _EditUserSheet extends StatefulWidget {
-  final Map<String, dynamic> profile;
-  final bool isMe;
-  final bool canSetAdmin; // kun admin må vælge/ændre admin-rollen
-  final Future<void> Function(String userId, String newRole) onChangeRole;
-  const _EditUserSheet({
-    required this.profile,
-    required this.isMe,
-    required this.canSetAdmin,
-    required this.onChangeRole,
-  });
-  @override
-  State<_EditUserSheet> createState() => _EditUserSheetState();
-}
-
-class _EditUserSheetState extends State<_EditUserSheet> {
-  late final TextEditingController _navn =
-      TextEditingController(text: widget.profile['navn'] as String? ?? '');
-  late String _rolle = widget.profile['rolle'] as String? ?? 'medlem';
-  bool _saving = false;
-  bool _sendingReset = false;
-
-  String get _id => widget.profile['id'] as String;
-  String? get _email => widget.profile['email'] as String?;
-
-  @override
-  void dispose() {
-    _navn.dispose();
-    super.dispose();
-  }
-
-  Future<void> _sendReset() async {
-    final email = _email;
-    if (email == null || email.isEmpty) {
-      _snack(context, 'Medlemmet har ingen e-mail registreret', _gold);
-      return;
-    }
-    setState(() => _sendingReset = true);
-    try {
-      await supabase.auth.resetPasswordForEmail(
-        email,
-        redirectTo: _passwordResetRedirect,
-      );
-      if (mounted) _snack(context, 'Nulstil-mail sendt til $email', _success);
-    } on AuthException catch (e) {
-      if (mounted) _snack(context, e.message, _danger);
-    } catch (e) {
-      if (mounted) _snack(context, 'Kunne ikke sende mail: $e', _danger);
-    } finally {
-      if (mounted) setState(() => _sendingReset = false);
-    }
-  }
-
-  Future<void> _save() async {
-    final navn = _navn.text.trim();
-    if (navn.isEmpty) {
-      _snack(context, 'Navn må ikke være tomt', _gold);
-      return;
-    }
-    setState(() => _saving = true);
-    try {
-      final origNavn  = widget.profile['navn'] as String? ?? '';
-      final origRolle = widget.profile['rolle'] as String? ?? 'medlem';
-      if (navn != origNavn) {
-        await supabase.from('profiles').update({'navn': navn}).eq('id', _id);
-      }
-      if (!widget.isMe && _rolle != origRolle) {
-        await widget.onChangeRole(_id, _rolle);
-      }
-      if (!mounted) return;
-      _snack(context, 'Medlem opdateret', _success);
-      Navigator.of(context).pop(true);
-    } on PostgrestException catch (e) {
-      if (mounted) _snack(context, e.message, _danger);
-    } catch (e) {
-      if (mounted) _snack(context, 'Kunne ikke gemme: $e', _danger);
-    } finally {
-      if (mounted) setState(() => _saving = false);
-    }
-  }
-
-  Widget _roleChip(String label, String value) {
-    final active = _rolle == value;
-    return Expanded(
-      child: GestureDetector(
-        onTap: widget.isMe ? null : () => setState(() => _rolle = value),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 160),
-          padding: const EdgeInsets.symmetric(vertical: 12),
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: active ? _neon : Colors.transparent,
-            borderRadius: BorderRadius.circular(10),
-          ),
-          child: Text(label,
-              style: _body(
-                  size: 13,
-                  weight: FontWeight.w700,
-                  color: active ? Colors.white : _textSecondary)),
-        ),
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Padding(
-      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
-      child: Container(
-        constraints: BoxConstraints(
-            maxHeight: MediaQuery.of(context).size.height * 0.9),
-        decoration: const BoxDecoration(
-          color: _surfaceDark,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-          border: Border(top: BorderSide(color: _borderSubtle)),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 40, height: 4,
-              margin: const EdgeInsets.only(top: 10, bottom: 6),
-              decoration: BoxDecoration(
-                  color: _borderSubtle, borderRadius: BorderRadius.circular(999)),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 4, 10, 6),
-              child: Row(children: [
-                Expanded(child: Text('REDIGÉR MEDLEM',
-                    style: theme.textTheme.titleLarge)),
-                IconButton(
-                  onPressed: _saving ? null : () => Navigator.of(context).pop(false),
-                  icon: const Icon(Icons.close),
-                  color: _textSecondary,
-                ),
-              ]),
-            ),
-            Flexible(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    TextField(
-                      controller: _navn,
-                      textCapitalization: TextCapitalization.words,
-                      decoration: const InputDecoration(
-                        labelText: 'Navn',
-                        prefixIcon: Icon(Icons.person_outline),
-                      ),
-                    ),
-                    if (_email != null && _email!.isNotEmpty) ...[
-                      const SizedBox(height: 8),
-                      Row(children: [
-                        const Icon(Icons.mail_outline, size: 15, color: _textMuted),
-                        const SizedBox(width: 6),
-                        Expanded(
-                          child: Text(_email!,
-                              style: _body(size: 12, color: _textMuted),
-                              overflow: TextOverflow.ellipsis),
-                        ),
-                      ]),
-                    ],
-                    const SizedBox(height: 20),
-                    Text('ROLLE',
-                        style: _body(
-                            size: 12, weight: FontWeight.w700, color: _textSecondary,
-                            spacing: 1)),
-                    const SizedBox(height: 8),
-                    if (!widget.canSetAdmin &&
-                        (widget.profile['rolle'] == 'admin'))
-                      // Ikke-admin må ikke ændre en admins rolle.
-                      Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: _surfaceElevated,
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: _borderSubtle),
-                        ),
-                        child: Row(children: [
-                          const Icon(Icons.shield_outlined,
-                              size: 16, color: _textMuted),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text('Admin — kun en anden admin kan ændre '
-                                'denne rolle.',
-                                style: _body(size: 12, color: _textSecondary)),
-                          ),
-                        ]),
-                      )
-                    else
-                      Container(
-                        padding: const EdgeInsets.all(4),
-                        decoration: BoxDecoration(
-                          color: _bgBlack,
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: _borderSubtle),
-                        ),
-                        child: Row(children: [
-                          _roleChip('Spiller', 'medlem'),
-                          _roleChip('Træner', 'træner'),
-                          if (widget.canSetAdmin) _roleChip('Admin', 'admin'),
-                        ]),
-                      ),
-                    if (widget.isMe) ...[
-                      const SizedBox(height: 6),
-                      Text('Du kan ikke ændre din egen rolle',
-                          style: _body(size: 11, color: _textMuted)),
-                    ],
-                    const SizedBox(height: 20),
-                    Text('KODEORD',
-                        style: _body(
-                            size: 12, weight: FontWeight.w700, color: _textSecondary,
-                            spacing: 1)),
-                    const SizedBox(height: 8),
-                    OutlinedButton.icon(
-                      onPressed: _sendingReset ? null : _sendReset,
-                      icon: _sendingReset
-                          ? const SizedBox(width: 16, height: 16,
-                              child: CircularProgressIndicator(strokeWidth: 2))
-                          : const Icon(Icons.lock_reset, size: 20),
-                      label: Text(_sendingReset
-                          ? 'Sender…'
-                          : 'Send nulstil-kodeord-mail'),
-                      style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      'Medlemmet får en mail med et link til at vælge et nyt '
-                      'kodeord.',
-                      style: _body(size: 11, color: _textMuted),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            // Sticky footer
-            Container(
-              decoration: const BoxDecoration(
-                border: Border(top: BorderSide(color: _borderSubtle)),
-              ),
-              padding: EdgeInsets.fromLTRB(
-                  16, 12, 16, 12 + MediaQuery.of(context).padding.bottom),
-              child: Row(children: [
-                Expanded(
-                  child: TextButton(
-                    onPressed: _saving ? null : () => Navigator.of(context).pop(false),
-                    style: TextButton.styleFrom(
-                      foregroundColor: _textSecondary,
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                    ),
-                    child: const Text('Annullér'),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  flex: 2,
-                  child: FilledButton(
-                    onPressed: _saving ? null : _save,
-                    child: _saving
-                        ? const SizedBox(width: 18, height: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                        : const Text('Gem'),
-                  ),
-                ),
-              ]),
-            ),
           ],
         ),
       ),

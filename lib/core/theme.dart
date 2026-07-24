@@ -23,6 +23,7 @@ const _danger    = Color(0xFFE5544E); // afbud / skyldig / fravær
 const _gold      = Color(0xFFF2A63B); // advarsel / guld-rang / afventer
 const _onGold    = Color(0xFF3A2600); // tekst på guld
 const _silver    = Color(0xFFC9C0B6); // sølv-rang
+const _info      = Color(0xFF3DA9FC); // info-blå (træner/kaptajn/MobilePay)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Typografi — Barlow (brødtekst/labels/knapper) + Barlow Condensed (titler/tal).

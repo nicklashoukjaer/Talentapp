@@ -1877,9 +1877,10 @@ class _MobilePayConfigCardState extends State<_MobilePayConfigCard> {
   final _ctrl = TextEditingController();
   bool _saving = false;
   bool _loading = true;
-  List<Map<String, dynamic>> _groups = const [];
-  // null = fælles boks (club_config). Ellers valgt holds id.
-  String? _selectedGroupId;
+  List<Map<String, dynamic>> _holdGroups = const []; // holdgrupper (fællesskaber)
+  List<Map<String, dynamic>> _soloHolds = const [];  // hold uden holdgruppe
+  // Valgt fællesskab: 'club' | 'hg:<id>' | 'solo:<id>'.
+  String _scope = 'club';
   String? _clubBox;
 
   @override
@@ -1891,33 +1892,41 @@ class _MobilePayConfigCardState extends State<_MobilePayConfigCard> {
   Future<void> _load() async {
     try {
       _clubBox = await ClubConfig.fetchMobilePayBox();
-      final rows = await supabase
-          .from('groups')
-          .select('id, navn, mobilepay_box_id')
-          .order('sort');
-      _groups = List<Map<String, dynamic>>.from(rows as List);
+      final res = await Future.wait([
+        supabase.from('hold_groups').select('id, navn, mobilepay_box_id').order('created_at'),
+        supabase.from('groups').select('id, navn, hold_group_id, mobilepay_box_id').order('sort'),
+      ]);
+      _holdGroups = List<Map<String, dynamic>>.from(res[0] as List);
+      _soloHolds = List<Map<String, dynamic>>.from(res[1] as List)
+          .where((h) => h['hold_group_id'] == null)
+          .toList();
     } catch (_) {
       _clubBox ??= ClubConfig.cachedBox;
     }
     if (!mounted) return;
     setState(() {
-      _selectedGroupId = null;
+      _scope = 'club';
       _ctrl.text = _clubBox ?? '';
       _loading = false;
     });
   }
 
-  /// Skift valgt hold → indlæs dets gemte boks i tekstfeltet.
-  void _onSelect(String? groupId) {
+  String _boxFor(String scope) {
+    if (scope == 'club') return _clubBox ?? '';
+    if (scope.startsWith('hg:')) {
+      final id = scope.substring(3);
+      final g = _holdGroups.firstWhere((e) => e['id'] == id, orElse: () => const {});
+      return (g['mobilepay_box_id'] as String?) ?? '';
+    }
+    final id = scope.substring(5);
+    final h = _soloHolds.firstWhere((e) => e['id'] == id, orElse: () => const {});
+    return (h['mobilepay_box_id'] as String?) ?? '';
+  }
+
+  void _onSelect(String scope) {
     setState(() {
-      _selectedGroupId = groupId;
-      if (groupId == null) {
-        _ctrl.text = _clubBox ?? '';
-      } else {
-        final g = _groups.firstWhere(
-            (e) => e['id'] == groupId, orElse: () => const {});
-        _ctrl.text = (g['mobilepay_box_id'] as String?) ?? '';
-      }
+      _scope = scope;
+      _ctrl.text = _boxFor(scope);
     });
   }
 
@@ -1929,29 +1938,37 @@ class _MobilePayConfigCardState extends State<_MobilePayConfigCard> {
 
   Future<void> _save() async {
     final v = _ctrl.text.trim();
-    final isStandard = _selectedGroupId == null;
-    if (isStandard && v.isEmpty) {
+    final isClub = _scope == 'club';
+    if (isClub && v.isEmpty) {
       _snack(context, 'Indtast et Box-ID eller et fuldt MobilePay-link', Colors.orange);
       return;
     }
     setState(() => _saving = true);
     try {
-      if (isStandard) {
+      if (isClub) {
         await ClubConfig.updateMobilePayBox(v);
         _clubBox = v;
       } else {
-        // Tom = fjern holdets egen boks → holdet falder tilbage til fælles-boksen.
         final boxVal = v.isEmpty ? null : v;
-        await supabase.from('groups')
-            .update({'mobilepay_box_id': boxVal}).eq('id', _selectedGroupId!);
-        final idx = _groups.indexWhere((e) => e['id'] == _selectedGroupId);
-        if (idx >= 0) _groups[idx]['mobilepay_box_id'] = boxVal;
+        if (_scope.startsWith('hg:')) {
+          final id = _scope.substring(3);
+          await supabase.from('hold_groups')
+              .update({'mobilepay_box_id': boxVal}).eq('id', id);
+          final idx = _holdGroups.indexWhere((e) => e['id'] == id);
+          if (idx >= 0) _holdGroups[idx]['mobilepay_box_id'] = boxVal;
+        } else {
+          final id = _scope.substring(5);
+          await supabase.from('groups')
+              .update({'mobilepay_box_id': boxVal}).eq('id', id);
+          final idx = _soloHolds.indexWhere((e) => e['id'] == id);
+          if (idx >= 0) _soloHolds[idx]['mobilepay_box_id'] = boxVal;
+        }
       }
       if (mounted) {
         _snack(context,
-            isStandard
+            isClub
                 ? 'Fælles MobilePay-opsætning gemt ✓'
-                : 'MobilePay gemt for holdet ✓',
+                : 'MobilePay gemt for fællesskabet ✓',
             Colors.green);
       }
     } on PostgrestException catch (e) {
@@ -1985,9 +2002,9 @@ class _MobilePayConfigCardState extends State<_MobilePayConfigCard> {
             ),
             const SizedBox(height: 6),
             Text(
-              'Vælg et hold og indtast dets MobilePay Box-ID (fx 1234567) ELLER '
-              'et fuldt Box-link. Hvert hold kan have sin egen boks. "Fælles" '
-              'bruges af spillere der ikke er på et hold med egen boks.',
+              'Hvert hold-fællesskab har sin egen MobilePay-boks. Vælg en '
+              'holdgruppe eller et selvstændigt hold og indtast dets Box-ID '
+              '(fx 1234567) eller fulde Box-link. "Fælles" bruges som fallback.',
               style: theme.textTheme.bodySmall,
             ),
             const SizedBox(height: 14),
@@ -1997,21 +2014,19 @@ class _MobilePayConfigCardState extends State<_MobilePayConfigCard> {
                 child: Center(child: CircularProgressIndicator()),
               )
             else ...[
-              DropdownButtonFormField<String?>(
-                value: _selectedGroupId,
+              DropdownButtonFormField<String>(
+                value: _scope,
                 isExpanded: true,
                 decoration: const InputDecoration(
-                  labelText: 'Hold',
-                  prefixIcon: Icon(Icons.groups_outlined),
+                  labelText: 'Fællesskab',
+                  prefixIcon: Icon(Icons.layers_outlined),
                 ),
                 items: [
-                  const DropdownMenuItem<String?>(
-                    value: null,
-                    child: Text('Fælles – alle hold'),
-                  ),
-                  for (final g in _groups)
-                    DropdownMenuItem<String?>(
-                      value: g['id'] as String,
+                  const DropdownMenuItem(
+                      value: 'club', child: Text('Fælles – fallback')),
+                  for (final g in _holdGroups)
+                    DropdownMenuItem(
+                      value: 'hg:${g['id']}',
                       child: Text(
                         (g['mobilepay_box_id'] as String?)?.trim().isNotEmpty == true
                             ? '${g['navn']}  ·  egen boks'
@@ -2019,8 +2034,18 @@ class _MobilePayConfigCardState extends State<_MobilePayConfigCard> {
                         overflow: TextOverflow.ellipsis,
                       ),
                     ),
+                  for (final h in _soloHolds)
+                    DropdownMenuItem(
+                      value: 'solo:${h['id']}',
+                      child: Text(
+                        (h['mobilepay_box_id'] as String?)?.trim().isNotEmpty == true
+                            ? '${h['navn']} · selvstændigt · egen boks'
+                            : '${h['navn']} · selvstændigt',
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
                 ],
-                onChanged: (v) => _onSelect(v),
+                onChanged: (v) => _onSelect(v ?? 'club'),
               ),
               const SizedBox(height: 12),
               TextField(
@@ -2029,9 +2054,9 @@ class _MobilePayConfigCardState extends State<_MobilePayConfigCard> {
                   labelText: 'Box-ID eller fuldt Box-link',
                   prefixIcon: const Icon(Icons.qr_code_2_outlined),
                   hintText: 'fx 1234567  ·  eller  https://qr.mobilepay.dk/box/…',
-                  helperText: _selectedGroupId == null
-                      ? 'Fælles boks — bruges når holdet ikke har sin egen'
-                      : 'Tom = holdet bruger den fælles boks',
+                  helperText: _scope == 'club'
+                      ? 'Fælles boks — bruges når fællesskabet ikke har sin egen'
+                      : 'Tom = fællesskabet bruger den fælles boks',
                 ),
                 onSubmitted: (_) => _save(),
               ),

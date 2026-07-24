@@ -94,14 +94,31 @@ class ClubConfig {
     try {
       final rows = await supabase
           .from('group_members')
-          .select('groups(navn, mobilepay_box_id)')
+          .select(
+              'groups(navn, mobilepay_box_id, hold_group_id, hold_groups(navn, mobilepay_box_id))')
           .eq('user_id', userId);
       final out = <({String navn, String box})>[];
+      final seen = <String>{};
       for (final r in (rows as List)) {
         final g = r['groups'] as Map<String, dynamic>?;
-        final box = (g?['mobilepay_box_id'] as String?)?.trim();
-        if (g != null && box != null && box.isNotEmpty) {
-          out.add((navn: g['navn'] as String? ?? 'Hold', box: box));
+        if (g == null) continue;
+        final hg = g['hold_groups'] as Map<String, dynamic>?;
+        String navn;
+        String? box;
+        if (hg != null) {
+          // Holdet er i en holdgruppe → brug gruppens boks (fald tilbage til
+          // holdets egen boks hvis gruppens ikke er sat endnu).
+          navn = hg['navn'] as String? ?? g['navn'] as String? ?? 'Hold';
+          box = (hg['mobilepay_box_id'] as String?)?.trim();
+          if (box == null || box.isEmpty) {
+            box = (g['mobilepay_box_id'] as String?)?.trim();
+          }
+        } else {
+          navn = g['navn'] as String? ?? 'Hold';
+          box = (g['mobilepay_box_id'] as String?)?.trim();
+        }
+        if (box != null && box.isNotEmpty && seen.add(box)) {
+          out.add((navn: navn, box: box));
         }
       }
       return out;

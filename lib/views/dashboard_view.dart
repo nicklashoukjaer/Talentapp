@@ -1893,13 +1893,9 @@ class _MobilePayConfigCard extends StatefulWidget {
 }
 
 class _MobilePayConfigCardState extends State<_MobilePayConfigCard> {
-  final _ctrl = TextEditingController();
-  bool _saving = false;
   bool _loading = true;
   List<Map<String, dynamic>> _holdGroups = const []; // holdgrupper (fællesskaber)
   List<Map<String, dynamic>> _soloHolds = const [];  // hold uden holdgruppe
-  // Valgt fællesskab: 'club' | 'hg:<id>' | 'solo:<id>'.
-  String _scope = 'club';
   String? _clubBox;
 
   @override
@@ -1923,60 +1919,26 @@ class _MobilePayConfigCardState extends State<_MobilePayConfigCard> {
       _clubBox ??= ClubConfig.cachedBox;
     }
     if (!mounted) return;
-    setState(() {
-      _scope = 'club';
-      _ctrl.text = _clubBox ?? '';
-      _loading = false;
-    });
+    setState(() => _loading = false);
   }
 
-  String _boxFor(String scope) {
-    if (scope == 'club') return _clubBox ?? '';
-    if (scope.startsWith('hg:')) {
-      final id = scope.substring(3);
-      final g = _holdGroups.firstWhere((e) => e['id'] == id, orElse: () => const {});
-      return (g['mobilepay_box_id'] as String?) ?? '';
-    }
-    final id = scope.substring(5);
-    final h = _soloHolds.firstWhere((e) => e['id'] == id, orElse: () => const {});
-    return (h['mobilepay_box_id'] as String?) ?? '';
-  }
-
-  void _onSelect(String scope) {
-    setState(() {
-      _scope = scope;
-      _ctrl.text = _boxFor(scope);
-    });
-  }
-
-  @override
-  void dispose() {
-    _ctrl.dispose();
-    super.dispose();
-  }
-
-  Future<void> _save() async {
-    final v = _ctrl.text.trim();
-    final isClub = _scope == 'club';
-    if (isClub && v.isEmpty) {
-      _snack(context, 'Indtast et Box-ID eller et fuldt MobilePay-link', Colors.orange);
-      return;
-    }
-    setState(() => _saving = true);
+  // scope: 'club' | 'hg:<id>' | 'solo:<id>'
+  Future<void> _persist(String scope, String? value) async {
+    final v = (value ?? '').trim();
     try {
-      if (isClub) {
+      if (scope == 'club') {
         await ClubConfig.updateMobilePayBox(v);
         _clubBox = v;
       } else {
         final boxVal = v.isEmpty ? null : v;
-        if (_scope.startsWith('hg:')) {
-          final id = _scope.substring(3);
+        if (scope.startsWith('hg:')) {
+          final id = scope.substring(3);
           await supabase.from('hold_groups')
               .update({'mobilepay_box_id': boxVal}).eq('id', id);
           final idx = _holdGroups.indexWhere((e) => e['id'] == id);
           if (idx >= 0) _holdGroups[idx]['mobilepay_box_id'] = boxVal;
         } else {
-          final id = _scope.substring(5);
+          final id = scope.substring(5);
           await supabase.from('groups')
               .update({'mobilepay_box_id': boxVal}).eq('id', id);
           final idx = _soloHolds.indexWhere((e) => e['id'] == id);
@@ -1984,122 +1946,253 @@ class _MobilePayConfigCardState extends State<_MobilePayConfigCard> {
         }
       }
       if (mounted) {
-        _snack(context,
-            isClub
-                ? 'Fælles MobilePay-opsætning gemt ✓'
-                : 'MobilePay gemt for fællesskabet ✓',
-            Colors.green);
+        _snack(context, 'MobilePay-opsætning gemt ✓', _success);
+        setState(() {});
       }
     } on PostgrestException catch (e) {
-      if (mounted) _snack(context, 'Kunne ikke gemme: ${e.message}', Colors.red);
+      if (mounted) _snack(context, 'Kunne ikke gemme: ${e.message}', _danger);
     } catch (e) {
-      if (mounted) _snack(context, 'Kunne ikke gemme: $e', Colors.red);
-    } finally {
-      if (mounted) setState(() => _saving = false);
+      if (mounted) _snack(context, 'Kunne ikke gemme: $e', _danger);
     }
+  }
+
+  Future<void> _editBox({
+    required String scope,
+    required String name,
+    required String current,
+    required bool isClub,
+  }) async {
+    final res = await showModalBottomSheet<String?>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _MobilePayBoxSheet(
+        name: name,
+        current: current,
+        isClub: isClub,
+      ),
+    );
+    // null = annulleret. Ellers gem (tom streng = ryd boksen).
+    if (res != null) await _persist(scope, res);
+  }
+
+  Widget _boxCard({
+    required String scope,
+    required String name,
+    required String? box,
+    required bool isClub,
+  }) {
+    final has = (box ?? '').trim().isNotEmpty;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: InkWell(
+        onTap: () => _editBox(
+            scope: scope, name: name, current: box ?? '', isClub: isClub),
+        borderRadius: BorderRadius.circular(14),
+        child: Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: _surfaceDark,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: _borderSubtle),
+          ),
+          child: Row(children: [
+            Container(
+              width: 40, height: 40,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: _info.withValues(alpha: 0.14),
+                borderRadius: BorderRadius.circular(11),
+              ),
+              child: const Icon(Icons.account_balance_wallet_outlined,
+                  color: _info, size: 20),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(name, style: _body(size: 14, weight: FontWeight.w700)),
+                  Text(
+                    has
+                        ? 'MobilePay-boks $box'
+                        : (isClub
+                            ? 'Ingen fælles boks endnu — tryk for at tilføje'
+                            : 'Ingen boks endnu — tryk for at tilføje'),
+                    style: _body(
+                        size: 11.5, color: has ? _textSecondary : _gold),
+                    maxLines: 1, overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
+            ),
+            const Icon(Icons.chevron_right, size: 16, color: _textMuted),
+          ]),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) {
+      return const Padding(
+        padding: EdgeInsets.all(40),
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(bottom: 16),
+          child: Text(
+            'Hvert hold-fællesskab har sin egen MobilePay-boks. Spillernes '
+            'betalinger åbner boksen med beløbet udfyldt.',
+            style: _body(size: 12.5, color: _textSecondary, height: 1.5),
+          ),
+        ),
+        for (final g in _holdGroups)
+          _boxCard(
+            scope: 'hg:${g['id']}',
+            name: g['navn'] as String,
+            box: g['mobilepay_box_id'] as String?,
+            isClub: false,
+          ),
+        for (final h in _soloHolds)
+          _boxCard(
+            scope: 'solo:${h['id']}',
+            name: h['navn'] as String,
+            box: h['mobilepay_box_id'] as String?,
+            isClub: false,
+          ),
+        _boxCard(
+          scope: 'club',
+          name: 'Fælles (fallback)',
+          box: _clubBox,
+          isClub: true,
+        ),
+        const SizedBox(height: 6),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 11),
+          decoration: BoxDecoration(
+            color: _neon.withValues(alpha: 0.08),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: _neon.withValues(alpha: 0.25)),
+          ),
+          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const Icon(Icons.info_outline, size: 16, color: _neon),
+            const SizedBox(width: 9),
+            Expanded(
+              child: Text(
+                'Kun admin kan ændre MobilePay. Når et nyt hold oprettes, står '
+                'det her uden boks — du tilføjer boksens link fra MobilePay. '
+                '"Fælles" bruges når et fællesskab ikke har sin egen boks.',
+                style: _body(size: 12, color: _textSecondary, height: 1.4),
+              ),
+            ),
+          ]),
+        ),
+      ],
+    );
+  }
+}
+
+/// Bundsheet: redigér MobilePay-boks for ét fællesskab. Returnerer den nye
+/// værdi (tom streng = ryd boksen) eller null ved annullering.
+class _MobilePayBoxSheet extends StatefulWidget {
+  final String name;
+  final String current;
+  final bool isClub;
+  const _MobilePayBoxSheet({
+    required this.name,
+    required this.current,
+    required this.isClub,
+  });
+  @override
+  State<_MobilePayBoxSheet> createState() => _MobilePayBoxSheetState();
+}
+
+class _MobilePayBoxSheetState extends State<_MobilePayBoxSheet> {
+  late final _ctrl = TextEditingController(text: widget.current);
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  void _save() {
+    final v = _ctrl.text.trim();
+    if (widget.isClub && v.isEmpty) {
+      _snack(context, 'Indtast et Box-ID eller et fuldt MobilePay-link', _gold);
+      return;
+    }
+    Navigator.of(context).pop(v);
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                const Icon(Icons.account_balance_wallet_outlined,
-                    color: Color(0xFF0055FF)),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text('Admin: MobilePay Opsætning 🎾',
-                      style: theme.textTheme.titleMedium),
-                ),
-              ],
-            ),
-            const SizedBox(height: 6),
-            Text(
-              'Hvert hold-fællesskab har sin egen MobilePay-boks. Vælg en '
-              'holdgruppe eller et selvstændigt hold og indtast dets Box-ID '
-              '(fx 1234567) eller fulde Box-link. "Fælles" bruges som fallback.',
-              style: theme.textTheme.bodySmall,
-            ),
-            const SizedBox(height: 14),
-            if (_loading)
-              const Padding(
-                padding: EdgeInsets.all(8),
-                child: Center(child: CircularProgressIndicator()),
-              )
-            else ...[
-              DropdownButtonFormField<String>(
-                value: _scope,
-                isExpanded: true,
-                decoration: const InputDecoration(
-                  labelText: 'Fællesskab',
-                  prefixIcon: Icon(Icons.layers_outlined),
-                ),
-                items: [
-                  const DropdownMenuItem(
-                      value: 'club', child: Text('Fælles – fallback')),
-                  for (final g in _holdGroups)
-                    DropdownMenuItem(
-                      value: 'hg:${g['id']}',
-                      child: Text(
-                        (g['mobilepay_box_id'] as String?)?.trim().isNotEmpty == true
-                            ? '${g['navn']}  ·  egen boks'
-                            : g['navn'] as String,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  for (final h in _soloHolds)
-                    DropdownMenuItem(
-                      value: 'solo:${h['id']}',
-                      child: Text(
-                        (h['mobilepay_box_id'] as String?)?.trim().isNotEmpty == true
-                            ? '${h['navn']} · selvstændigt · egen boks'
-                            : '${h['navn']} · selvstændigt',
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                ],
-                onChanged: (v) => _onSelect(v ?? 'club'),
-              ),
-              const SizedBox(height: 12),
+    return Padding(
+      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      child: SafeArea(
+        top: false,
+        child: Container(
+          margin: const EdgeInsets.all(12),
+          padding: const EdgeInsets.all(18),
+          decoration: BoxDecoration(
+            color: _surfaceDark,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: _borderSubtle),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text('MOBILEPAY-BOKS',
+                  style: _body(
+                      size: 12, weight: FontWeight.w700,
+                      color: _textSecondary, spacing: 1)),
+              const SizedBox(height: 4),
+              Text(widget.name,
+                  style: theme.textTheme.titleLarge),
+              const SizedBox(height: 14),
               TextField(
                 controller: _ctrl,
+                autofocus: true,
                 decoration: InputDecoration(
                   labelText: 'Box-ID eller fuldt Box-link',
                   prefixIcon: const Icon(Icons.qr_code_2_outlined),
                   hintText: 'fx 1234567  ·  eller  https://qr.mobilepay.dk/box/…',
-                  helperText: _scope == 'club'
+                  helperText: widget.isClub
                       ? 'Fælles boks — bruges når fællesskabet ikke har sin egen'
                       : 'Tom = fællesskabet bruger den fælles boks',
                 ),
                 onSubmitted: (_) => _save(),
               ),
-              const SizedBox(height: 12),
-              SizedBox(
-                width: double.infinity,
-                child: FilledButton.icon(
-                  onPressed: _saving ? null : _save,
-                  icon: _saving
-                      ? const SizedBox(
-                          width: 16, height: 16,
-                          child: CircularProgressIndicator(
-                              strokeWidth: 2, color: Colors.white))
-                      : const Icon(Icons.save_outlined),
-                  label: const Text('Gem indstillinger'),
-                  style: FilledButton.styleFrom(
-                    backgroundColor: const Color(0xFF0055FF),
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
+              const SizedBox(height: 18),
+              Row(children: [
+                Expanded(
+                  child: TextButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    style: TextButton.styleFrom(foregroundColor: _textSecondary),
+                    child: const Text('Annullér'),
                   ),
                 ),
-              ),
+                const SizedBox(width: 12),
+                Expanded(
+                  flex: 2,
+                  child: FilledButton(
+                    onPressed: _save,
+                    style: FilledButton.styleFrom(backgroundColor: _info),
+                    child: const Text('Gem boks'),
+                  ),
+                ),
+              ]),
             ],
-          ],
+          ),
         ),
       ),
     );

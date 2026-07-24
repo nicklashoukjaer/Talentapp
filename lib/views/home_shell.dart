@@ -129,7 +129,6 @@ class _HomeShellState extends State<HomeShell> {
       builder: (_) => const CreateTrainingDialog(),
     );
     if (created == true) {
-      _dashboardKey.currentState?.reloadTrainings();
       _oversigtKey.currentState?.reload();
     }
   }
@@ -146,7 +145,6 @@ class _HomeShellState extends State<HomeShell> {
       builder: (_) => const CreatePollDialog(),
     );
     if (created == true) {
-      _dashboardKey.currentState?.reloadPolls();
       _oversigtKey.currentState?.reload();
     }
   }
@@ -177,7 +175,6 @@ class _HomeShellState extends State<HomeShell> {
     );
     if (created == true) {
       _oversigtKey.currentState?.reload();
-      _dashboardKey.currentState?.reloadTrainings();
     }
   }
 
@@ -191,7 +188,6 @@ class _HomeShellState extends State<HomeShell> {
     );
     if (created == true) {
       _oversigtKey.currentState?.reload();
-      _dashboardKey.currentState?.reloadPolls();
       _afstemningerKey.currentState?.reload();
     }
   }
@@ -411,7 +407,7 @@ class _HomeShellState extends State<HomeShell> {
       //  Bødekasse → uddel bøde (kun admin).
       floatingActionButton: () {
         final idx = _selectedIndex.clamp(0, pages.length - 1);
-        if (idx == _tabOversigt && _canCreate) {
+        if ((idx == _tabOversigt || idx == _tabDashboard) && _canCreate) {
           return _CreateSpeedDial(
             isAdmin: _isAdmin,
             onNewTraining: _quickCreateTraining,

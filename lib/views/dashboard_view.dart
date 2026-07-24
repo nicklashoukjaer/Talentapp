@@ -10,17 +10,6 @@ class DashboardTab extends StatefulWidget {
 }
 
 class DashboardTabState extends State<DashboardTab> {
-  // Trænings-data
-  List<Map<String, dynamic>> _trainings = const [];
-  Map<String, int> _signedUp = const {};
-  bool _loadingTrainings = true;
-  String? _trainingsError;
-
-  // Polls-data
-  List<Map<String, dynamic>> _polls = const [];
-  bool _loadingPolls = true;
-  String? _pollsError;
-
   // Bøde-data
   List<Map<String, dynamic>> _profiles = const [];
   List<Map<String, dynamic>> _fineTypes = const [];
@@ -28,70 +17,17 @@ class DashboardTabState extends State<DashboardTab> {
   bool _loadingFines = true;
   String? _finesError;
 
-  // Aktiv sektion-fane: 0 = Bøder, 1 = Medlemmer, 2 = Betaling
-  int _dashSection = 0;
+  // Åben under-skærm i Admin: null = menu. Ellers 'members'/'fine'/'mobilepay'.
+  String? _openSection;
 
   @override
   void initState() {
     super.initState();
-    reloadTrainings();
-    reloadPolls();
     reloadFines();
   }
 
   Future<void> _reloadAll() async {
-    await Future.wait([reloadTrainings(), reloadPolls(), reloadFines()]);
-  }
-
-  Future<void> reloadTrainings() async {
-    setState(() { _loadingTrainings = true; _trainingsError = null; });
-    try {
-      final trainings = await supabase
-          .from('trainings')
-          .select('id, titel, max_deltagere, start_tid, slut_tid, adresse, tilmeldings_deadline')
-          .order('start_tid');
-      final tList = List<Map<String, dynamic>>.from(trainings as List);
-      final ids = tList.map((t) => t['id'] as String).toList();
-
-      final parts = ids.isEmpty
-          ? const <Map<String, dynamic>>[]
-          : List<Map<String, dynamic>>.from(await supabase
-              .from('training_participants')
-              .select('training_id, status')
-              .inFilter('training_id', ids) as List);
-
-      final counts = <String, int>{};
-      for (final r in parts) {
-        if (r['status'] == 'tilmeldt') {
-          final id = r['training_id'] as String;
-          counts[id] = (counts[id] ?? 0) + 1;
-        }
-      }
-
-      setState(() {
-        _trainings = tList;
-        _signedUp  = counts;
-        _loadingTrainings = false;
-      });
-    } catch (e) {
-      setState(() { _loadingTrainings = false; _trainingsError = e.toString(); });
-    }
-  }
-
-  Future<void> reloadPolls() async {
-    setState(() { _loadingPolls = true; _pollsError = null; });
-    try {
-      final rows = await supabase
-          .from('polls')
-          .select('id, titel, beskrivelse, lukket_at, created_at')
-          .order('created_at', ascending: false);
-      setState(() {
-        _polls = List<Map<String, dynamic>>.from(rows as List);
-        _loadingPolls = false;
-      });
-    } catch (e) {
-      setState(() { _loadingPolls = false; _pollsError = e.toString(); });
-    }
+    await reloadFines();
   }
 
   Future<void> reloadFines() async {
@@ -118,38 +54,6 @@ class DashboardTabState extends State<DashboardTab> {
     } catch (e) {
       setState(() { _loadingFines = false; _finesError = e.toString(); });
     }
-  }
-
-  Future<void> _openCreateTraining() async {
-    final created = await showModalBottomSheet<bool>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (_) => const CreateTrainingDialog(),
-    );
-    if (created == true) reloadTrainings();
-  }
-
-  Future<void> _openCreatePoll() async {
-    final created = await showModalBottomSheet<bool>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (_) => const CreatePollDialog(),
-    );
-    if (created == true) reloadPolls();
-  }
-
-  void _openBoard(Map<String, dynamic> training) {
-    Navigator.of(context).push(MaterialPageRoute(
-      builder: (_) => TrainingBoardScreen(training: training),
-    )).then((_) => reloadTrainings());
-  }
-
-  void _openSynergyReport(Map<String, dynamic> poll) {
-    Navigator.of(context).push(MaterialPageRoute(
-      builder: (_) => SynergyReportScreen(poll: poll),
-    ));
   }
 
   Future<void> _approvePayment(String fineId) async {
@@ -238,242 +142,147 @@ class DashboardTabState extends State<DashboardTab> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.transparent,
-      body: RefreshIndicator(
-        onRefresh: _reloadAll,
-        child: ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            Center(
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 760),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    _buildHero(),
-                    const SizedBox(height: 20),
-                    _buildQuickActions(),
-                    ...[
-                      const SizedBox(height: 28),
-                      _SectionPills(
-                        active: _dashSection,
-                        pendingCount: _pendingFines.length,
-                        // Betaling/MobilePay er kun for admin.
-                        showBetaling: widget.isFullAdmin,
-                        onChanged: (i) => setState(() => _dashSection = i),
-                      ),
-                      const SizedBox(height: 20),
-                      switch (_dashSection) {
-                        1 => _buildMembersSection(),
-                        2 => widget.isFullAdmin
-                            ? const _MobilePayConfigCard()
-                            : _buildFineSection(),
-                        _ => _buildFineSection(),
-                      },
-                    ],
-                    const SizedBox(height: 32),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
+      body: _openSection == null ? _adminMenu() : _sectionView(),
     );
   }
 
-  Widget _buildHero() {
-    final theme = Theme.of(context);
-    final title = widget.isFullAdmin
-        ? 'ADMIN KOMMANDOCENTRAL'
-        : 'TRÆNER PANEL';
-    final subtitle = widget.isFullAdmin
-        ? 'Lynhurtige handlinger til at styre holdet'
-        : 'Opret træninger, kampe og afstemninger';
-    return Padding(
-      padding: const EdgeInsets.only(left: 4, top: 4),
-      child: Row(
-        children: [
-          Container(
-            width: 4, height: 36,
-            decoration: const BoxDecoration(
-              color: _neon,
-              borderRadius: BorderRadius.all(Radius.circular(2)),
-            ),
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(title,
-                    maxLines: 1, overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.headlineSmall?.copyWith(
-                        letterSpacing: 1.5)),
-                Text(subtitle,
-                    maxLines: 2, overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.bodySmall),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildQuickActions() {
-    final tiles = <Widget>[
-      _ActionTile(
-        icon: Icons.add_circle_outline,
-        label: 'Ny begivenhed',
-        hint:  'Enkelt eller serie',
-        onTap: _openCreateTraining,
-      ),
-      _ActionTile(
-        icon: Icons.bar_chart,
-        label: 'Ny afstemning',
-        hint:  'Multi-dato + synergi',
-        onTap: _openCreatePoll,
-      ),
-      _ActionTile(
-        icon: Icons.gavel,
-        label: 'Lyn-bøde',
-        hint:  'Spiller + type',
-        onTap: () async {
-          final ok = await showDialog<bool>(
-            context: context,
-            builder: (_) => const GiveFineDialog(),
-          );
-          if (ok == true) reloadFines();
-        },
-      ),
-      _ActionTile(
-        icon: Icons.group_outlined,
-        label: 'Medlemmer',
-        hint:  'Roller & staff',
-        onTap: () => setState(() => _dashSection = 1),
-      ),
-    ];
-    return LayoutBuilder(builder: (ctx, constraints) {
-      // Bredt: alle fliser på én række. Ellers 2 pr. række (2×2-grid).
-      final perRow = constraints.maxWidth > 600 ? tiles.length : 2;
-      const gap = 12.0;
-      final rows = <Widget>[];
-      for (var i = 0; i < tiles.length; i += perRow) {
-        final end = (i + perRow) > tiles.length ? tiles.length : (i + perRow);
-        final chunk = tiles.sublist(i, end);
-        // IntrinsicHeight giver Row'en en afgrænset højde, så stretch (ens
-        // flise-højde) virker i ListViewens ellers uendelige lodrette rum.
-        rows.add(IntrinsicHeight(
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              for (var j = 0; j < perRow; j++) ...[
-                Expanded(child: j < chunk.length ? chunk[j] : const SizedBox()),
-                if (j != perRow - 1) const SizedBox(width: gap),
-              ],
-            ],
-          ),
-        ));
-        if (i + perRow < tiles.length) rows.add(const SizedBox(height: gap));
-      }
-      return Column(children: rows);
-    });
-  }
-
-  Widget _buildTrainingSection() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+  // ── Admin-menu (matcher prototypen) ─────────────────────────────────────────
+  Widget _adminMenu() {
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
       children: [
-        _SectionHeader(
-          title: 'Træninger & Kampe',
-          icon: Icons.sports_tennis,
-          actionLabel: 'Opret træning',
-          onAction: _openCreateTraining,
-        ),
-        const SizedBox(height: 12),
-        if (_loadingTrainings)
-          const Padding(padding: EdgeInsets.all(16),
-              child: Center(child: CircularProgressIndicator()))
-        else if (_trainingsError != null)
-          Text(_trainingsError!, style: const TextStyle(color: Colors.red))
-        else if (_trainings.isEmpty)
-          const Padding(
-            padding: EdgeInsets.all(16),
-            child: Text('Ingen træninger endnu — Ctrl+K → "opret".',
-                style: TextStyle(color: Colors.grey)),
-          )
-        else
-          ..._trainings.map((t) {
-            final start = DateTime.parse(t['start_tid'] as String).toLocal();
-            final max   = t['max_deltagere'] as int?;
-            final cnt   = _signedUp[t['id']] ?? 0;
-            final addr  = t['adresse'] as String;
-            final hasAddress = addr.isNotEmpty && addr != _addressUnspecified;
-            return Card(
-              margin: const EdgeInsets.only(bottom: 12),
-              child: ListTile(
-                leading: const Icon(Icons.sports_tennis),
-                title: Text(t['titel'] as String),
-                subtitle: Text(
-                  '${_fmtDateTime(start)} · '
-                  '${max == null ? "$cnt tilmeldt · ∞" : "$cnt/$max tilmeldt"}'
-                  '${hasAddress ? " · $addr" : ""}',
+        Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 760),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(children: [
+                  Container(width: 4, height: 22,
+                      decoration: BoxDecoration(
+                          color: _neon, borderRadius: BorderRadius.circular(999))),
+                  const SizedBox(width: 10),
+                  Text('ADMIN', style: _cond(size: 24, weight: FontWeight.w800)),
+                ]),
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(14, 4, 0, 18),
+                  child: Text(
+                    'Opsætning & styring — begivenheder, afstemninger og bøder '
+                    'oprettes med +-knappen.',
+                    style: TextStyle(color: _textSecondary, fontSize: 12.5),
+                  ),
                 ),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: () => _openBoard(t),
-              ),
-            );
-          }),
+                _menuCard(Icons.groups_outlined, 'Medlemmer & hold',
+                    'Sæt på hold · roller · kaptajn · slet',
+                    () => setState(() => _openSection = 'members')),
+                _menuCard(Icons.layers_outlined, 'Holdgrupper',
+                    'Saml hold der deler bødekasse og bødetyper',
+                    () => Navigator.of(context).push(MaterialPageRoute(
+                        builder: (_) => const HoldGroupsScreen()))),
+                _menuCard(Icons.gavel_outlined, 'Bøde-opsætning',
+                    'Godkend · bødetyper pr. hold · udeblivelse',
+                    () => setState(() => _openSection = 'fine')),
+                if (widget.isFullAdmin)
+                  _menuCard(Icons.account_balance_wallet_outlined, 'MobilePay',
+                      'Boks pr. holdgruppe + fælles',
+                      () => setState(() => _openSection = 'mobilepay')),
+              ],
+            ),
+          ),
+        ),
       ],
     );
   }
 
-  Widget _buildPollSection() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _SectionHeader(
-          title: 'Afstemninger & Holdbygger',
-          icon: Icons.insights,
-          actionLabel: 'Opret afstemning',
-          onAction: _openCreatePoll,
-        ),
-        const SizedBox(height: 12),
-        if (_loadingPolls)
-          const Padding(padding: EdgeInsets.all(16),
-              child: Center(child: CircularProgressIndicator()))
-        else if (_pollsError != null)
-          Text(_pollsError!, style: const TextStyle(color: Colors.red))
-        else if (_polls.isEmpty)
-          const Padding(
-            padding: EdgeInsets.all(16),
-            child: Text(
-              'Ingen afstemninger endnu — Ctrl+K → "opret afstemning".',
-              style: TextStyle(color: Colors.grey),
-            ),
-          )
-        else
-          ..._polls.map((p) {
-            final beskr  = p['beskrivelse'] as String?;
-            final lukket = p['lukket_at'] != null &&
-                DateTime.parse(p['lukket_at'] as String).isBefore(DateTime.now());
-            return Card(
-              margin: const EdgeInsets.only(bottom: 12),
-              child: ListTile(
-                leading: Icon(lukket ? Icons.lock_outline : Icons.insights,
-                    color: lukket ? Colors.grey : Theme.of(context).colorScheme.primary),
-                title: Text(p['titel'] as String),
-                subtitle: Text(
-                  beskr != null && beskr.isNotEmpty
-                      ? beskr
-                      : 'Klik for synergi-rapport',
-                ),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: () => _openSynergyReport(p),
+  Widget _menuCard(IconData icon, String titel, String sub, VoidCallback onTap) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(15),
+        child: Container(
+          padding: const EdgeInsets.all(15),
+          decoration: BoxDecoration(
+            color: _surfaceDark,
+            borderRadius: BorderRadius.circular(15),
+            border: Border.all(color: _borderSubtle),
+          ),
+          child: Row(children: [
+            Container(
+              width: 44, height: 44,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: _neon.withValues(alpha: 0.16),
+                borderRadius: BorderRadius.circular(12),
               ),
-            );
-          }),
+              child: Icon(icon, color: _neon, size: 21),
+            ),
+            const SizedBox(width: 13),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(titel, style: _body(size: 15, weight: FontWeight.w700)),
+                  const SizedBox(height: 2),
+                  Text(sub,
+                      style: _body(size: 11.5, color: _textSecondary),
+                      maxLines: 2, overflow: TextOverflow.ellipsis),
+                ],
+              ),
+            ),
+            const Icon(Icons.chevron_right, color: _textMuted),
+          ]),
+        ),
+      ),
+    );
+  }
+
+  Widget _sectionView() {
+    final title = switch (_openSection) {
+      'members' => 'Medlemmer & hold',
+      'fine' => 'Bøde-opsætning',
+      'mobilepay' => 'MobilePay',
+      _ => 'Admin',
+    };
+    return Column(
+      children: [
+        // Topbar med tilbage-pil.
+        Container(
+          color: const Color(0xFF241914),
+          padding: EdgeInsets.fromLTRB(
+              8, MediaQuery.of(context).padding.top + 10, 14, 12),
+          child: Row(children: [
+            IconButton(
+              onPressed: () => setState(() => _openSection = null),
+              icon: const Icon(Icons.chevron_left, color: _textSecondary),
+            ),
+            Expanded(
+              child: Text(title.toUpperCase(),
+                  style: _cond(size: 18, weight: FontWeight.w800)),
+            ),
+          ]),
+        ),
+        Expanded(
+          child: RefreshIndicator(
+            onRefresh: _reloadAll,
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+              children: [
+                Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 760),
+                    child: switch (_openSection) {
+                      'members' => _buildMembersSection(),
+                      'mobilepay' => const _MobilePayConfigCard(),
+                      _ => _buildFineSection(),
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       ],
     );
   }
@@ -560,8 +369,6 @@ class DashboardTabState extends State<DashboardTab> {
           const Padding(padding: EdgeInsets.all(16),
               child: Center(child: CircularProgressIndicator()))
         else ...[
-          _HoldGroupsEntryCard(),
-          const SizedBox(height: 16),
           const _GroupsOverviewCard(),
           const SizedBox(height: 16),
           _TeamAssignCard(isAdmin: widget.isFullAdmin),
@@ -580,48 +387,6 @@ class DashboardTabState extends State<DashboardTab> {
 }
 
 /// Indgang til Holdgrupper-skærmen (medlems-sektionen).
-class _HoldGroupsEntryCard extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      child: InkWell(
-        onTap: () => Navigator.of(context).push(
-            MaterialPageRoute(builder: (_) => const HoldGroupsScreen())),
-        borderRadius: BorderRadius.circular(16),
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Row(children: [
-            Container(
-              width: 40, height: 40,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                color: _neon.withValues(alpha: 0.14),
-                borderRadius: BorderRadius.circular(11),
-              ),
-              child: const Icon(Icons.layers_outlined, color: _neon, size: 22),
-            ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text('Holdgrupper',
-                      style: _body(size: 15, weight: FontWeight.w700)),
-                  const SizedBox(height: 2),
-                  Text('Saml hold der deler bødekasse og bødetyper',
-                      style: _body(size: 12, color: _textSecondary)),
-                ],
-              ),
-            ),
-            const Icon(Icons.chevron_right, color: _textMuted),
-          ]),
-        ),
-      ),
-    );
-  }
-}
-
 /// Holdgrupper — saml hold der deler bødekasse/bødetyper/MobilePay.
 class HoldGroupsScreen extends StatefulWidget {
   const HoldGroupsScreen({super.key});
@@ -2700,167 +2465,6 @@ class _EditUserSheetState extends State<_EditUserSheet> {
   }
 }
 
-class _ActionTile extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final String hint;
-  final VoidCallback onTap;
-  const _ActionTile({
-    required this.icon,
-    required this.label,
-    required this.hint,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(14),
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: _surfaceDark,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: _borderSubtle),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 38, height: 38,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                color: _neon.withValues(alpha: 0.16),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Icon(icon, size: 20, color: _neon),
-            ),
-            const SizedBox(height: 12),
-            Text(label,
-                style: _body(
-                    size: 14, weight: FontWeight.w700, spacing: 0.2),
-                maxLines: 1, overflow: TextOverflow.ellipsis),
-            const SizedBox(height: 2),
-            Text(hint,
-                style: _body(size: 11, color: _textSecondary),
-                maxLines: 1, overflow: TextOverflow.ellipsis),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// Sektion-piller til dashboardet: Bøder · Medlemmer · Betaling.
-class _SectionPills extends StatelessWidget {
-  final int active;
-  final int pendingCount;
-  final bool showBetaling;
-  final ValueChanged<int> onChanged;
-  const _SectionPills({
-    required this.active,
-    required this.pendingCount,
-    this.showBetaling = true,
-    required this.onChanged,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final labels = ['Bøder', 'Medlemmer', if (showBetaling) 'Betaling'];
-    return Container(
-      padding: const EdgeInsets.all(4),
-      decoration: BoxDecoration(
-        color: _surfaceDark,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: _borderSubtle),
-      ),
-      child: Row(
-        children: [
-          for (var i = 0; i < labels.length; i++)
-            Expanded(
-              child: GestureDetector(
-                onTap: () => onChanged(i),
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 180),
-                  height: 38,
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    color: active == i ? _neon : Colors.transparent,
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(labels[i],
-                          style: _body(
-                              size: 13,
-                              weight: FontWeight.w700,
-                              color: active == i ? Colors.white : _textSecondary)),
-                      if (i == 0 && pendingCount > 0) ...[
-                        const SizedBox(width: 6),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 6, vertical: 1),
-                          decoration: BoxDecoration(
-                            color: active == 0
-                                ? Colors.white.withValues(alpha: 0.25)
-                                : _gold,
-                            borderRadius: BorderRadius.circular(999),
-                          ),
-                          child: Text('$pendingCount',
-                              style: _body(
-                                  size: 10,
-                                  weight: FontWeight.w800,
-                                  color: active == 0 ? Colors.white : _onGold)),
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-}
-
-class _SectionHeader extends StatelessWidget {
-  final String title;
-  final IconData icon;
-  final String actionLabel;
-  final VoidCallback onAction;
-  const _SectionHeader({
-    required this.title,
-    required this.icon,
-    required this.actionLabel,
-    required this.onAction,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Row(
-      children: [
-        Icon(icon, size: 28, color: theme.colorScheme.primary),
-        const SizedBox(width: 12),
-        Expanded(child: Text(title, style: theme.textTheme.headlineSmall)),
-        FilledButton.icon(
-          onPressed: onAction,
-          icon: const Icon(Icons.add, size: 18),
-          label: Text(actionLabel),
-          style: FilledButton.styleFrom(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Bøde-cards (inline i Dashboard) + GiveFineDialog (Ctrl+K version)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3534,7 +3138,7 @@ class _FineTypeDialogState extends State<_FineTypeDialog> {
 // GiveFineDialog — Ctrl+K lyn-formular (selvloadende)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Map: spiller-id → sæt af fællesskabs-nøgler ('hg:<id>' / 'solo:<group_id>').
+/// Map: spiller-id → sæt af fællesskabs-nøgler (`hg:<id>` / `solo:<group_id>`).
 Future<Map<String, Set<String>>> _loadPlayerCommunities() async {
   final res = await Future.wait([
     supabase.from('group_members').select('user_id, group_id'),

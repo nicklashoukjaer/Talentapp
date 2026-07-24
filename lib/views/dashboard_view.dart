@@ -560,6 +560,8 @@ class DashboardTabState extends State<DashboardTab> {
           const Padding(padding: EdgeInsets.all(16),
               child: Center(child: CircularProgressIndicator()))
         else ...[
+          _HoldGroupsEntryCard(),
+          const SizedBox(height: 16),
           const _GroupsOverviewCard(),
           const SizedBox(height: 16),
           _TeamAssignCard(isAdmin: widget.isFullAdmin),
@@ -573,6 +575,488 @@ class DashboardTabState extends State<DashboardTab> {
           ),
         ],
       ],
+    );
+  }
+}
+
+/// Indgang til Holdgrupper-skærmen (medlems-sektionen).
+class _HoldGroupsEntryCard extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: InkWell(
+        onTap: () => Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => const HoldGroupsScreen())),
+        borderRadius: BorderRadius.circular(16),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Row(children: [
+            Container(
+              width: 40, height: 40,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: _neon.withValues(alpha: 0.14),
+                borderRadius: BorderRadius.circular(11),
+              ),
+              child: const Icon(Icons.layers_outlined, color: _neon, size: 22),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text('Holdgrupper',
+                      style: _body(size: 15, weight: FontWeight.w700)),
+                  const SizedBox(height: 2),
+                  Text('Saml hold der deler bødekasse og bødetyper',
+                      style: _body(size: 12, color: _textSecondary)),
+                ],
+              ),
+            ),
+            const Icon(Icons.chevron_right, color: _textMuted),
+          ]),
+        ),
+      ),
+    );
+  }
+}
+
+/// Holdgrupper — saml hold der deler bødekasse/bødetyper/MobilePay.
+class HoldGroupsScreen extends StatefulWidget {
+  const HoldGroupsScreen({super.key});
+  @override
+  State<HoldGroupsScreen> createState() => _HoldGroupsScreenState();
+}
+
+class _HoldGroupsScreenState extends State<HoldGroupsScreen> {
+  List<Map<String, dynamic>> _holdGroups = const [];
+  List<Map<String, dynamic>> _holds = const [];
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final res = await Future.wait([
+        supabase.from('hold_groups').select('id, navn, mobilepay_box_id').order('created_at'),
+        supabase.from('groups').select('id, navn, farve, hold_group_id').order('sort'),
+      ]);
+      if (!mounted) return;
+      setState(() {
+        _holdGroups = List<Map<String, dynamic>>.from(res[0] as List);
+        _holds = List<Map<String, dynamic>>.from(res[1] as List);
+        _loading = false;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  List<Map<String, dynamic>> _holdsFor(String groupId) =>
+      _holds.where((h) => h['hold_group_id'] == groupId).toList();
+
+  Future<void> _openSheet({Map<String, dynamic>? existing}) async {
+    final changed = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _HoldGroupSheet(existing: existing, allHolds: _holds),
+    );
+    if (changed == true) _load();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final solo = _holds.where((h) => h['hold_group_id'] == null).toList();
+    return Scaffold(
+      appBar: AppBar(title: const Text('HOLDGRUPPER')),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : ListView(
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 32),
+              children: [
+                Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 700),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Text(
+                          'Saml hold der hører sammen. Hold i samme gruppe deler '
+                          'bødekasse og bødetyper, men planlægger stadig kampe og '
+                          'afstemninger hver for sig.',
+                          style: _body(size: 12.5, color: _textSecondary),
+                        ),
+                        const SizedBox(height: 18),
+                        if (_holdGroups.isNotEmpty) ...[
+                          _sectionLabel('Grupper'),
+                          for (final hg in _holdGroups) _groupCard(hg),
+                          const SizedBox(height: 6),
+                        ],
+                        InkWell(
+                          onTap: () => _openSheet(),
+                          borderRadius: BorderRadius.circular(13),
+                          child: Container(
+                            padding: const EdgeInsets.all(13),
+                            decoration: BoxDecoration(
+                              border: Border.all(
+                                  color: _neon.withValues(alpha: 0.5)),
+                              borderRadius: BorderRadius.circular(13),
+                            ),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                const Icon(Icons.add, size: 16, color: _neon),
+                                const SizedBox(width: 8),
+                                Text('Ny gruppe',
+                                    style: _body(
+                                        size: 13.5,
+                                        weight: FontWeight.w700,
+                                        color: _neon)),
+                              ],
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 22),
+                        _sectionLabel('Selvstændige hold'),
+                        if (solo.isEmpty)
+                          Text('Alle hold er i en gruppe.',
+                              style: _body(size: 12.5, color: _textMuted))
+                        else
+                          Container(
+                            decoration: BoxDecoration(
+                              color: _surfaceDark,
+                              borderRadius: BorderRadius.circular(14),
+                              border: Border.all(color: _borderSubtle),
+                            ),
+                            padding: const EdgeInsets.symmetric(horizontal: 14),
+                            child: Column(
+                              children: [
+                                for (var i = 0; i < solo.length; i++)
+                                  Container(
+                                    decoration: BoxDecoration(
+                                      border: Border(
+                                        top: i == 0
+                                            ? BorderSide.none
+                                            : const BorderSide(color: _borderSubtle),
+                                      ),
+                                    ),
+                                    padding: const EdgeInsets.symmetric(vertical: 11),
+                                    child: Row(children: [
+                                      Icon(Icons.layers_outlined,
+                                          size: 16,
+                                          color: _hex(solo[i]['farve'] as String?)),
+                                      const SizedBox(width: 10),
+                                      Expanded(
+                                        child: Text(solo[i]['navn'] as String,
+                                            style: _body(
+                                                size: 14,
+                                                weight: FontWeight.w600)),
+                                      ),
+                                      Text('egen bødekasse',
+                                          style: _body(size: 11, color: _textMuted)),
+                                    ]),
+                                  ),
+                              ],
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+    );
+  }
+
+  static Color _hex(String? h) {
+    if (h == null || h.isEmpty) return _neon;
+    return Color(int.parse(h.replaceFirst('#', ''), radix: 16) | 0xFF000000);
+  }
+
+  Widget _sectionLabel(String s) => Padding(
+        padding: const EdgeInsets.only(bottom: 9),
+        child: Text(s.toUpperCase(),
+            style: _body(
+                size: 11, weight: FontWeight.w700, spacing: 0.6, color: _textMuted)),
+      );
+
+  Widget _groupCard(Map<String, dynamic> hg) {
+    final holds = _holdsFor(hg['id'] as String);
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: _surfaceDark,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: _borderSubtle),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            const Icon(Icons.layers_outlined, size: 18, color: _neon),
+            const SizedBox(width: 9),
+            Expanded(
+              child: Text((hg['navn'] as String).toUpperCase(),
+                  style: _cond(size: 16, weight: FontWeight.w800)),
+            ),
+            GestureDetector(
+              onTap: () => _openSheet(existing: hg),
+              child: Text('Redigér',
+                  style: _body(size: 12, weight: FontWeight.w700, color: _neon)),
+            ),
+          ]),
+          const SizedBox(height: 10),
+          if (holds.isEmpty)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Text('Ingen hold i gruppen endnu',
+                  style: _body(size: 12.5, color: _textMuted)),
+            )
+          else
+            for (final h in holds)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 7),
+                child: Row(children: [
+                  const Icon(Icons.chevron_right, size: 15, color: _textMuted),
+                  const SizedBox(width: 4),
+                  Text(h['navn'] as String,
+                      style: _body(size: 13.5, weight: FontWeight.w600)),
+                ]),
+              ),
+          const SizedBox(height: 3),
+          Container(
+            decoration: const BoxDecoration(
+              border: Border(top: BorderSide(color: _borderSubtle)),
+            ),
+            padding: const EdgeInsets.only(top: 9),
+            child: Row(children: [
+              const Icon(Icons.check, size: 14, color: _success),
+              const SizedBox(width: 6),
+              Text('Deler bødekasse og bødetyper',
+                  style: _body(size: 11.5, color: _textMuted)),
+            ]),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Opret/redigér en holdgruppe — navn + hvilke hold der er med.
+class _HoldGroupSheet extends StatefulWidget {
+  final Map<String, dynamic>? existing;
+  final List<Map<String, dynamic>> allHolds;
+  const _HoldGroupSheet({this.existing, required this.allHolds});
+  @override
+  State<_HoldGroupSheet> createState() => _HoldGroupSheetState();
+}
+
+class _HoldGroupSheetState extends State<_HoldGroupSheet> {
+  late final _navn =
+      TextEditingController(text: widget.existing?['navn'] as String? ?? '');
+  late final Set<String> _selected = widget.existing == null
+      ? <String>{}
+      : widget.allHolds
+          .where((h) => h['hold_group_id'] == widget.existing!['id'])
+          .map((h) => h['id'] as String)
+          .toSet();
+  bool _saving = false;
+
+  @override
+  void dispose() {
+    _navn.dispose();
+    super.dispose();
+  }
+
+  static Color _hex(String? h) {
+    if (h == null || h.isEmpty) return _neon;
+    return Color(int.parse(h.replaceFirst('#', ''), radix: 16) | 0xFF000000);
+  }
+
+  Future<void> _save() async {
+    final navn = _navn.text.trim();
+    if (navn.isEmpty) {
+      _snack(context, 'Giv gruppen et navn', _gold);
+      return;
+    }
+    setState(() => _saving = true);
+    try {
+      String groupId;
+      if (widget.existing == null) {
+        final row = await supabase
+            .from('hold_groups')
+            .insert({'navn': navn}).select('id').single();
+        groupId = row['id'] as String;
+      } else {
+        groupId = widget.existing!['id'] as String;
+        await supabase
+            .from('hold_groups')
+            .update({'navn': navn}).eq('id', groupId);
+      }
+      // Sæt/ryd hold_group_id for de berørte hold.
+      for (final h in widget.allHolds) {
+        final id = h['id'] as String;
+        final shouldBeIn = _selected.contains(id);
+        final currently = h['hold_group_id'];
+        if (shouldBeIn && currently != groupId) {
+          await supabase.from('groups')
+              .update({'hold_group_id': groupId}).eq('id', id);
+        } else if (!shouldBeIn && currently == groupId) {
+          await supabase.from('groups')
+              .update({'hold_group_id': null}).eq('id', id);
+        }
+      }
+      if (!mounted) return;
+      _snack(context, 'Holdgruppe gemt', _success);
+      Navigator.of(context).pop(true);
+    } on PostgrestException catch (e) {
+      if (mounted) _snack(context, e.message, _danger);
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _delete() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Slet holdgruppe?'),
+        content: const Text('Holdene bliver selvstændige igen. Bødetyper og '
+            'MobilePay knyttet til gruppen fjernes.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Annullér')),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(backgroundColor: _danger),
+            child: const Text('Slet'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    try {
+      await supabase
+          .from('hold_groups')
+          .delete()
+          .eq('id', widget.existing!['id']);
+      if (!mounted) return;
+      _snack(context, 'Holdgruppe slettet', _textSecondary);
+      Navigator.of(context).pop(true);
+    } on PostgrestException catch (e) {
+      if (mounted) _snack(context, e.message, _danger);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      child: SafeArea(
+        top: false,
+        child: Container(
+          margin: const EdgeInsets.all(12),
+          padding: const EdgeInsets.all(18),
+          decoration: BoxDecoration(
+            color: _surfaceDark,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: _borderSubtle),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(widget.existing == null ? 'NY HOLDGRUPPE' : 'REDIGÉR HOLDGRUPPE',
+                  style: _cond(size: 20, weight: FontWeight.w800)),
+              const SizedBox(height: 14),
+              TextField(
+                controller: _navn,
+                autofocus: true,
+                textCapitalization: TextCapitalization.words,
+                decoration: const InputDecoration(
+                    labelText: 'Navn', hintText: 'F.eks. "Herrer" eller "Ungdom"'),
+              ),
+              const SizedBox(height: 16),
+              Text('Hvilke hold er med?',
+                  style: _body(size: 13, weight: FontWeight.w600, color: _textSecondary)),
+              const SizedBox(height: 4),
+              Flexible(
+                child: SingleChildScrollView(
+                  child: Column(
+                    children: [
+                      for (final h in widget.allHolds)
+                        Builder(builder: (_) {
+                          final id = h['id'] as String;
+                          final otherGroup = h['hold_group_id'] != null &&
+                              h['hold_group_id'] != widget.existing?['id'];
+                          return CheckboxListTile(
+                            value: _selected.contains(id),
+                            onChanged: (v) => setState(() {
+                              if (v == true) {
+                                _selected.add(id);
+                              } else {
+                                _selected.remove(id);
+                              }
+                            }),
+                            activeColor: _neon,
+                            contentPadding: EdgeInsets.zero,
+                            controlAffinity: ListTileControlAffinity.leading,
+                            secondary: Container(
+                              width: 14, height: 14,
+                              decoration: BoxDecoration(
+                                  color: _hex(h['farve'] as String?),
+                                  shape: BoxShape.circle),
+                            ),
+                            title: Text(h['navn'] as String),
+                            subtitle: otherGroup
+                                ? Text('Flyttes fra en anden gruppe',
+                                    style: _body(size: 11, color: _gold))
+                                : null,
+                          );
+                        }),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Row(children: [
+                if (widget.existing != null)
+                  IconButton(
+                    onPressed: _saving ? null : _delete,
+                    icon: const Icon(Icons.delete_outline, color: _danger),
+                    tooltip: 'Slet gruppe',
+                  ),
+                Expanded(
+                  child: TextButton(
+                    onPressed: _saving ? null : () => Navigator.of(context).pop(),
+                    style: TextButton.styleFrom(foregroundColor: _textSecondary),
+                    child: const Text('Annullér'),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  flex: 2,
+                  child: FilledButton(
+                    onPressed: _saving ? null : _save,
+                    child: _saving
+                        ? const SizedBox(width: 18, height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                        : const Text('Gem'),
+                  ),
+                ),
+              ]),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

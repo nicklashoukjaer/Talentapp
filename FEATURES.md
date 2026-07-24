@@ -112,21 +112,20 @@ genskabes bagefter i Flutter — HTML kopieres ikke 1:1.
 ---
 
 ## Roller & rettigheder (kort)
-Base: **admin / træner / medlem**. Tillæg pr. hold: **kaptajn** og **bøde-admin**.
+Base: **admin / træner / medlem**. Tillæg pr. hold: **kaptajn** (⭐).
+*(Bøde-admin er fjernet — kaptajnen styrer bøderne for sit hold.)*
 
-| | Admin | Træner | Kaptajn | Bøde-admin | Spiller |
-|---|---|---|---|---|---|
-| Opret/redigér/slet begivenhed & afstemning | ✅ | ✅ | ✅ (eget hold) | – | – |
-| Daglig event-styring (fremmøde, påmind, afløser, udeblivelse) | ✅ | ✅ | 🔧 (eget hold) | – | – |
-| Styr bøder | ✅ | 🔧 | – | ✅ (eget hold) | – |
-| Hold/medlemmer/roller/MobilePay | ✅ | delvist 🔧 | – | – | – |
-| Tilmeld/afbud, stem, kommentér | ✅ | ✅ | ✅ | ✅ | ✅ |
+| | Admin | Træner | Kaptajn (egne hold) | Spiller |
+|---|---|---|---|---|
+| Opret/redigér/slet begivenhed & afstemning | ✅ | ✅ | ✅ | – |
+| Daglig event-styring (fremmøde, påmind, afløser, udeblivelse, board) | ✅ | ✅ | ✅ | – |
+| Uddel/godkend/slet bøder | ✅ | ✅ (alle) | ✅ (egne holds spillere) | – |
+| Bødetyper, roller, udnævne kaptajner, opret/slet hold | ✅ | ✅ | – | – |
+| **Slette medlemmer** | ✅ | ❌ | – | – |
+| **MobilePay-opsætning** | ✅ | ❌ | – | – |
+| Tilmeld/afbud, stem, kommentér | ✅ | ✅ | ✅ | ✅ |
 
-**Besluttede rolle-ændringer (skal bygges):**
-- 🔧 **Træner → næsten-admin** (alt undtagen: oprette/slette hold, ændre MobilePay,
-  ændre roller + udnævne kaptajn/bøde-admin).
-- 🔧 **Kaptajn** får daglig event-styring for sit hold.
-- 🔧 **Bøde-admin** kan lave egne bødetyper + satser (se §6).
+Rolle + ansvarlige hold (kaptajn) sættes i **Admin → Hold & spillere → redigér medlem**.
 
 ---
 

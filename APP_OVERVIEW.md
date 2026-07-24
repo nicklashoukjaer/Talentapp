@@ -142,27 +142,25 @@ Bund-navigation (mobil) / sidebar (bred skærm), 4–5 faner afhængigt af rolle
 ## 5. Roller & rettigheder (nuværende)
 
 Base-rolle på profilen: **admin / træner / medlem**. Oven på kan et medlem være
-**kaptajn** og/eller **bøde-admin** pr. hold (flag i `group_members`).
+**kaptajn** pr. hold (flag `is_captain` i `group_members`).
 
-| Område | Admin | Træner | Kaptajn (eget hold) | Bøde-admin (eget hold) | Spiller |
-|---|---|---|---|---|---|
-| Opret begivenhed/afstemning | ✅ | ✅ | ✅ | – | – |
-| Redigér/slet begivenhed | ✅ | ✅ | ✅ | – | – |
-| Slet afstemning | ✅ | ✅ | ✅ | – | – |
-| Sæt fremmøde for andre / påmind | ✅ | ⚠️* | – | – | – |
-| Tilføj afløser, "hvem mødte ikke op?" | ✅ | ✅ | – | – | – |
-| Uddel/godkend/slet bøde | ✅ | – | – | ✅ (eget hold) | – |
-| Opret bødetyper | ✅ | – | – | – | – |
-| Styr hold/medlemmer/roller/MobilePay | ✅ | – | – | – | – |
-| Tilmeld/afbud, stem, kommentér | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Område | Admin | Træner | Kaptajn (egne hold) | Spiller |
+|---|---|---|---|---|
+| Opret/redigér/slet begivenhed & afstemning | ✅ | ✅ | ✅ | – |
+| Daglig event-styring (fremmøde, påmind, afløser, udeblivelse, board) | ✅ | ✅ | ✅ | – |
+| Uddel/godkend/slet bøde | ✅ | ✅ (alle) | ✅ (egne holds spillere) | – |
+| Bødetyper, roller, udnævne kaptajner, opret/slet hold | ✅ | ✅ | – | – |
+| **Slette medlemmer** | ✅ | ❌ | – | – |
+| **MobilePay-opsætning** | ✅ | ❌ | – | – |
+| Tilmeld/afbud, stem, kommentér | ✅ | ✅ | ✅ | ✅ |
 
-\* Håndhæves via Postgres Row-Level Security. **Bemærk:** et par staff-knapper
-er i dag kun tilladt for `admin` i databasen (fremmøde-for-andre, påmind), selvom
-de vises for trænere → planlagt rettet så træner bliver næsten-admin.
+Alt håndhæves via Postgres Row-Level Security (helpers: `is_admin`, `is_staff`,
+`is_captain`, `can_manage_event`/`can_manage_training`, `can_admin_fine`).
+Træner = admin undtagen slette-medlem + MobilePay. Kaptajn = fuld styring for
+egne hold (begivenheder, afstemninger, bøder). **Bøde-admin er fjernet.**
 
-**Besluttede ændringer (ikke bygget endnu):** træner → næsten-admin; kaptajn får
-daglig event-styring for sit hold; bøde-admin kan lave egne bødetyper+satser;
-redigering af afstemninger; gæster forbliver uden for bøder/udeblivelse.
+**Besluttet, ikke bygget endnu:** redigering af afstemninger; afstemnings-typer
+(dato/tekst); holdgrupper (hold der deler bødekasse/bødetyper); bødetyper pr. holdgruppe.
 
 ---
 

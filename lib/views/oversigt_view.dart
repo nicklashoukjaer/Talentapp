@@ -45,8 +45,8 @@ class _OversigtTabState extends State<OversigtTab> {
   List<_FeedItem> _items = const [];
   bool _loading = true;
   String? _error;
-  int _activeView = 0;       // 0 = AKTIVITETER, 1 = AFSTEMNINGER
-  int _activitySubview = 0;  // 0 = TRÆNINGER, 1 = KAMPE
+  final int _activeView = 0; // 0 = AKTIVITETER, 1 = AFSTEMNINGER
+  int _activitySubview = 0;  // 0 = Alle, 1 = Træninger, 2 = Kampe
   bool _showHistory = false; // når true: arkiverede begivenheder (>24t efter start)
   bool _historyLoaded = false; // lazy: historik (90 dage) hentes først ved behov
   List<Map<String, dynamic>> _groups = const []; // grupper brugeren er på
@@ -529,6 +529,27 @@ class _OversigtTabState extends State<OversigtTab> {
     }
   }
 
+  /// Rund filter-chip (Alle / Træninger / Kampe) — accent-fyldt når aktiv.
+  Widget _feedFilterChip(String label, int value) {
+    final active = _activitySubview == value;
+    return GestureDetector(
+      onTap: () => setState(() => _activitySubview = value),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+        decoration: BoxDecoration(
+          color: active ? _neon : Colors.transparent,
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: active ? _neon : _borderSubtle),
+        ),
+        child: Text(label,
+            style: _body(
+                size: 12.5,
+                weight: FontWeight.w700,
+                color: active ? Colors.white : _textSecondary)),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -586,8 +607,11 @@ class _OversigtTabState extends State<OversigtTab> {
     final showingTrainings = _activeView == 0;
     final List<_FeedItem> visible;
     if (showingTrainings) {
-      visible = (_activitySubview == 0 ? trainingItems : kampItems)
-          .cast<_FeedItem>();
+      visible = switch (_activitySubview) {
+        1 => trainingItems.cast<_FeedItem>(),
+        2 => kampItems.cast<_FeedItem>(),
+        _ => source.cast<_FeedItem>(), // 0 = Alle
+      };
     } else {
       visible = polls.cast<_FeedItem>();
     }
@@ -655,61 +679,40 @@ class _OversigtTabState extends State<OversigtTab> {
                         onChanged: (id) => setState(() => _switcherGroupId = id),
                       ),
                     ),
-                  // Kommende / Historik — pille-toggle (kun på AKTIVITETER)
+                  // Kommende / Historik + antal begivenheder (matcher prototypen)
                   if (showingTrainings)
                     Padding(
                       padding: const EdgeInsets.only(bottom: 14),
-                      child: _KommendeHistorikToggle(
-                        showHistory: _showHistory,
-                        onChanged: (show) {
-                          setState(() => _showHistory = show);
-                          if (show && !_historyLoaded) {
-                            _historyLoaded = true;
-                            reload(includeHistory: true);
-                          }
-                        },
-                      ),
+                      child: Row(children: [
+                        Expanded(
+                          child: _KommendeHistorikToggle(
+                            showHistory: _showHistory,
+                            onChanged: (show) {
+                              setState(() => _showHistory = show);
+                              if (show && !_historyLoaded) {
+                                _historyLoaded = true;
+                                reload(includeHistory: true);
+                              }
+                            },
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Text('${source.length} begivenheder',
+                            style: _body(size: 12.5, color: _textMuted)),
+                      ]),
                     ),
-                  // (Aktiviteter/Afstemninger-segmentet fjernet — afstemninger
-                  //  har sin egen fane. Oversigt viser kun aktiviteter.)
-                  // Sub-tabs [TRÆNINGER] / [KAMPE] — kun på AKTIVITETER
-                  if (showingTrainings)
+                  // Filter-chips Alle / Træninger / Kampe — som prototypen
+                  // (kun på kommende aktiviteter; historik viser sæson-overblik)
+                  if (showingTrainings && !_showHistory)
                     Padding(
                       padding: const EdgeInsets.only(bottom: 20),
-                      child: SegmentedButton<int>(
-                        style: SegmentedButton.styleFrom(
-                          backgroundColor: _bgBlack,
-                          selectedBackgroundColor: _neon.withValues(alpha: 0.15),
-                          selectedForegroundColor: _neon,
-                          foregroundColor: _textMuted,
-                          side: const BorderSide(color: _borderSubtle),
-                          textStyle: const TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w700,
-                              letterSpacing: 1.2),
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 14, vertical: 8),
-                        ),
-                        segments: [
-                          ButtonSegment(
-                            value: 0,
-                            icon: const Icon(Icons.fitness_center, size: 14),
-                            label: Text('TRÆNINGER · ${trainingItems.length}',
-                                maxLines: 1, softWrap: false,
-                                overflow: TextOverflow.ellipsis),
-                          ),
-                          ButtonSegment(
-                            value: 1,
-                            icon: const Icon(Icons.sports_tennis, size: 14),
-                            label: Text('KAMPE · ${kampItems.length}',
-                                maxLines: 1, softWrap: false,
-                                overflow: TextOverflow.ellipsis),
-                          ),
-                        ],
-                        selected: {_activitySubview},
-                        onSelectionChanged: (s) =>
-                            setState(() => _activitySubview = s.first),
-                      ),
+                      child: Row(children: [
+                        _feedFilterChip('Alle', 0),
+                        const SizedBox(width: 8),
+                        _feedFilterChip('Træninger', 1),
+                        const SizedBox(width: 8),
+                        _feedFilterChip('Kampe', 2),
+                      ]),
                     )
                   else
                     const SizedBox(height: 12),
@@ -728,9 +731,11 @@ class _OversigtTabState extends State<OversigtTab> {
                               showingTrainings
                                   ? (_showHistory
                                       ? 'Ingen arkiverede begivenheder'
-                                      : (_activitySubview == 0
-                                          ? 'Ingen kommende træninger'
-                                          : 'Ingen kommende kampe'))
+                                      : switch (_activitySubview) {
+                                          1 => 'Ingen kommende træninger',
+                                          2 => 'Ingen kommende kampe',
+                                          _ => 'Ingen kommende begivenheder',
+                                        })
                                   : 'Ingen aktive afstemninger',
                               style: theme.textTheme.titleMedium),
                           const SizedBox(height: 4),

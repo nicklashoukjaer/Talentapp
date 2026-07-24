@@ -567,6 +567,7 @@ class DashboardTabState extends State<DashboardTab> {
           _MemberRolesCard(
             profiles: _profiles,
             currentUserId: currentUserId ?? '',
+            isAdmin: widget.isFullAdmin,
             onChangeRole: _changeRole,
             onReload: reloadFines,
           ),
@@ -1727,11 +1728,13 @@ class _NoShowFineCardState extends State<_NoShowFineCard> {
 class _MemberRolesCard extends StatefulWidget {
   final List<Map<String, dynamic>> profiles;
   final String currentUserId;
+  final bool isAdmin; // kun admin må tildele/ændre admin-rollen
   final Future<void> Function(String userId, String newRole) onChangeRole;
   final Future<void> Function() onReload;
   const _MemberRolesCard({
     required this.profiles,
     required this.currentUserId,
+    required this.isAdmin,
     required this.onChangeRole,
     required this.onReload,
   });
@@ -1748,6 +1751,7 @@ class _MemberRolesCardState extends State<_MemberRolesCard> {
       builder: (_) => _EditUserSheet(
         profile: p,
         isMe: p['id'] == widget.currentUserId,
+        canSetAdmin: widget.isAdmin,
         onChangeRole: widget.onChangeRole,
       ),
     );
@@ -1912,10 +1916,12 @@ class _MemberRolesCardState extends State<_MemberRolesCard> {
 class _EditUserSheet extends StatefulWidget {
   final Map<String, dynamic> profile;
   final bool isMe;
+  final bool canSetAdmin; // kun admin må vælge/ændre admin-rollen
   final Future<void> Function(String userId, String newRole) onChangeRole;
   const _EditUserSheet({
     required this.profile,
     required this.isMe,
+    required this.canSetAdmin,
     required this.onChangeRole,
   });
   @override
@@ -2078,19 +2084,41 @@ class _EditUserSheetState extends State<_EditUserSheet> {
                             size: 12, weight: FontWeight.w700, color: _textSecondary,
                             spacing: 1)),
                     const SizedBox(height: 8),
-                    Container(
-                      padding: const EdgeInsets.all(4),
-                      decoration: BoxDecoration(
-                        color: _bgBlack,
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: _borderSubtle),
+                    if (!widget.canSetAdmin &&
+                        (widget.profile['rolle'] == 'admin'))
+                      // Ikke-admin må ikke ændre en admins rolle.
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: _surfaceElevated,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: _borderSubtle),
+                        ),
+                        child: Row(children: [
+                          const Icon(Icons.shield_outlined,
+                              size: 16, color: _textMuted),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text('Admin — kun en anden admin kan ændre '
+                                'denne rolle.',
+                                style: _body(size: 12, color: _textSecondary)),
+                          ),
+                        ]),
+                      )
+                    else
+                      Container(
+                        padding: const EdgeInsets.all(4),
+                        decoration: BoxDecoration(
+                          color: _bgBlack,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: _borderSubtle),
+                        ),
+                        child: Row(children: [
+                          _roleChip('Spiller', 'medlem'),
+                          _roleChip('Træner', 'træner'),
+                          if (widget.canSetAdmin) _roleChip('Admin', 'admin'),
+                        ]),
                       ),
-                      child: Row(children: [
-                        _roleChip('Spiller', 'medlem'),
-                        _roleChip('Træner', 'træner'),
-                        _roleChip('Admin', 'admin'),
-                      ]),
-                    ),
                     if (widget.isMe) ...[
                       const SizedBox(height: 6),
                       Text('Du kan ikke ændre din egen rolle',

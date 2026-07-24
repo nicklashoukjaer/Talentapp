@@ -11,7 +11,6 @@ class DashboardTab extends StatefulWidget {
 
 class DashboardTabState extends State<DashboardTab> {
   // Bøde-data
-  List<Map<String, dynamic>> _profiles = const [];
   List<Map<String, dynamic>> _fineTypes = const [];
   List<Map<String, dynamic>> _pendingFines = const [];
   bool _loadingFines = true;
@@ -34,7 +33,6 @@ class DashboardTabState extends State<DashboardTab> {
     setState(() { _loadingFines = true; _finesError = null; });
     try {
       final results = await Future.wait([
-        supabase.from('profiles').select('id, navn, rolle, email').order('navn'),
         supabase.from('fine_types').select('id, titel, belob_oere, aktiv, hold_group_id, group_id').order('titel'),
         // VIGTIGT: profiles har 3 FK'er fra fines (user_id, given_by, approved_by)
         // — disambigueres med fines_user_id_fkey
@@ -46,9 +44,8 @@ class DashboardTabState extends State<DashboardTab> {
       ]);
 
       setState(() {
-        _profiles     = List<Map<String, dynamic>>.from(results[0] as List);
-        _fineTypes    = List<Map<String, dynamic>>.from(results[1] as List);
-        _pendingFines = List<Map<String, dynamic>>.from(results[2] as List);
+        _fineTypes    = List<Map<String, dynamic>>.from(results[0] as List);
+        _pendingFines = List<Map<String, dynamic>>.from(results[1] as List);
         _loadingFines = false;
       });
     } catch (e) {
@@ -288,53 +285,34 @@ class DashboardTabState extends State<DashboardTab> {
   }
 
   Widget _buildFineSection() {
-    final theme = Theme.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            Icon(Icons.gavel, size: 28, color: theme.colorScheme.primary),
-            const SizedBox(width: 12),
-            Expanded(child: Text('Bøde-administration',
-                style: theme.textTheme.headlineSmall)),
-            IconButton(
-              onPressed: reloadFines,
-              icon: const Icon(Icons.refresh),
-              tooltip: 'Opdater',
-            ),
-          ],
-        ),
-        const SizedBox(height: 12),
         if (_loadingFines)
-          const Padding(padding: EdgeInsets.all(16),
+          const Padding(padding: EdgeInsets.all(40),
               child: Center(child: CircularProgressIndicator()))
         else if (_finesError != null)
           Text(_finesError!, style: const TextStyle(color: Colors.red))
         else ...[
-          _GiveFineCard(
-            profiles:  _profiles,
-            fineTypes: _fineTypes.where((t) => t['aktiv'] == true).toList(),
-            onIssued:  reloadFines,
-          ),
-          const SizedBox(height: 16),
+          // Godkend-flow (matcher prototypen: afventende betalinger + forslag)
           _PendingFinesCard(
             fines: _pendingFines,
             onApprove: _approvePayment,
             onDelete: _deleteFine,
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 14),
           _PendingSuggestionsCard(
             suggestions: _fineTypes.where((t) => t['aktiv'] == false).toList(),
             onApprove:   _approveSuggestion,
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 14),
+          // Bødetyper pr. fællesskab
           _CreateFineTypeCard(
             existingTypes: _fineTypes.where((t) => t['aktiv'] == true).toList(),
             onCreated:     reloadFines,
           ),
           if (widget.isFullAdmin) ...[
-            const SizedBox(height: 16),
+            const SizedBox(height: 14),
             _NoShowFineCard(
               fineTypes: _fineTypes.where((t) => t['aktiv'] == true).toList(),
             ),
@@ -2278,213 +2256,6 @@ class _NoShowFineCardState extends State<_NoShowFineCard> {
 // ─────────────────────────────────────────────────────────────────────────────
 // Bøde-cards (inline i Dashboard) + GiveFineDialog (Ctrl+K version)
 // ─────────────────────────────────────────────────────────────────────────────
-
-class _GiveFineCard extends StatefulWidget {
-  final List<Map<String, dynamic>> profiles;
-  final List<Map<String, dynamic>> fineTypes;
-  final VoidCallback onIssued;
-  const _GiveFineCard({
-    required this.profiles,
-    required this.fineTypes,
-    required this.onIssued,
-  });
-  @override
-  State<_GiveFineCard> createState() => _GiveFineCardState();
-}
-
-class _GiveFineCardState extends State<_GiveFineCard> {
-  String? _userId;
-  String? _typeId;
-  final _begrundelse = TextEditingController();
-  final _spillerCtrl = TextEditingController();
-  final _typeCtrl = TextEditingController();
-  bool _saving = false;
-  Map<String, Set<String>> _communities = {};
-
-  @override
-  void initState() {
-    super.initState();
-    _loadPlayerCommunities().then((c) {
-      if (mounted) setState(() => _communities = c);
-    });
-  }
-
-  List<Map<String, dynamic>> get _typesForSelected => _userId == null
-      ? widget.fineTypes
-          .where((t) => t['hold_group_id'] == null && t['group_id'] == null)
-          .toList()
-      : _typesForCommunities(widget.fineTypes, _communities[_userId] ?? const {});
-
-  @override
-  void dispose() {
-    _begrundelse.dispose();
-    _spillerCtrl.dispose();
-    _typeCtrl.dispose();
-    super.dispose();
-  }
-
-  Future<void> _submit() async {
-    if (_userId == null || _typeId == null) {
-      _snack(context, 'Vælg både spiller og bødetype', Colors.orange);
-      return;
-    }
-    setState(() => _saving = true);
-    try {
-      // titel og belob_oere udelades bevidst — snapshot_fine-trigger fylder dem
-      await supabase.from('fines').insert({
-        'user_id':      _userId,
-        'given_by':     supabase.auth.currentUser!.id,
-        'fine_type_id': _typeId,
-        'begrundelse':  _begrundelse.text.trim().isEmpty
-                          ? null : _begrundelse.text.trim(),
-      });
-      if (!mounted) return;
-      _snack(context, 'Bøde uddelt', Colors.green);
-      setState(() {
-        _userId = null;
-        _typeId = null;
-        _begrundelse.clear();
-        _spillerCtrl.clear();
-        _typeCtrl.clear();
-      });
-      widget.onIssued();
-    } on PostgrestException catch (e) {
-      if (mounted) _snack(context, e.message, Colors.red);
-    } finally {
-      if (mounted) setState(() => _saving = false);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    int? selectedAmount;
-    for (final t in widget.fineTypes) {
-      if (t['id'] == _typeId) {
-        selectedAmount = (t['belob_oere'] as num).toInt();
-        break;
-      }
-    }
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(Icons.add_circle_outline, color: theme.colorScheme.primary),
-                const SizedBox(width: 8),
-                Text('Uddel bøde', style: theme.textTheme.titleMedium),
-              ],
-            ),
-            const SizedBox(height: 12),
-            DropdownMenu<String>(
-              controller: _spillerCtrl,
-              initialSelection: _userId,
-              expandedInsets: EdgeInsets.zero,
-              enableFilter: true,
-              requestFocusOnTap: true,
-              menuHeight: 320,
-              label: const Text('Spiller'),
-              leadingIcon: const Icon(Icons.person_outline),
-              hintText: 'Vælg spiller',
-              dropdownMenuEntries: [
-                for (final p in widget.profiles)
-                  DropdownMenuEntry<String>(
-                    value: p['id'] as String,
-                    label: p['navn'] as String,
-                  ),
-              ],
-              onSelected: (v) => setState(() {
-                _userId = v;
-                if (!_typesForSelected.any((t) => t['id'] == _typeId)) {
-                  _typeId = null;
-                  _typeCtrl.clear();
-                }
-              }),
-            ),
-            const SizedBox(height: 12),
-            DropdownMenu<String>(
-              key: ValueKey('type_$_userId'),
-              controller: _typeCtrl,
-              initialSelection: _typeId,
-              expandedInsets: EdgeInsets.zero,
-              enableFilter: true,
-              requestFocusOnTap: true,
-              menuHeight: 320,
-              label: const Text('Bødetype'),
-              leadingIcon: const Icon(Icons.gavel),
-              hintText: 'Vælg bødetype',
-              dropdownMenuEntries: [
-                for (final t in _typesForSelected)
-                  DropdownMenuEntry<String>(
-                    value: t['id'] as String,
-                    label: '${t['titel']} · ${_fmtKr((t['belob_oere'] as num).toInt())}',
-                  ),
-              ],
-              onSelected: (v) => setState(() => _typeId = v),
-            ),
-            if (selectedAmount != null) ...[
-              const SizedBox(height: 12),
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                decoration: BoxDecoration(
-                  color: _neon.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: _neon.withValues(alpha: 0.4)),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(Icons.payments_outlined, color: _neon, size: 20),
-                    const SizedBox(width: 10),
-                    Text('Beløb der uddeles', style: theme.textTheme.bodyMedium),
-                    const Spacer(),
-                    Text(_fmtKr(selectedAmount),
-                        style: theme.textTheme.titleLarge
-                            ?.copyWith(color: _neon, fontWeight: FontWeight.w800)),
-                  ],
-                ),
-              ),
-            ],
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _begrundelse,
-                    decoration: const InputDecoration(
-                      labelText: 'Begrundelse (valgfri)',
-                      prefixIcon: Icon(Icons.notes_outlined),
-                    ),
-                    onSubmitted: (_) => _submit(),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                FilledButton.icon(
-                  onPressed: _saving ? null : _submit,
-                  icon: _saving
-                      ? const SizedBox(width: 16, height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                      : const Icon(Icons.check),
-                  label: const Text('Udfør'),
-                ),
-              ],
-            ),
-            if (widget.fineTypes.isEmpty) ...[
-              const SizedBox(height: 8),
-              Text('Opret en bødetype først (nederst)',
-                  style: theme.textTheme.bodySmall?.copyWith(
-                      color: Colors.orange.shade800,
-                      fontStyle: FontStyle.italic)),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-}
 
 class _PendingFinesCard extends StatelessWidget {
   final List<Map<String, dynamic>> fines;

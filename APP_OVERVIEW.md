@@ -159,8 +159,10 @@ Alt håndhæves via Postgres Row-Level Security (helpers: `is_admin`, `is_staff`
 Træner = admin undtagen slette-medlem + MobilePay. Kaptajn = fuld styring for
 egne hold (begivenheder, afstemninger, bøder). **Bøde-admin er fjernet.**
 
-**Besluttet, ikke bygget endnu:** redigering af afstemninger; afstemnings-typer
-(dato/tekst); holdgrupper (hold der deler bødekasse/bødetyper); bødetyper pr. holdgruppe.
+**Holdgrupper:** hold kan samles i en holdgruppe (`hold_groups` + `groups.hold_group_id`);
+et holds *fællesskab* = dets holdgruppe (ellers holdet selv). Bødetyper
+(`fine_types.hold_group_id`/`group_id`), MobilePay (`hold_groups.mobilepay_box_id`)
+og bødekassen slår op pr. fællesskab. Aktiviteter/afstemninger er stadig pr. hold.
 
 ---
 

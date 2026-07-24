@@ -62,7 +62,8 @@ genskabes bagefter i Flutter — HTML kopieres ikke 1:1.
 - ✅ Stem (multi-valg af datoer) + resultat-barer
 - ✅ **Favorit-par pr. dato** (synergi-overblik: gensidige vs. én-vejs makkere)
 - ✅ Slet afstemning
-- 🔧 **Redigér afstemning** ⭐ *(findes ikke i dag — skal designes + bygges)*
+- ✅ **Redigér afstemning** (titel, beskrivelse, stemmefrist, hold)
+- ✅ **Type Dato eller Tekst** (svarmuligheder med %) + "tillad flere svar" (enkelt/fler-valg)
 
 ## 6. Bødekasse & bøder
 - ✅ **Podium** (top 3) + rangliste (highscore)
@@ -75,8 +76,9 @@ genskabes bagefter i Flutter — HTML kopieres ikke 1:1.
 - ✅ **MobilePay pr. hold** (egen boks) + fælles fallback
 - ✅ Bødetyper (opret/ret/slet — admin) + **medlem kan foreslå** ny type
 - ✅ **Udeblivelses-bøde:** vælg bødetype + auto-opkrævning ved sent afbud
-- 🔧 **Bødetyper pr. hold** ⭐ *(hvert hold-fællesskab sit eget bødekatalog + satser)*
-- 🔧 **"Hold under hold"-relation** ⭐ *(fx Talentløse 1+2 deler katalog; Damer alene)*
+- ✅ **Holdgrupper:** saml hold der deler bødekasse/bødetyper/MobilePay (admin-skærm)
+- ✅ **Bødetyper pr. fællesskab** (holdgruppe / selvstændigt hold / fælles)
+- ✅ **MobilePay pr. fællesskab** + **bødekasse deles pr. holdgruppe**
 
 ## 7. Min profil
 - ✅ Profil-kort (avatar, navn, e-mail, rolle-badge)
@@ -129,9 +131,7 @@ Rolle + ansvarlige hold (kaptajn) sættes i **Admin → Hold & spillere → redi
 
 ---
 
-## Hvad der primært skal DESIGNES (nyt UI)
-Alt andet i "skal bygges" genbruger eksisterende komponenter. Kun disse har et
-nyt UI-element:
-1. ⭐ **Redigér afstemning** — visning til at rette en eksisterende afstemning.
-2. ⭐ **Bødetyper pr. hold** — hvor bøde-admin styrer sit holds bødekatalog.
-3. ⭐ **"Hold under hold"** — hvor man vælger at et hold hører under et andet.
+## Status
+Alle besluttede funktioner er nu bygget og i produktion (rolle-omlægning,
+afstemnings-typer + redigering, holdgrupper med bødetyper/MobilePay/bødekasse
+pr. fællesskab). Nye ønsker aftales løbende.

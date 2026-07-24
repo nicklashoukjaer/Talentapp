@@ -99,7 +99,7 @@ class DashboardTabState extends State<DashboardTab> {
     try {
       final results = await Future.wait([
         supabase.from('profiles').select('id, navn, rolle, email').order('navn'),
-        supabase.from('fine_types').select('id, titel, belob_oere, aktiv').order('titel'),
+        supabase.from('fine_types').select('id, titel, belob_oere, aktiv, hold_group_id, group_id').order('titel'),
         // VIGTIGT: profiles har 3 FK'er fra fines (user_id, given_by, approved_by)
         // — disambigueres med fines_user_id_fkey
         supabase.from('fines')
@@ -2860,6 +2860,21 @@ class _GiveFineCardState extends State<_GiveFineCard> {
   final _spillerCtrl = TextEditingController();
   final _typeCtrl = TextEditingController();
   bool _saving = false;
+  Map<String, Set<String>> _communities = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPlayerCommunities().then((c) {
+      if (mounted) setState(() => _communities = c);
+    });
+  }
+
+  List<Map<String, dynamic>> get _typesForSelected => _userId == null
+      ? widget.fineTypes
+          .where((t) => t['hold_group_id'] == null && t['group_id'] == null)
+          .toList()
+      : _typesForCommunities(widget.fineTypes, _communities[_userId] ?? const {});
 
   @override
   void dispose() {
@@ -2942,10 +2957,17 @@ class _GiveFineCardState extends State<_GiveFineCard> {
                     label: p['navn'] as String,
                   ),
               ],
-              onSelected: (v) => setState(() => _userId = v),
+              onSelected: (v) => setState(() {
+                _userId = v;
+                if (!_typesForSelected.any((t) => t['id'] == _typeId)) {
+                  _typeId = null;
+                  _typeCtrl.clear();
+                }
+              }),
             ),
             const SizedBox(height: 12),
             DropdownMenu<String>(
+              key: ValueKey('type_$_userId'),
               controller: _typeCtrl,
               initialSelection: _typeId,
               expandedInsets: EdgeInsets.zero,
@@ -2956,7 +2978,7 @@ class _GiveFineCardState extends State<_GiveFineCard> {
               leadingIcon: const Icon(Icons.gavel),
               hintText: 'Vælg bødetype',
               dropdownMenuEntries: [
-                for (final t in widget.fineTypes)
+                for (final t in _typesForSelected)
                   DropdownMenuEntry<String>(
                     value: t['id'] as String,
                     label: '${t['titel']} · ${_fmtKr((t['belob_oere'] as num).toInt())}',
@@ -3139,6 +3161,51 @@ class _CreateFineTypeCard extends StatefulWidget {
 
 class _CreateFineTypeCardState extends State<_CreateFineTypeCard> {
   String? _busyId; // id på den type der lige nu slettes (spinner)
+  List<Map<String, dynamic>> _holdGroups = const [];
+  List<Map<String, dynamic>> _soloHolds = const [];
+  String _scope = 'club'; // 'club' | 'hg:<id>' | 'solo:<id>'
+
+  @override
+  void initState() {
+    super.initState();
+    _loadScopes();
+  }
+
+  Future<void> _loadScopes() async {
+    try {
+      final res = await Future.wait([
+        supabase.from('hold_groups').select('id, navn').order('created_at'),
+        supabase.from('groups').select('id, navn, hold_group_id').order('sort'),
+      ]);
+      if (!mounted) return;
+      setState(() {
+        _holdGroups = List<Map<String, dynamic>>.from(res[0] as List);
+        _soloHolds = List<Map<String, dynamic>>.from(res[1] as List)
+            .where((h) => h['hold_group_id'] == null)
+            .toList();
+      });
+    } catch (_) {}
+  }
+
+  bool _matchesScope(Map<String, dynamic> t) {
+    if (_scope == 'club') {
+      return t['hold_group_id'] == null && t['group_id'] == null;
+    }
+    if (_scope.startsWith('hg:')) {
+      return t['hold_group_id'] == _scope.substring(3);
+    }
+    return t['group_id'] == _scope.substring(5);
+  }
+
+  Map<String, dynamic> _scopeOwner() {
+    if (_scope.startsWith('hg:')) {
+      return {'hold_group_id': _scope.substring(3), 'group_id': null};
+    }
+    if (_scope.startsWith('solo:')) {
+      return {'hold_group_id': null, 'group_id': _scope.substring(5)};
+    }
+    return {'hold_group_id': null, 'group_id': null};
+  }
 
   /// Opret eller redigér via dialog.
   Future<void> _openEditor({Map<String, dynamic>? existing}) async {
@@ -3152,6 +3219,7 @@ class _CreateFineTypeCardState extends State<_CreateFineTypeCard> {
         await supabase.from('fine_types').insert({
           'titel':      result.titel,
           'belob_oere': result.kr * 100,
+          ..._scopeOwner(),
         });
         if (mounted) _snack(context, 'Bødetype "${result.titel}" oprettet', _success);
       } else {
@@ -3209,7 +3277,7 @@ class _CreateFineTypeCardState extends State<_CreateFineTypeCard> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final types = widget.existingTypes;
+    final types = widget.existingTypes.where(_matchesScope).toList();
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -3225,6 +3293,25 @@ class _CreateFineTypeCardState extends State<_CreateFineTypeCard> {
                 Text('${types.length} ${types.length == 1 ? "type" : "typer"}',
                     style: _body(size: 12, color: _textSecondary)),
               ],
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<String>(
+              value: _scope,
+              isExpanded: true,
+              decoration: const InputDecoration(
+                labelText: 'Gælder for',
+                prefixIcon: Icon(Icons.layers_outlined),
+              ),
+              items: [
+                const DropdownMenuItem(value: 'club', child: Text('Fælles – alle hold')),
+                for (final g in _holdGroups)
+                  DropdownMenuItem(value: 'hg:${g['id']}', child: Text(g['navn'] as String)),
+                for (final h in _soloHolds)
+                  DropdownMenuItem(
+                      value: 'solo:${h['id']}',
+                      child: Text('${h['navn']} · selvstændigt')),
+              ],
+              onChanged: (v) => setState(() => _scope = v ?? 'club'),
             ),
             const SizedBox(height: 12),
             if (types.isEmpty)
@@ -3422,6 +3509,38 @@ class _FineTypeDialogState extends State<_FineTypeDialog> {
 // GiveFineDialog — Ctrl+K lyn-formular (selvloadende)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Map: spiller-id → sæt af fællesskabs-nøgler ('hg:<id>' / 'solo:<group_id>').
+Future<Map<String, Set<String>>> _loadPlayerCommunities() async {
+  final res = await Future.wait([
+    supabase.from('group_members').select('user_id, group_id'),
+    supabase.from('groups').select('id, hold_group_id'),
+  ]);
+  final holdGroupOf = {
+    for (final g in List<Map<String, dynamic>>.from(res[1] as List))
+      g['id'] as String: g['hold_group_id'] as String?
+  };
+  final map = <String, Set<String>>{};
+  for (final r in List<Map<String, dynamic>>.from(res[0] as List)) {
+    final uid = r['user_id'] as String;
+    final gid = r['group_id'] as String;
+    final hg = holdGroupOf[gid];
+    (map[uid] ??= {}).add(hg != null ? 'hg:$hg' : 'solo:$gid');
+  }
+  return map;
+}
+
+/// Bødetyper der gælder en spiller: fælles (begge null) + spillerens fællesskaber.
+List<Map<String, dynamic>> _typesForCommunities(
+    List<Map<String, dynamic>> types, Set<String> comms) {
+  return types.where((t) {
+    final hg = t['hold_group_id'] as String?;
+    final gid = t['group_id'] as String?;
+    if (hg == null && gid == null) return true;
+    if (hg != null) return comms.contains('hg:$hg');
+    return comms.contains('solo:$gid');
+  }).toList();
+}
+
 class GiveFineDialog extends StatefulWidget {
   // Fuld admin ser alle spillere; en bøde-admin ser kun sit/sine holds spillere.
   final bool isFullAdmin;
@@ -3433,12 +3552,19 @@ class GiveFineDialog extends StatefulWidget {
 class _GiveFineDialogState extends State<GiveFineDialog> {
   List<Map<String, dynamic>> _profiles = const [];
   List<Map<String, dynamic>> _fineTypes = const [];
+  Map<String, Set<String>> _communities = {};
   String? _userId;
   String? _typeId;
   final _begrundelse = TextEditingController();
   bool _loading = true;
   bool _saving = false;
   String? _error;
+
+  /// Bødetyper der gælder den valgte spiller (fælles + spillerens fællesskaber).
+  List<Map<String, dynamic>> get _typesForSelected => _userId == null
+      ? _fineTypes.where((t) =>
+          t['hold_group_id'] == null && t['group_id'] == null).toList()
+      : _typesForCommunities(_fineTypes, _communities[_userId] ?? const {});
 
   @override
   void initState() {
@@ -3457,10 +3583,11 @@ class _GiveFineDialogState extends State<GiveFineDialog> {
       final results = await Future.wait([
         supabase.from('profiles').select('id, navn').order('navn'),
         supabase.from('fine_types')
-            .select('id, titel, belob_oere')
+            .select('id, titel, belob_oere, hold_group_id, group_id')
             .eq('aktiv', true)
             .order('titel'),
       ]);
+      _communities = await _loadPlayerCommunities();
       var profiles = List<Map<String, dynamic>>.from(results[0] as List);
 
       // Kaptajn (ikke staff): begræns til spillere på de hold hvor brugeren
@@ -3562,7 +3689,14 @@ class _GiveFineDialogState extends State<GiveFineDialog> {
                                 child: Text(p['navn'] as String,
                                     overflow: TextOverflow.ellipsis),
                               )).toList(),
-                          onChanged: (v) => setState(() => _userId = v),
+                          onChanged: (v) => setState(() {
+                            _userId = v;
+                            // Nulstil valgt type hvis den ikke gælder spilleren.
+                            if (!_typesForSelected
+                                .any((t) => t['id'] == _typeId)) {
+                              _typeId = null;
+                            }
+                          }),
                         ),
                         const SizedBox(height: 12),
                         DropdownButtonFormField<String>(
@@ -3572,7 +3706,7 @@ class _GiveFineDialogState extends State<GiveFineDialog> {
                             labelText: 'Bødetype',
                             prefixIcon: Icon(Icons.gavel),
                           ),
-                          items: _fineTypes.map((t) => DropdownMenuItem<String>(
+                          items: _typesForSelected.map((t) => DropdownMenuItem<String>(
                                 value: t['id'] as String,
                                 child: Text(
                                   '${t['titel']} (${_fmtKr((t['belob_oere'] as num).toInt())})',

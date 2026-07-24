@@ -341,9 +341,13 @@ class PollDetailScreen extends StatefulWidget {
 class _PollDetailScreenState extends State<PollDetailScreen> {
   List<Map<String, dynamic>> _options = const [];
   Map<String, bool> _myVotes = {};
-  Map<String, int> _yesCounts = {}; // option_id → antal "kan" (svar=true)
+  Map<String, int> _yesCounts = {}; // option_id → antal "kan"/"valgt" (svar=true)
+  int _totalVoters = 0;
   bool _loading = true;
   String? _error;
+
+  bool get _isText => widget.poll['type'] == 'tekst';
+  bool get _allowMultiple => widget.poll['allow_multiple'] != false;
 
   bool get _lukket =>
       widget.poll['lukket_at'] != null &&
@@ -378,18 +382,23 @@ class _PollDetailScreenState extends State<PollDetailScreen> {
 
       final votes = <String, bool>{};
       final counts = <String, int>{ for (final id in optIds) id: 0 };
+      final voters = <String>{};
       for (final r in allResponses) {
         final oid  = r['poll_option_id'] as String;
         final svar = r['svar'] as bool;
-        if (svar) counts[oid] = (counts[oid] ?? 0) + 1;
+        if (svar) {
+          counts[oid] = (counts[oid] ?? 0) + 1;
+          voters.add(r['user_id'] as String);
+        }
         if (r['user_id'] == userId) votes[oid] = svar;
       }
 
       setState(() {
-        _options   = optList;
-        _myVotes   = votes;
-        _yesCounts = counts;
-        _loading   = false;
+        _options     = optList;
+        _myVotes     = votes;
+        _yesCounts   = counts;
+        _totalVoters = voters.length;
+        _loading     = false;
       });
     } catch (e) {
       setState(() { _loading = false; _error = e.toString(); });
@@ -416,6 +425,31 @@ class _PollDetailScreenState extends State<PollDetailScreen> {
         }
         _myVotes = map;
       });
+      if (mounted) _snack(context, e.message, Colors.red);
+    }
+  }
+
+  /// Enkelt-valg (tekst-afstemning uden "tillad flere svar"): vælg netop ét.
+  Future<void> _voteSingle(String optionId) async {
+    final prev = {..._myVotes};
+    setState(() => _myVotes = {
+          for (final o in _options) o['id'] as String: o['id'] == optionId
+        });
+    try {
+      final uid = supabase.auth.currentUser!.id;
+      final rows = _options
+          .map((o) => {
+                'poll_option_id': o['id'],
+                'user_id': uid,
+                'svar': o['id'] == optionId,
+              })
+          .toList();
+      await supabase
+          .from('poll_responses')
+          .upsert(rows, onConflict: 'poll_option_id,user_id');
+      await _load();
+    } on PostgrestException catch (e) {
+      setState(() => _myVotes = prev);
       if (mounted) _snack(context, e.message, Colors.red);
     }
   }
@@ -460,7 +494,11 @@ class _PollDetailScreenState extends State<PollDetailScreen> {
                               child: Text(
                                 _lukket
                                     ? 'Afsluttet — afstemningen er låst'
-                                    : 'Sæt flueben ved de datoer du kan',
+                                    : _isText
+                                        ? (_allowMultiple
+                                            ? 'Vælg de svar der passer'
+                                            : 'Vælg ét svar')
+                                        : 'Sæt flueben ved de datoer du kan',
                                 style: _body(size: 12, color: _textMuted),
                               ),
                             ),
@@ -470,36 +508,61 @@ class _PollDetailScreenState extends State<PollDetailScreen> {
                                 child: Column(
                                   children: [
                                     for (final o in _options)
-                                      _PollCheckRow(
-                                        tid: DateTime.parse(
-                                            o['option_tid'] as String).toLocal(),
-                                        label: o['beskrivelse'] as String?,
-                                        checked: _myVotes[o['id'] as String] == true,
-                                        yesCount: _yesCounts[o['id'] as String] ?? 0,
-                                        maxYes: _yesCounts.values.isEmpty
-                                            ? 0
-                                            : _yesCounts.values
-                                                .fold<int>(0, (m, v) => v > m ? v : m),
-                                        locked: _lukket,
-                                        onToggle: () => _vote(
-                                            o['id'] as String,
-                                            !(_myVotes[o['id'] as String] == true)),
-                                      ),
+                                      if (_isText)
+                                        _PollTextRow(
+                                          label: o['beskrivelse'] as String? ?? '',
+                                          selected:
+                                              _myVotes[o['id'] as String] == true,
+                                          count: _yesCounts[o['id'] as String] ?? 0,
+                                          total: _totalVoters,
+                                          single: !_allowMultiple,
+                                          locked: _lukket,
+                                          onTap: () {
+                                            final id = o['id'] as String;
+                                            final sel =
+                                                _myVotes[id] == true;
+                                            if (_allowMultiple) {
+                                              _vote(id, !sel);
+                                            } else if (!sel) {
+                                              _voteSingle(id);
+                                            }
+                                          },
+                                        )
+                                      else
+                                        _PollCheckRow(
+                                          tid: DateTime.parse(
+                                              o['option_tid'] as String).toLocal(),
+                                          label: o['beskrivelse'] as String?,
+                                          checked:
+                                              _myVotes[o['id'] as String] == true,
+                                          yesCount:
+                                              _yesCounts[o['id'] as String] ?? 0,
+                                          maxYes: _yesCounts.values.isEmpty
+                                              ? 0
+                                              : _yesCounts.values.fold<int>(
+                                                  0, (m, v) => v > m ? v : m),
+                                          locked: _lukket,
+                                          onToggle: () => _vote(
+                                              o['id'] as String,
+                                              !(_myVotes[o['id'] as String] ==
+                                                  true)),
+                                        ),
                                   ],
                                 ),
                               ),
                             ),
                             const SizedBox(height: 12),
-                            OutlinedButton.icon(
-                              onPressed: () => Navigator.of(context).push(
-                                MaterialPageRoute(
-                                  builder: (_) =>
-                                      FavoritePairsScreen(poll: widget.poll),
+                            if (!_isText)
+                              OutlinedButton.icon(
+                                onPressed: () => Navigator.of(context).push(
+                                  MaterialPageRoute(
+                                    builder: (_) =>
+                                        FavoritePairsScreen(poll: widget.poll),
+                                  ),
                                 ),
+                                icon: const Icon(Icons.favorite_border, size: 18),
+                                label: const Text('Favorit-par pr. dato'),
                               ),
-                              icon: const Icon(Icons.favorite_border, size: 18),
-                              label: const Text('Favorit-par pr. dato'),
-                            ),
                           ],
                         ),
                       ),
@@ -584,6 +647,81 @@ class _PollCheckRow extends StatelessWidget {
               borderRadius: BorderRadius.circular(999),
               child: LinearProgressIndicator(
                 value: frac.clamp(0.0, 1.0),
+                minHeight: 8,
+                backgroundColor: _surfaceElevated,
+                valueColor: AlwaysStoppedAnimation(barColor),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Svarmulighed-række (tekst-afstemning) med resultat-procent.
+class _PollTextRow extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final int count;
+  final int total;
+  final bool single; // true = radio (ét valg), false = checkbox (flere)
+  final bool locked;
+  final VoidCallback onTap;
+  const _PollTextRow({
+    required this.label,
+    required this.selected,
+    required this.count,
+    required this.total,
+    required this.single,
+    required this.locked,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final pct = total == 0 ? 0.0 : count / total;
+    final barColor = selected ? _success : _neon;
+    return InkWell(
+      onTap: locked ? null : onTap,
+      borderRadius: BorderRadius.circular(10),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 22, height: 22,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: selected ? _success : Colors.transparent,
+                    borderRadius: BorderRadius.circular(single ? 999 : 6),
+                    border: Border.all(
+                        color: selected ? _success : _textMuted, width: 1.5),
+                  ),
+                  child: selected
+                      ? const Icon(Icons.check, size: 15, color: Colors.white)
+                      : null,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(label,
+                      style: _body(size: 14, weight: FontWeight.w600)),
+                ),
+                const SizedBox(width: 8),
+                Text('${(pct * 100).round()}%',
+                    style: _cond(
+                        size: 16,
+                        weight: FontWeight.w800,
+                        color: selected ? _success : _textSecondary)),
+              ],
+            ),
+            const SizedBox(height: 8),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(999),
+              child: LinearProgressIndicator(
+                value: pct.clamp(0.0, 1.0),
                 minHeight: 8,
                 backgroundColor: _surfaceElevated,
                 valueColor: AlwaysStoppedAnimation(barColor),

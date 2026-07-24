@@ -92,8 +92,13 @@ class _PollFeedItem extends _FeedItem {
   });
   @override
   DateTime get sortKey {
-    if (options.isEmpty) return DateTime.parse(poll['created_at'] as String);
-    final tids = options.map((o) => DateTime.parse(o['option_tid'] as String));
+    // Tekst-afstemninger har ingen datoer → sortér på oprettelse.
+    final tids = options
+        .map((o) => o['option_tid'] as String?)
+        .whereType<String>()
+        .map(DateTime.parse)
+        .toList();
+    if (tids.isEmpty) return DateTime.parse(poll['created_at'] as String);
     return tids.reduce((a, b) => a.isBefore(b) ? a : b);
   }
 }

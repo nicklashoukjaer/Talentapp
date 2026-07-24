@@ -8,6 +8,12 @@ class _PollDateRow {
   _PollDateRow(this.id, this.value);
 }
 
+class _TextOptionField {
+  final String id;
+  final TextEditingController ctrl = TextEditingController();
+  _TextOptionField(this.id);
+}
+
 class CreatePollDialog extends StatefulWidget {
   const CreatePollDialog({super.key});
   @override
@@ -19,17 +25,35 @@ class _CreatePollDialogState extends State<CreatePollDialog> {
   final _titel   = TextEditingController();
   final _beskr   = TextEditingController();
   final List<_PollDateRow> _dates = [];
+  final List<_TextOptionField> _textOptions = [];
   int _idCounter = 0;
   bool _saving = false;
   DateTime? _frist; // stemmefrist — afstemningen lukker automatisk her
   List<Map<String, dynamic>> _groups = const [];
   String? _groupId; // null = klub-bred (alle kan stemme)
+  String _type = 'dato';     // 'dato' | 'tekst'
+  bool _allowMultiple = true; // (tekst) må man vælge flere svar?
 
   @override
   void initState() {
     super.initState();
     _addDate();
+    _addTextOption();
+    _addTextOption();
     _loadGroups();
+  }
+
+  void _addTextOption() =>
+      setState(() => _textOptions.add(_TextOptionField('t_${_idCounter++}')));
+
+  void _removeTextOption(String id) {
+    setState(() {
+      final i = _textOptions.indexWhere((o) => o.id == id);
+      if (i >= 0) {
+        _textOptions[i].ctrl.dispose();
+        _textOptions.removeAt(i);
+      }
+    });
   }
 
   Future<void> _loadGroups() async {
@@ -53,6 +77,29 @@ class _CreatePollDialogState extends State<CreatePollDialog> {
         }
       });
     } catch (_) {}
+  }
+
+  Widget _typeChip(String label, String value) {
+    final active = _type == value;
+    return Expanded(
+      child: GestureDetector(
+        onTap: () => setState(() => _type = value),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          padding: const EdgeInsets.symmetric(vertical: 11),
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: active ? _neon : Colors.transparent,
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Text(label,
+              style: _body(
+                  size: 13,
+                  weight: FontWeight.w700,
+                  color: active ? Colors.white : _textSecondary)),
+        ),
+      ),
+    );
   }
 
   Widget _groupChip(String label, String? id) {
@@ -79,6 +126,9 @@ class _CreatePollDialogState extends State<CreatePollDialog> {
   void dispose() {
     _titel.dispose();
     _beskr.dispose();
+    for (final o in _textOptions) {
+      o.ctrl.dispose();
+    }
     super.dispose();
   }
 
@@ -92,32 +142,49 @@ class _CreatePollDialogState extends State<CreatePollDialog> {
 
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
-    final validDates = _dates.where((d) => d.value != null).map((d) => d.value!).toList();
-    if (validDates.isEmpty) {
-      _snack(context, 'Tilføj mindst én dato/tid', Colors.orange);
-      return;
+    final isText = _type == 'tekst';
+    late final List<Map<String, dynamic>> optionRows;
+    if (isText) {
+      final texts = _textOptions
+          .map((o) => o.ctrl.text.trim())
+          .where((t) => t.isNotEmpty)
+          .toList();
+      if (texts.length < 2) {
+        _snack(context, 'Tilføj mindst to svarmuligheder', Colors.orange);
+        return;
+      }
+      optionRows = texts.map((t) => {'beskrivelse': t}).toList();
+    } else {
+      final validDates =
+          _dates.where((d) => d.value != null).map((d) => d.value!).toList();
+      if (validDates.isEmpty) {
+        _snack(context, 'Tilføj mindst én dato/tid', Colors.orange);
+        return;
+      }
+      optionRows = validDates
+          .map((d) => {'option_tid': d.toUtc().toIso8601String()})
+          .toList();
     }
 
     setState(() => _saving = true);
     try {
       final pollResp = await supabase.from('polls').insert({
-        'titel':       _titel.text.trim(),
-        'beskrivelse': _beskr.text.trim().isEmpty ? null : _beskr.text.trim(),
-        'created_by':  supabase.auth.currentUser!.id,
-        'group_id':    _groupId,
+        'titel':          _titel.text.trim(),
+        'beskrivelse':    _beskr.text.trim().isEmpty ? null : _beskr.text.trim(),
+        'created_by':     supabase.auth.currentUser!.id,
+        'group_id':       _groupId,
+        'type':           _type,
+        'allow_multiple': isText ? _allowMultiple : true,
         if (_frist != null) 'lukket_at': _frist!.toUtc().toIso8601String(),
       }).select('id').single();
 
       final pollId = pollResp['id'];
       await supabase.from('poll_options').insert(
-        validDates.map((d) => {
-          'poll_id':    pollId,
-          'option_tid': d.toUtc().toIso8601String(),
-        }).toList(),
+        optionRows.map((o) => {'poll_id': pollId, ...o}).toList(),
       );
 
       if (!mounted) return;
-      _snack(context, 'Afstemning oprettet med ${validDates.length} datoer', Colors.green);
+      _snack(context, 'Afstemning oprettet', Colors.green);
       Navigator.of(context).pop(true);
     } on PostgrestException catch (e) {
       if (mounted) _snack(context, e.message, Colors.red);
@@ -208,6 +275,23 @@ class _CreatePollDialogState extends State<CreatePollDialog> {
                   maxLines: 2,
                 ),
                 const SizedBox(height: 20),
+                Text('TYPE',
+                    style: _body(size: 12, weight: FontWeight.w700,
+                        color: _textSecondary, spacing: 1)),
+                const SizedBox(height: 8),
+                Container(
+                  padding: const EdgeInsets.all(4),
+                  decoration: BoxDecoration(
+                    color: _bgBlack,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: _borderSubtle),
+                  ),
+                  child: Row(children: [
+                    _typeChip('Datoer', 'dato'),
+                    _typeChip('Svarmuligheder', 'tekst'),
+                  ]),
+                ),
+                const SizedBox(height: 20),
                 _fieldGroup('STEMMEFRIST · valgfri', [
                   _QuickDateTimeField(
                     label: 'Dato',
@@ -225,6 +309,7 @@ class _CreatePollDialogState extends State<CreatePollDialog> {
                   ),
                 ]),
                 const SizedBox(height: 20),
+                if (_type == 'dato') ...[
                 Row(
                   children: [
                     Icon(Icons.event, color: theme.colorScheme.primary),
@@ -271,6 +356,68 @@ class _CreatePollDialogState extends State<CreatePollDialog> {
                     label: const Text('Tilføj endnu en dato'),
                   ),
                 ),
+                ] else ...[
+                  Row(children: [
+                    Icon(Icons.checklist_rtl, color: theme.colorScheme.primary),
+                    const SizedBox(width: 8),
+                    Text('Svarmuligheder', style: theme.textTheme.titleMedium),
+                  ]),
+                  const SizedBox(height: 12),
+                  for (final o in _textOptions)
+                    Padding(
+                      key: ValueKey(o.id),
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: Row(children: [
+                        Expanded(
+                          child: TextField(
+                            controller: o.ctrl,
+                            textCapitalization: TextCapitalization.sentences,
+                            decoration: const InputDecoration(
+                              hintText: 'Svarmulighed',
+                              prefixIcon: Icon(Icons.radio_button_unchecked, size: 18),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        IconButton(
+                          onPressed: _textOptions.length > 2
+                              ? () => _removeTextOption(o.id)
+                              : null,
+                          icon: const Icon(Icons.remove_circle_outline),
+                          color: Colors.red.shade400,
+                          tooltip: 'Fjern',
+                        ),
+                      ]),
+                    ),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton.icon(
+                      onPressed: _addTextOption,
+                      icon: const Icon(Icons.add),
+                      label: const Text('Tilføj svarmulighed'),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Container(
+                    decoration: BoxDecoration(
+                      border: Border.all(color: _borderSubtle),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: SwitchListTile(
+                      value: _allowMultiple,
+                      onChanged: (v) => setState(() => _allowMultiple = v),
+                      contentPadding:
+                          const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+                      title: const Text('Tillad flere svar'),
+                      subtitle: Text(
+                        _allowMultiple
+                            ? 'Man kan sætte flueben ved flere svar.'
+                            : 'Man kan kun vælge ét svar.',
+                        style: _body(size: 11.5, color: _textSecondary),
+                      ),
+                    ),
+                  ),
+                ],
                     ],
                   ),
                 ),

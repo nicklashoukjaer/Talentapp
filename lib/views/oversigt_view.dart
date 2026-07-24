@@ -1469,7 +1469,33 @@ class _FeedPollCardState extends State<_FeedPollCard> {
                 ],
                 const SizedBox(height: 14),
                 if (item.options.isEmpty)
-                  Text('Ingen datoer endnu', style: theme.textTheme.bodySmall)
+                  Text(p['type'] == 'tekst'
+                      ? 'Ingen svarmuligheder endnu'
+                      : 'Ingen datoer endnu', style: theme.textTheme.bodySmall)
+                else if (p['type'] == 'tekst')
+                  ...item.options.map((o) {
+                    final id = o['id'] as String;
+                    final yes =
+                        (item.votersByOption[id]?.yes ?? const <String>[]).length;
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Row(children: [
+                        const Icon(Icons.radio_button_unchecked,
+                            size: 16, color: _textMuted),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(o['beskrivelse'] as String? ?? '',
+                              style: theme.textTheme.bodyLarge
+                                  ?.copyWith(fontWeight: FontWeight.w600)),
+                        ),
+                        Text('$yes',
+                            style: _cond(
+                                size: 16,
+                                weight: FontWeight.w800,
+                                color: _textSecondary)),
+                      ]),
+                    );
+                  })
                 else
                   ...item.options.map((o) {
                     final id  = o['id'] as String;
@@ -1548,7 +1574,10 @@ class _FeedPollCardState extends State<_FeedPollCard> {
                 child: Column(
                   children: item.options.map((o) {
                     final id  = o['id'] as String;
-                    final tid = DateTime.parse(o['option_tid'] as String).toLocal();
+                    final tidStr = o['option_tid'] as String?;
+                    final lbl = tidStr != null
+                        ? _fmtDateTime(DateTime.parse(tidStr).toLocal())
+                        : (o['beskrivelse'] as String? ?? '');
                     final voters = item.votersByOption[id] ??
                         const _OptionVoters(yes: [], no: []);
                     return Padding(
@@ -1556,7 +1585,7 @@ class _FeedPollCardState extends State<_FeedPollCard> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(_fmtDateTime(tid),
+                          Text(lbl,
                               style: const TextStyle(
                                   color: _textPrimary,
                                   fontSize: 13,

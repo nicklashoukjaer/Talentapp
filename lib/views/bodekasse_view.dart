@@ -56,29 +56,57 @@ class BodekasseTabState extends State<BodekasseTab> {
       // med, så listen kan filtreres pr. hold.
       final results = await Future.wait([
         supabase.from('fine_leaderboard').select().order('total_oere', ascending: false),
-        supabase.from('groups').select('id, navn, farve, sort').order('sort'),
+        supabase.from('groups').select('id, navn, farve, sort, hold_group_id').order('sort'),
         supabase.from('group_members').select('group_id, user_id, is_captain'),
+        supabase.from('hold_groups').select('id, navn').order('created_at'),
       ]);
       final list = List<Map<String, dynamic>>.from(results[0] as List);
       final groups = List<Map<String, dynamic>>.from(results[1] as List);
       final gm = List<Map<String, dynamic>>.from(results[2] as List);
+      final holdGroups = List<Map<String, dynamic>>.from(results[3] as List);
+
+      // Fællesskab pr. hold: holdgruppe ('hg:<id>') eller selvstændigt ('solo:<id>').
+      // Hold i samme holdgruppe deler bødekasse.
+      final hgNavn = {for (final h in holdGroups) h['id'] as String: h['navn'] as String?};
+      final communityKeyOf = <String, String>{};
+      final communities = <Map<String, dynamic>>[];
+      final seenKey = <String>{};
+      for (final g in groups) {
+        final gid = g['id'] as String;
+        final hgId = g['hold_group_id'] as String?;
+        final key = hgId != null ? 'hg:$hgId' : 'solo:$gid';
+        communityKeyOf[gid] = key;
+        if (seenKey.add(key)) {
+          communities.add({
+            'id': key,
+            'navn': hgId != null
+                ? (hgNavn[hgId] ?? 'Gruppe')
+                : (g['navn'] as String),
+            // Holdgruppe → accent (null); selvstændigt → holdets farve.
+            'farve': hgId != null ? null : g['farve'],
+          });
+        }
+      }
+
       final byGroup = <String, Set<String>>{};
       final mine = <String>{};
       final myCap = <String>{};
       for (final r in gm) {
         final gid = r['group_id'] as String;
         final uid = r['user_id'] as String;
-        (byGroup[gid] ??= <String>{}).add(uid);
+        final key = communityKeyOf[gid];
+        if (key == null) continue;
+        (byGroup[key] ??= <String>{}).add(uid);
         if (uid == widget.currentUserId) {
-          mine.add(gid);
-          if (r['is_captain'] == true) myCap.add(gid);
+          mine.add(key);
+          if (r['is_captain'] == true) myCap.add(key);
         }
       }
       CacheService.put('leaderboard', list);
       if (!mounted) return;
       setState(() {
         _rows = list;
-        _groups = groups;
+        _groups = communities;
         _memberIdsByGroup = byGroup;
         _myGroupIds = mine;
         _myCaptainGroupIds = myCap;

@@ -703,15 +703,16 @@ class _PollDetailScreenState extends State<PollDetailScreen> {
     final theme = Theme.of(context);
     final beskr = widget.poll['beskrivelse'] as String?;
 
+    final lukketAt = widget.poll['lukket_at'] as String?;
+    final fristStr = lukketAt == null
+        ? 'Ingen stemmefrist'
+        : (_lukket
+            ? 'Afsluttet ${_fmtDateTime(DateTime.parse(lukketAt).toLocal())}'
+            : 'Stemmefrist ${_fmtDateTime(DateTime.parse(lukketAt).toLocal())}');
+
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.poll['titel'] as String),
-        actions: [
-          IconButton(
-            onPressed: _load,
-            icon: const Icon(Icons.refresh),
-          ),
-        ],
+        title: const Text('AFSTEMNING'),
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
@@ -726,6 +727,17 @@ class _PollDetailScreenState extends State<PollDetailScreen> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
+                            Text((widget.poll['titel'] as String).toUpperCase(),
+                                style: _cond(size: 20, weight: FontWeight.w800)),
+                            const SizedBox(height: 5),
+                            Row(children: [
+                              const Icon(Icons.schedule,
+                                  size: 14, color: _textSecondary),
+                              const SizedBox(width: 6),
+                              Text(fristStr,
+                                  style: _body(size: 12.5, color: _textSecondary)),
+                            ]),
+                            const SizedBox(height: 12),
                             if (beskr != null && beskr.isNotEmpty)
                               Padding(
                                 padding: const EdgeInsets.only(bottom: 8),

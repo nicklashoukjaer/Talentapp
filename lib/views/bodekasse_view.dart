@@ -825,7 +825,7 @@ class _FineHistoryScreenState extends State<FineHistoryScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Bødehistorik'),
+        title: const Text('BØDE-HISTORIK'),
         actions: [
           IconButton(onPressed: _load, icon: const Icon(Icons.refresh)),
         ],
@@ -913,51 +913,18 @@ class _FineHistoryScreenState extends State<FineHistoryScreen> {
                               ]),
                             ),
                             const SizedBox(height: 14),
-                            // To nøgletal
-                            Card(
-                              child: Padding(
-                                padding: const EdgeInsets.all(20),
-                                child: Row(children: [
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Text('Skyldig nu',
-                                            style: _body(
-                                                size: 12, color: _textSecondary)),
-                                        Text(_fmtKr(totalUbetalt),
-                                            style: _cond(
-                                                size: 30,
-                                                weight: FontWeight.w800,
-                                                color: totalUbetalt > 0
-                                                    ? _danger
-                                                    : _textMuted)),
-                                      ],
-                                    ),
-                                  ),
-                                  Container(
-                                      width: 1, height: 48, color: _borderSubtle),
-                                  const SizedBox(width: 16),
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Text('Betalt i alt',
-                                            style: _body(
-                                                size: 12, color: _textSecondary)),
-                                        Text(_fmtKr(totalBetalt),
-                                            style: _cond(
-                                                size: 30,
-                                                weight: FontWeight.w800,
-                                                color: _success)),
-                                      ],
-                                    ),
-                                  ),
-                                ]),
+                            // To nøgletal (separate kort, som prototypen)
+                            Row(children: [
+                              Expanded(
+                                child: _statCard('Skyldig nu', totalUbetalt,
+                                    totalUbetalt > 0 ? _danger : _success),
                               ),
-                            ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child:
+                                    _statCard('Betalt i alt', totalBetalt, _success),
+                              ),
+                            ]),
                             if (totalUbetalt > 0 && isOwn) ...[
                               const SizedBox(height: 14),
                               SizedBox(
@@ -970,8 +937,8 @@ class _FineHistoryScreenState extends State<FineHistoryScreen> {
                                   label: Text(
                                       'Betal ${_fmtKr(totalUbetalt)} via MobilePay'),
                                   style: FilledButton.styleFrom(
-                                    backgroundColor: _success,
-                                    foregroundColor: _onSuccess,
+                                    backgroundColor: _info,
+                                    foregroundColor: const Color(0xFF08243A),
                                     padding: const EdgeInsets.symmetric(
                                         vertical: 16),
                                     textStyle: const TextStyle(
@@ -1028,6 +995,27 @@ class _FineHistoryScreenState extends State<FineHistoryScreen> {
                     ),
                   ],
                 ),
+    );
+  }
+
+  Widget _statCard(String label, int oere, Color color) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 13, 14, 14),
+      decoration: BoxDecoration(
+        color: _surfaceDark,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: _borderSubtle),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(label, style: _body(size: 11, color: _textSecondary)),
+          const SizedBox(height: 4),
+          Text(_fmtKr(oere),
+              style: _cond(size: 24, weight: FontWeight.w800, color: color)),
+        ],
+      ),
     );
   }
 

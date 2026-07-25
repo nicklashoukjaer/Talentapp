@@ -550,6 +550,183 @@ class _OversigtTabState extends State<OversigtTab> {
     );
   }
 
+  /// Er der et aktivt hold-filter (bruges af tragt-badgen i app-headeren)?
+  bool get holdFilterActive => _switcherGroupId != null;
+
+  /// Åbner hold-filteret som bundsheet — kaldes af tragt-ikonet i app-headeren.
+  Future<void> showHoldFilterSheet() async {
+    final myGroups =
+        _groups.where((g) => _myGroupIds.contains(g['id'])).toList();
+    if (myGroups.isEmpty) {
+      _snack(context, 'Du er ikke på noget hold endnu', _textSecondary);
+      return;
+    }
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        Widget option(String? id, String label, Color dot) {
+          final selected = _switcherGroupId == id;
+          return InkWell(
+            onTap: () {
+              setState(() => _switcherGroupId = id);
+              Navigator.of(ctx).pop();
+            },
+            borderRadius: BorderRadius.circular(12),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+              margin: const EdgeInsets.only(bottom: 8),
+              decoration: BoxDecoration(
+                color: selected
+                    ? _neon.withValues(alpha: 0.14)
+                    : _surfaceElevated,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                    color: selected ? _neon : _borderSubtle),
+              ),
+              child: Row(children: [
+                Container(
+                  width: 11, height: 11,
+                  decoration: BoxDecoration(color: dot, shape: BoxShape.circle),
+                ),
+                const SizedBox(width: 11),
+                Expanded(
+                  child: Text(label,
+                      style: _body(
+                          size: 14,
+                          weight: FontWeight.w600,
+                          color: selected ? _neon : _textPrimary)),
+                ),
+                if (selected)
+                  const Icon(Icons.check, size: 18, color: _neon),
+              ]),
+            ),
+          );
+        }
+
+        Color hex(String? h) {
+          if (h == null || h.isEmpty) return _textSecondary;
+          return Color(int.parse(h.replaceFirst('#', ''), radix: 16) | 0xFF000000);
+        }
+
+        return SafeArea(
+          top: false,
+          child: Container(
+            margin: const EdgeInsets.all(12),
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+            decoration: BoxDecoration(
+              color: _surfaceDark,
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: _borderSubtle),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text('VÆLG HOLD',
+                    style: _cond(size: 20, weight: FontWeight.w800)),
+                const SizedBox(height: 4),
+                Text('Filtrér begivenhederne til ét af dine hold.',
+                    style: _body(size: 12.5, color: _textSecondary)),
+                const SizedBox(height: 14),
+                option(null, 'Alle mine hold', _neon),
+                for (final g in myGroups)
+                  option(g['id'] as String, g['navn'] as String,
+                      hex(g['farve'] as String?)),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  // Ét kort i feedet (træning/kamp/historik/afstemning).
+  Widget _feedCard(_FeedItem item) {
+    final showingTrainings = _activeView == 0;
+    return switch (item) {
+      _TrainingFeedItem t => (showingTrainings && _showHistory)
+          ? _HistoryTrainingCard(item: t)
+          : _FeedTrainingCard(
+              item: t,
+              isAdmin: widget.isAdmin,
+              canManage: _canManageTraining(t.training),
+              groupNames: _groupNamesFor(t.training),
+              onSignUp: () => _signUp(t),
+              onDecline: () => _decline(t),
+              onDelete:
+                  _canManageTraining(t.training) ? () => _deleteTraining(t) : null,
+              onPublish:
+                  _canManageTraining(t.training) ? () => _publishTraining(t) : null,
+              onOpenBoard: _canManageTraining(t.training)
+                  ? () => Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) =>
+                              TrainingBoardScreen(training: t.training),
+                        ),
+                      ).then((_) => reload())
+                  : null,
+            ),
+      _PollFeedItem p => _FeedPollCard(
+          item: p,
+          isAdmin: widget.isAdmin,
+          onVote: (optionId, svar) => _vote(p, optionId, svar),
+          onDelete: _canManagePoll(p.poll) ? () => _deletePoll(p) : null,
+          onOpenSynergy: widget.isAdmin
+              ? () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => FavoritePairsScreen(poll: p.poll),
+                    ),
+                  )
+              : null,
+        ),
+    };
+  }
+
+  static const _months = [
+    'JANUAR', 'FEBRUAR', 'MARTS', 'APRIL', 'MAJ', 'JUNI',
+    'JULI', 'AUGUST', 'SEPTEMBER', 'OKTOBER', 'NOVEMBER', 'DECEMBER'
+  ];
+  String _monthLabel(DateTime d) {
+    final m = _months[d.month - 1];
+    return d.year == DateTime.now().year ? m : '$m ${d.year}';
+  }
+
+  Widget _monthDivider(String label) => Padding(
+        padding: const EdgeInsets.only(bottom: 12, top: 2),
+        child: Row(children: [
+          Text(label,
+              style: _body(
+                  size: 11, weight: FontWeight.w700, spacing: 0.6,
+                  color: _textMuted)),
+          const SizedBox(width: 10),
+          Expanded(child: Container(height: 1, color: _borderSubtle)),
+        ]),
+      );
+
+  // Interleaver måneds-dividers mellem kort (kun kommende aktiviteter).
+  List<Widget> _interleaveMonths(List<_FeedItem> items) {
+    final out = <Widget>[];
+    String? last;
+    for (final item in items) {
+      if (item is _TrainingFeedItem) {
+        final dt = DateTime.parse(item.training['start_tid'] as String).toLocal();
+        final m = _monthLabel(dt);
+        if (m != last) {
+          last = m;
+          out.add(_monthDivider(m));
+        }
+      }
+      out.add(RepaintBoundary(
+        child: Padding(
+          padding: const EdgeInsets.only(bottom: 14),
+          child: _feedCard(item),
+        ),
+      ));
+    }
+    return out;
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -627,76 +804,25 @@ class _OversigtTabState extends State<OversigtTab> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 16, left: 4),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.center,
-                      children: [
-                        Container(
-                          width: 4, height: 32,
-                          decoration: const BoxDecoration(
-                            color: _neon,
-                            borderRadius: BorderRadius.all(Radius.circular(2)),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text('OVERSIGT',
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: theme.textTheme.headlineSmall?.copyWith(
-                                      letterSpacing: 1.5)),
-                              Text('${activeTrainings.length} aktive · '
-                                   '${_historyLoaded ? '${archivedTrainings.length} arkiverede · ' : ''}'
-                                   '${polls.length} afstemninger',
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: theme.textTheme.bodySmall),
-                            ],
-                          ),
-                        ),
-                        IconButton(
-                          onPressed: reload,
-                          icon: const Icon(Icons.refresh),
-                          tooltip: 'Opdater',
-                        ),
-                      ],
-                    ),
-                  ),
-                  // Hold-switcher — kun hvis brugeren er på mindst ét hold
-                  if (_groups.where((g) => _myGroupIds.contains(g['id'])).isNotEmpty)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 14),
-                      child: _HoldSwitcher(
-                        groups: _groups
-                            .where((g) => _myGroupIds.contains(g['id']))
-                            .toList(),
-                        selectedId: _switcherGroupId,
-                        onChanged: (id) => setState(() => _switcherGroupId = id),
-                      ),
-                    ),
+                  // Ingen in-body titel: app-headeren viser "DE TALENTLØSE
+                  // HJØRRING" + tragt (hold-filter). Vi starter direkte på
+                  // Kommende/Historik som i prototypen.
                   // Kommende / Historik + antal begivenheder (matcher prototypen)
                   if (showingTrainings)
                     Padding(
                       padding: const EdgeInsets.only(bottom: 14),
                       child: Row(children: [
-                        Expanded(
-                          child: _KommendeHistorikToggle(
-                            showHistory: _showHistory,
-                            onChanged: (show) {
-                              setState(() => _showHistory = show);
-                              if (show && !_historyLoaded) {
-                                _historyLoaded = true;
-                                reload(includeHistory: true);
-                              }
-                            },
-                          ),
+                        _KommendeHistorikToggle(
+                          showHistory: _showHistory,
+                          onChanged: (show) {
+                            setState(() => _showHistory = show);
+                            if (show && !_historyLoaded) {
+                              _historyLoaded = true;
+                              reload(includeHistory: true);
+                            }
+                          },
                         ),
-                        const SizedBox(width: 12),
+                        const Spacer(),
                         Text('${source.length} begivenheder',
                             style: _body(size: 12.5, color: _textMuted)),
                       ]),
@@ -791,52 +917,17 @@ class _OversigtTabState extends State<OversigtTab> {
                           ),
                         ),
                       ),
-                    // På bred skærm i historik erstattes kort-listen af matrixen
+                    // På bred skærm i historik erstattes kort-listen af matrixen.
+                    // Kommende aktiviteter grupperes med måneds-dividers (prototype).
                     if (!(showingTrainings && _showHistory &&
                         MediaQuery.of(context).size.width >= 700))
-                      ...(showingTrainings && !_showHistory ? visible.skip(1) : visible)
-                          .map((item) => RepaintBoundary(child: Padding(
-                      padding: const EdgeInsets.only(bottom: 14),
-                      child: switch (item) {
-                        _TrainingFeedItem t => (showingTrainings && _showHistory)
-                            ? _HistoryTrainingCard(item: t)
-                            : _FeedTrainingCard(
-                          item: t,
-                          isAdmin: widget.isAdmin,
-                          canManage: _canManageTraining(t.training),
-                          groupNames: _groupNamesFor(t.training),
-                          onSignUp:  () => _signUp(t),
-                          onDecline: () => _decline(t),
-                          onDelete: _canManageTraining(t.training)
-                              ? () => _deleteTraining(t) : null,
-                          onPublish: _canManageTraining(t.training)
-                              ? () => _publishTraining(t) : null,
-                          onOpenBoard: _canManageTraining(t.training)
-                              ? () => Navigator.of(context).push(
-                                  MaterialPageRoute(
-                                    builder: (_) => TrainingBoardScreen(
-                                        training: t.training),
-                                  ),
-                                ).then((_) => reload())
-                              : null,
-                        ),
-                        _PollFeedItem p => _FeedPollCard(
-                          item: p,
-                          isAdmin: widget.isAdmin,
-                          onVote: (optionId, svar) => _vote(p, optionId, svar),
-                          onDelete: _canManagePoll(p.poll)
-                              ? () => _deletePoll(p) : null,
-                          onOpenSynergy: widget.isAdmin
-                              ? () => Navigator.of(context).push(
-                                  MaterialPageRoute(
-                                    builder: (_) => FavoritePairsScreen(
-                                        poll: p.poll),
-                                  ),
-                                )
-                              : null,
-                        ),
-                      },
-                    ))),
+                      ...(showingTrainings && !_showHistory
+                          ? _interleaveMonths(visible.skip(1).toList())
+                          : visible.map((item) => RepaintBoundary(
+                              child: Padding(
+                                padding: const EdgeInsets.only(bottom: 14),
+                                child: _feedCard(item),
+                              )))),
                   ],
                 ],
               ),
@@ -849,6 +940,32 @@ class _OversigtTabState extends State<OversigtTab> {
 }
 
 // ─── Træningskort i Oversigt ────────────────────────────────────────────────
+
+const _shortMonths = [
+  'JAN', 'FEB', 'MAR', 'APR', 'MAJ', 'JUN',
+  'JUL', 'AUG', 'SEP', 'OKT', 'NOV', 'DEC'
+];
+
+/// Dato-blok (dag stort i accent + måned) — bruges af hero og event-kort.
+Widget _dateBlock(DateTime d, {bool big = false}) => Container(
+      constraints: BoxConstraints(minWidth: big ? 50 : 46),
+      padding: EdgeInsets.symmetric(
+          horizontal: big ? 11 : 10, vertical: big ? 8 : 7),
+      decoration: BoxDecoration(
+        color: _surfaceElevated,
+        borderRadius: BorderRadius.circular(big ? 11 : 10),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text('${d.day}',
+              style: _cond(
+                  size: big ? 22 : 19, weight: FontWeight.w800, color: _neon)),
+          Text(_shortMonths[d.month - 1],
+              style: _body(size: 10, color: _textMuted)),
+        ],
+      ),
+    );
 
 class _FeedTrainingCard extends StatefulWidget {
   final _TrainingFeedItem item;
@@ -878,270 +995,205 @@ class _FeedTrainingCard extends StatefulWidget {
 class _FeedTrainingCardState extends State<_FeedTrainingCard> {
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final item = widget.item;
+    final item     = widget.item;
     final t        = item.training;
     final start    = DateTime.parse(t['start_tid'] as String).toLocal();
     final slut     = DateTime.parse(t['slut_tid'] as String).toLocal();
     final deadline = DateTime.parse(t['tilmeldings_deadline'] as String).toLocal();
-    final adresse  = t['adresse']  as String;
-    final titel    = t['titel']    as String;
-    final max      = t['max_deltagere'] as int?;
-    final cnt      = item.signedUpCount;
+    final adresse  = t['adresse'] as String;
+    final titel    = t['titel'] as String;
     final status   = item.myStatus;
     final hasAddr  = adresse.isNotEmpty && adresse != _addressUnspecified;
     final deadlinePassed = DateTime.now().isAfter(deadline);
     final canSignUp = !deadlinePassed || widget.isAdmin;
-    // Synlighed: er aktiviteten stadig skjult for spillerne? (kun relevant for staff)
+    final canDecline =
+        canSignUp || status == 'tilmeldt' || status == 'venteliste';
+    final isSignedUp = status == 'tilmeldt' || status == 'venteliste';
     final synligFraStr = t['synlig_fra'] as String?;
     final hiddenUntil = synligFraStr == null
         ? null : DateTime.parse(synligFraStr).toLocal();
     final isHidden = hiddenUntil != null && hiddenUntil.isAfter(DateTime.now());
-    final totalParticipants =
-        item.tilmeldte.length + item.venteliste.length +
-        item.afmeldte.length + item.trainere.length;
+    final staffHidden = widget.isAdmin && isHidden && widget.onPublish != null;
 
-    return Card(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.all(18),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Wrap(
-                  spacing: 6,
-                  runSpacing: 6,
-                  crossAxisAlignment: WrapCrossAlignment.center,
+    // Undertekst: "18:00–20:00 · Hallen · Talentløse 1"
+    final parts = <String>['${_fmtTime(start)}–${_fmtTime(slut)}'];
+    if (hasAddr) parts.add(adresse);
+    if (widget.groupNames.isNotEmpty) parts.add(widget.groupNames.join(' + '));
+    final subtitle = parts.join(' · ');
+
+    void openDetail() => Navigator.of(context).push(MaterialPageRoute(
+          builder: (_) => EventDetailScreen(
+              training: t, isStaff: widget.isAdmin, canManage: widget.canManage),
+        ));
+
+    return GestureDetector(
+      onTap: openDetail,
+      child: Container(
+        decoration: BoxDecoration(
+          color: _surfaceDark,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: _borderSubtle),
+        ),
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(children: [
+              _dateBlock(start),
+              const SizedBox(width: 11),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: _surfaceElevated,
-                        borderRadius: BorderRadius.circular(999),
-                      ),
-                      child: Text('KOMMENDE',
-                          style: _body(
-                              size: 10,
-                              weight: FontWeight.w700,
-                              spacing: 1.2,
-                              color: _textSecondary)),
-                    ),
-                    _SquadBadge(
-                      signedUp: cnt,
-                      max: max,
-                      trainerCount: item.trainere.length,
-                    ),
-                    for (final navn in widget.groupNames)
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 9, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: _neon.withValues(alpha: 0.14),
-                          borderRadius: BorderRadius.circular(999),
-                        ),
-                        child: Text(navn.toUpperCase(),
-                            style: _body(
-                                size: 10,
-                                weight: FontWeight.w700,
-                                spacing: 0.8,
-                                color: _neon)),
-                      ),
-                    if (status != null) _MyStatusChip(status: status),
-                    if (widget.isAdmin && widget.onOpenBoard != null)
-                      Tooltip(
-                        message: 'Åbn drag-and-drop board',
-                        child: IconButton(
-                          onPressed: widget.onOpenBoard,
-                          icon: const Icon(Icons.view_kanban_outlined,
-                              size: 20, color: _neon),
-                          visualDensity: VisualDensity.compact,
-                          padding: EdgeInsets.zero,
-                          constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                        ),
-                      ),
-                    if (widget.onDelete != null)
-                      Tooltip(
-                        message: 'Slet begivenhed',
-                        child: IconButton(
-                          onPressed: widget.onDelete,
-                          icon: const Icon(Icons.delete_outline,
-                              size: 20, color: _danger),
-                          visualDensity: VisualDensity.compact,
-                          padding: EdgeInsets.zero,
-                          constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                        ),
-                      ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                Text(titel, style: theme.textTheme.titleLarge),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    const Icon(Icons.schedule, size: 16, color: _textSecondary),
-                    const SizedBox(width: 6),
-                    Text('${_fmtDateTime(start)} – ${_fmtTime(slut)}',
-                        style: theme.textTheme.bodyMedium),
-                  ],
-                ),
-                if (hasAddr) ...[
-                  const SizedBox(height: 4),
-                  Row(
-                    children: [
-                      const Icon(Icons.place_outlined, size: 16, color: _textSecondary),
-                      const SizedBox(width: 6),
-                      Expanded(child: Text(adresse,
-                          style: theme.textTheme.bodyMedium,
-                          overflow: TextOverflow.ellipsis)),
-                    ],
-                  ),
-                ],
-                if (deadlinePassed)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 4),
-                    child: Row(
-                      children: [
-                        Icon(Icons.lock_clock, size: 16, color: Colors.red.shade400),
-                        const SizedBox(width: 6),
-                        Text('Frist overskredet',
-                            style: TextStyle(color: Colors.red.shade400, fontSize: 13)),
-                      ],
-                    ),
-                  ),
-                if (widget.isAdmin && isHidden && widget.onPublish != null) ...[
-                  const SizedBox(height: 12),
-                  Container(
-                    padding: const EdgeInsets.fromLTRB(12, 10, 10, 10),
-                    decoration: BoxDecoration(
-                      color: _gold.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: _gold.withValues(alpha: 0.4)),
-                    ),
-                    child: Row(
-                      children: [
-                        const Icon(Icons.visibility_off_outlined,
-                            size: 18, color: _gold),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text('Skjult for spillerne',
-                                  style: _body(
-                                      size: 12,
-                                      weight: FontWeight.w700,
-                                      color: _gold)),
-                              Text('Bliver synlig ${_fmtDateTime(hiddenUntil)}',
-                                  style: _body(size: 11, color: _textSecondary)),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        FilledButton.icon(
-                          onPressed: widget.onPublish,
-                          icon: const Icon(Icons.campaign_outlined, size: 18),
-                          label: const Text('Udgiv nu'),
-                          style: FilledButton.styleFrom(
-                            backgroundColor: _gold,
-                            foregroundColor: _onGold,
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 14, vertical: 10),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-                const SizedBox(height: 14),
-                LayoutBuilder(builder: (ctx, constraints) {
-                  final wide = constraints.maxWidth >= 320;
-                  final tilmeldBtn = _ActionStatusButton(
-                    label: 'TILMELD',
-                    color: _success,
-                    icon: Icons.check,
-                    active: status == 'tilmeldt' || status == 'venteliste',
-                    onPressed: canSignUp ? widget.onSignUp : null,
-                  );
-                  // Afbud er også muligt EFTER fristen hvis man er tilmeldt —
-                  // så kan man melde sent afbud (med evt. bøde, håndteres i _decline).
-                  final canDecline = canSignUp ||
-                      status == 'tilmeldt' ||
-                      status == 'venteliste';
-                  final afbudBtn = _ActionStatusButton(
-                    label: 'AFBUD',
-                    color: _danger,
-                    icon: Icons.block,
-                    active: status == 'afmeldt',
-                    onPressed: canDecline ? widget.onDecline : null,
-                  );
-                  final calBtn = IconButton.outlined(
-                    onPressed: () => _downloadIcs(t),
-                    icon: const Icon(Icons.calendar_month_outlined, size: 18),
-                    tooltip: 'Tilføj til kalender',
-                    style: IconButton.styleFrom(
-                      side: const BorderSide(color: _borderSubtle),
-                      foregroundColor: _textPrimary,
-                    ),
-                  );
-                  if (wide) {
-                    return Row(
-                      children: [
-                        Expanded(child: tilmeldBtn),
-                        const SizedBox(width: 8),
-                        Expanded(child: afbudBtn),
-                        const SizedBox(width: 8),
-                        calBtn,
-                      ],
-                    );
-                  }
-                  // Smal skærm — knapperne pakker naturligt
-                  return Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    crossAxisAlignment: WrapCrossAlignment.center,
-                    children: [tilmeldBtn, afbudBtn, calBtn],
-                  );
-                }),
-              ],
-            ),
-          ),
-          if (totalParticipants > 0) ...[
-            const Divider(height: 1, color: _borderSubtle),
-            InkWell(
-              onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                builder: (_) => EventDetailScreen(
-                    training: t, isStaff: widget.isAdmin,
-                    canManage: widget.canManage),
-              )),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
-                child: Row(
-                  children: [
-                    if (item.tilmeldte.isNotEmpty) ...[
-                      _AvatarStack(
-                          names: item.tilmeldte.map((p) => p.navn).toList(),
-                          size: 26, maxShown: 4),
-                      const SizedBox(width: 10),
-                    ],
-                    Text('${item.tilmeldte.length} tilmeldt',
-                        style: const TextStyle(
-                            color: _success,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w700)),
-                    const SizedBox(width: 8),
-                    const Text('· tryk for detaljer',
-                        style: TextStyle(color: _textMuted, fontSize: 12)),
-                    const Spacer(),
-                    const Icon(Icons.chevron_right, size: 20, color: _textSecondary),
+                    Text(titel.toUpperCase(),
+                        style: _cond(size: 16, weight: FontWeight.w700),
+                        maxLines: 1, overflow: TextOverflow.ellipsis),
+                    const SizedBox(height: 2),
+                    Text(subtitle,
+                        style: _body(size: 12, color: _textSecondary),
+                        maxLines: 1, overflow: TextOverflow.ellipsis),
                   ],
                 ),
               ),
+              if (widget.canManage) ...[
+                const SizedBox(width: 6),
+                _CardMenu(
+                  onBoard: widget.onOpenBoard,
+                  onDelete: widget.onDelete,
+                ),
+              ],
+            ]),
+            const SizedBox(height: 11),
+            Container(
+              decoration: const BoxDecoration(
+                border: Border(top: BorderSide(color: _borderSubtle)),
+              ),
+              padding: const EdgeInsets.only(top: 11),
+              child: staffHidden
+                  ? Row(children: [
+                      const Icon(Icons.visibility_off_outlined,
+                          size: 15, color: _textMuted),
+                      const SizedBox(width: 7),
+                      Expanded(
+                        child: Text(
+                            'Udgives ${_fmtDate(hiddenUntil)}',
+                            style: _body(
+                                size: 12.5,
+                                weight: FontWeight.w600,
+                                color: _textMuted),
+                            maxLines: 1, overflow: TextOverflow.ellipsis),
+                      ),
+                      OutlinedButton(
+                        onPressed: widget.onPublish,
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: _neon,
+                          side: BorderSide(color: _neon.withValues(alpha: 0.55)),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 14, vertical: 9),
+                          textStyle: _body(size: 13, weight: FontWeight.w700),
+                        ),
+                        child: const Text('Udgiv nu'),
+                      ),
+                    ])
+                  : isSignedUp
+                      ? Row(children: [
+                          Expanded(
+                            child: Row(children: [
+                              const Icon(Icons.check,
+                                  size: 15, color: _success),
+                              const SizedBox(width: 6),
+                              Text('Tilmeldt',
+                                  style: _body(
+                                      size: 13,
+                                      weight: FontWeight.w700,
+                                      color: _success)),
+                            ]),
+                          ),
+                          OutlinedButton(
+                            onPressed: canDecline ? widget.onDecline : null,
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: _danger,
+                              side: BorderSide(
+                                  color: _danger.withValues(alpha: 0.5)),
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 14, vertical: 9),
+                              textStyle: _body(size: 13, weight: FontWeight.w700),
+                            ),
+                            child: const Text('Meld afbud'),
+                          ),
+                        ])
+                      : Row(children: [
+                          Expanded(
+                            child: FilledButton(
+                              onPressed: canSignUp ? widget.onSignUp : null,
+                              style: FilledButton.styleFrom(
+                                backgroundColor: _neon,
+                                padding: const EdgeInsets.symmetric(vertical: 11),
+                                textStyle:
+                                    _body(size: 13, weight: FontWeight.w700),
+                              ),
+                              child: const Text('Tilmeld'),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: FilledButton(
+                              onPressed: canDecline ? widget.onDecline : null,
+                              style: FilledButton.styleFrom(
+                                backgroundColor: _surfaceElevated,
+                                foregroundColor: _textSecondary,
+                                padding: const EdgeInsets.symmetric(vertical: 11),
+                                textStyle:
+                                    _body(size: 13, weight: FontWeight.w700),
+                              ),
+                              child: const Text('Afbud'),
+                            ),
+                          ),
+                        ]),
             ),
           ],
-        ],
+        ),
       ),
+    );
+  }
+}
+
+/// Kort-overløbsmenu (kaptajn/staff): board + slet. Stopper tap i at åbne detalje.
+class _CardMenu extends StatelessWidget {
+  final VoidCallback? onBoard;
+  final VoidCallback? onDelete;
+  const _CardMenu({this.onBoard, this.onDelete});
+  @override
+  Widget build(BuildContext context) {
+    if (onBoard == null && onDelete == null) return const SizedBox.shrink();
+    return PopupMenuButton<String>(
+      icon: const Icon(Icons.more_vert, size: 20, color: _textMuted),
+      padding: EdgeInsets.zero,
+      onSelected: (v) {
+        if (v == 'board') onBoard?.call();
+        if (v == 'delete') onDelete?.call();
+      },
+      itemBuilder: (_) => [
+        if (onBoard != null)
+          const PopupMenuItem(
+            value: 'board',
+            child: Row(children: [
+              Icon(Icons.view_kanban_outlined, size: 18, color: _neon),
+              SizedBox(width: 10),
+              Text('Drag-and-drop board'),
+            ]),
+          ),
+        if (onDelete != null)
+          const PopupMenuItem(
+            value: 'delete',
+            child: Row(children: [
+              Icon(Icons.delete_outline, size: 18, color: _danger),
+              SizedBox(width: 10),
+              Text('Slet begivenhed'),
+            ]),
+          ),
+      ],
     );
   }
 }
@@ -1204,152 +1256,6 @@ class _ParticipantGroup extends StatelessWidget {
             )).toList(),
           ),
       ],
-    );
-  }
-}
-
-class _ActionStatusButton extends StatelessWidget {
-  final String label;
-  final Color color;
-  final IconData icon;
-  final bool active;
-  final VoidCallback? onPressed;
-  const _ActionStatusButton({
-    required this.label,
-    required this.color,
-    required this.icon,
-    required this.active,
-    required this.onPressed,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    if (active) {
-      return FilledButton.icon(
-        onPressed: onPressed,
-        icon: Icon(icon, size: 16),
-        label: Text(label,
-            style: const TextStyle(letterSpacing: 1, fontWeight: FontWeight.w700)),
-        style: FilledButton.styleFrom(
-          backgroundColor: color,
-          foregroundColor: Colors.white,
-          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 12),
-          minimumSize: const Size(0, 44),
-        ),
-      );
-    }
-    return OutlinedButton.icon(
-      onPressed: onPressed,
-      icon: Icon(icon, size: 16,
-          color: onPressed == null ? _textMuted : color),
-      label: Text(label,
-          style: TextStyle(
-              letterSpacing: 1,
-              fontWeight: FontWeight.w700,
-              color: onPressed == null ? _textMuted : color)),
-      style: OutlinedButton.styleFrom(
-        side: BorderSide(
-            color: onPressed == null
-                ? _borderSubtle
-                : color.withValues(alpha: 0.5),
-            width: 1),
-        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 12),
-        minimumSize: const Size(0, 44),
-        foregroundColor: color,
-      ),
-    );
-  }
-}
-
-class _SquadBadge extends StatelessWidget {
-  final int signedUp;
-  final int? max; // null = ubegrænset
-  final int trainerCount;
-  const _SquadBadge({
-    required this.signedUp,
-    required this.max,
-    this.trainerCount = 0,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final full = max != null && signedUp >= max!;
-    final color = full ? Colors.orange.shade400 : _neon;
-    final base = max == null
-        ? '$signedUp · ∞ pladser'
-        : '$signedUp/$max på holdet';
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-          decoration: BoxDecoration(
-            color: color.withValues(alpha: 0.12),
-            borderRadius: BorderRadius.circular(6),
-            border: Border.all(color: color.withValues(alpha: 0.4), width: 1),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.group, size: 14, color: color),
-              const SizedBox(width: 6),
-              Text(base,
-                  style: TextStyle(
-                      color: color, fontSize: 12, fontWeight: FontWeight.bold)),
-            ],
-          ),
-        ),
-        if (trainerCount > 0) ...[
-          const SizedBox(width: 6),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-            decoration: BoxDecoration(
-              color: Colors.lightBlue.shade300.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(6),
-              border: Border.all(
-                  color: Colors.lightBlue.shade300.withValues(alpha: 0.4), width: 1),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.shield, size: 12, color: Colors.lightBlue.shade300),
-                const SizedBox(width: 4),
-                Text('+$trainerCount',
-                    style: TextStyle(
-                        color: Colors.lightBlue.shade300,
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold)),
-              ],
-            ),
-          ),
-        ],
-      ],
-    );
-  }
-}
-
-class _MyStatusChip extends StatelessWidget {
-  final String status;
-  const _MyStatusChip({required this.status});
-
-  @override
-  Widget build(BuildContext context) {
-    final (label, color) = switch (status) {
-      'tilmeldt'   => ('PÅ HOLDET', Colors.green.shade400),
-      'venteliste' => ('VENTELISTE', Colors.orange.shade400),
-      'afmeldt'    => ('AFMELDT', _textMuted),
-      _            => (status, Colors.blue.shade300),
-    };
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.18),
-        borderRadius: BorderRadius.circular(4),
-      ),
-      child: Text(label,
-          style: TextStyle(
-              color: color, fontSize: 10,
-              fontWeight: FontWeight.bold, letterSpacing: 1)),
     );
   }
 }
@@ -1732,12 +1638,12 @@ class _InitialAvatar extends StatelessWidget {
 class _AvatarStack extends StatelessWidget {
   final List<String> names;
   final double size;
-  final int maxShown;
-  const _AvatarStack({required this.names, this.size = 26, this.maxShown = 5});
+  const _AvatarStack({required this.names, this.size = 26});
 
   @override
   Widget build(BuildContext context) {
     if (names.isEmpty) return const SizedBox.shrink();
+    const maxShown = 5;
     final shown = names.take(maxShown).toList();
     final step  = size - 8;
     final width = shown.length == 1
@@ -1759,73 +1665,6 @@ class _AvatarStack extends StatelessWidget {
   }
 }
 
-/// Hold-switcher — Alle / Hold 1 / Hold 2 / Kamp-trup (kun brugerens hold).
-class _HoldSwitcher extends StatelessWidget {
-  final List<Map<String, dynamic>> groups;
-  final String? selectedId;
-  final ValueChanged<String?> onChanged;
-  const _HoldSwitcher({
-    required this.groups,
-    required this.selectedId,
-    required this.onChanged,
-  });
-
-  static Color _hex(String? h) {
-    if (h == null || h.isEmpty) return _neon;
-    return Color(int.parse(h.replaceFirst('#', ''), radix: 16) | 0xFF000000);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    Widget chip(String label, String? id, Color color) {
-      final active = selectedId == id;
-      return Padding(
-        padding: const EdgeInsets.only(right: 8),
-        child: GestureDetector(
-          onTap: () => onChanged(id),
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
-            decoration: BoxDecoration(
-              color: active ? color : _surfaceDark,
-              borderRadius: BorderRadius.circular(999),
-              border: Border.all(color: active ? color : _borderSubtle),
-            ),
-            child: Row(mainAxisSize: MainAxisSize.min, children: [
-              if (id != null) ...[
-                Container(
-                  width: 8, height: 8,
-                  decoration: BoxDecoration(
-                      color: active ? Colors.white : color,
-                      shape: BoxShape.circle),
-                ),
-                const SizedBox(width: 7),
-              ],
-              Text(label,
-                  style: _body(
-                      size: 13,
-                      weight: FontWeight.w700,
-                      color: active ? Colors.white : _textSecondary)),
-            ]),
-          ),
-        ),
-      );
-    }
-
-    return SizedBox(
-      height: 40,
-      child: ListView(
-        scrollDirection: Axis.horizontal,
-        padding: EdgeInsets.zero,
-        children: [
-          chip('Alle', null, _neon),
-          for (final g in groups)
-            chip(g['navn'] as String, g['id'] as String, _hex(g['farve'] as String?)),
-        ],
-      ),
-    );
-  }
-}
-
 /// Kommende / Historik — pille-toggle.
 class _KommendeHistorikToggle extends StatelessWidget {
   final bool showHistory;
@@ -1839,25 +1678,25 @@ class _KommendeHistorikToggle extends StatelessWidget {
   Widget build(BuildContext context) {
     Widget seg(String label, bool isHistory) {
       final active = showHistory == isHistory;
-      return Expanded(
-        child: GestureDetector(
-          onTap: () => onChanged(isHistory),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 180),
-            height: 40,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              color: active ? _neon : Colors.transparent,
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Text(
-              label,
-              style: _body(
-                size: 13,
-                weight: FontWeight.w700,
-                spacing: 0.3,
-                color: active ? Colors.white : _textSecondary,
-              ),
+      return GestureDetector(
+        onTap: () => onChanged(isHistory),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          decoration: BoxDecoration(
+            color: active ? _surfaceElevated : Colors.transparent,
+            borderRadius: BorderRadius.circular(9),
+            boxShadow: active
+                ? [BoxShadow(color: Colors.black.withValues(alpha: 0.4), blurRadius: 3, offset: const Offset(0, 1))]
+                : null,
+          ),
+          child: Text(
+            label.toUpperCase(),
+            style: _cond(
+              size: 15,
+              weight: FontWeight.w800,
+              spacing: 0.3,
+              color: active ? _textPrimary : _textMuted,
             ),
           ),
         ),
@@ -1867,11 +1706,13 @@ class _KommendeHistorikToggle extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(4),
       decoration: BoxDecoration(
-        color: _surfaceDark,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: _borderSubtle),
+        color: const Color(0xFF1C1713),
+        borderRadius: BorderRadius.circular(12),
       ),
-      child: Row(children: [seg('Kommende', false), seg('Historik', true)]),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [seg('Kommende', false), seg('Historik', true)],
+      ),
     );
   }
 }
@@ -1891,7 +1732,6 @@ class _NextUpHero extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     final t        = item.training;
     final start    = DateTime.parse(t['start_tid'] as String).toLocal();
     final slut     = DateTime.parse(t['slut_tid'] as String).toLocal();
@@ -1904,103 +1744,155 @@ class _NextUpHero extends StatelessWidget {
     final hasAddr  = adresse.isNotEmpty && adresse != _addressUnspecified;
     final deadlinePassed = DateTime.now().isAfter(deadline);
     final canSignUp = !deadlinePassed || isAdmin;
-    final names = item.tilmeldte.map((p) => p.navn).toList();
+    final isSignedUp = status == 'tilmeldt' || status == 'venteliste';
+    final canDecline = canSignUp || isSignedUp;
+    final subtitle = hasAddr
+        ? '${_fmtTime(start)}–${_fmtTime(slut)} · $adresse'
+        : '${_fmtTime(start)}–${_fmtTime(slut)}';
 
     return Container(
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
+        gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [_surfaceElevated, _surfaceDark],
+          colors: [
+            Color.alphaBlend(_neon.withValues(alpha: 0.12), _surfaceDark),
+            _surfaceDark,
+          ],
         ),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: _neon.withValues(alpha: 0.35), width: 1.5),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: _neon.withValues(alpha: 0.3)),
       ),
-      padding: const EdgeInsets.all(18),
+      padding: const EdgeInsets.all(15),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: Text('NÆSTE PÅ PROGRAMMET',
-                    style: _body(
-                        size: 11,
-                        weight: FontWeight.w700,
-                        spacing: 1.4,
-                        color: _neon)),
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                decoration: BoxDecoration(
-                  color: _neon,
-                  borderRadius: BorderRadius.circular(999),
-                ),
-                child: Text(_omDage(start),
-                    style: _body(
-                        size: 12, weight: FontWeight.w700, color: Colors.white)),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          Text(titel.toUpperCase(), style: theme.textTheme.titleLarge),
-          const SizedBox(height: 8),
           Row(children: [
-            const Icon(Icons.schedule, size: 15, color: _textSecondary),
-            const SizedBox(width: 6),
             Expanded(
-              child: Text('${_fmtDateTime(start)} – ${_fmtTime(slut)}',
-                  style: theme.textTheme.bodyMedium
-                      ?.copyWith(color: _textSecondary)),
+              child: Text('NÆSTE PÅ PROGRAMMET',
+                  style: _cond(
+                      size: 12,
+                      weight: FontWeight.w700,
+                      spacing: 0.8,
+                      color: _neon)),
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 4),
+              decoration: BoxDecoration(
+                color: _neon.withValues(alpha: 0.16),
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: Text(_omDage(start),
+                  style: _body(
+                      size: 11, weight: FontWeight.w700, color: _neon)),
             ),
           ]),
-          if (hasAddr) ...[
-            const SizedBox(height: 4),
+          const SizedBox(height: 11),
+          Row(children: [
+            _dateBlock(start, big: true),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(titel.toUpperCase(),
+                      style: _cond(size: 20, weight: FontWeight.w800),
+                      maxLines: 2, overflow: TextOverflow.ellipsis),
+                  const SizedBox(height: 2),
+                  Text(subtitle,
+                      style: _body(size: 12.5, color: _textSecondary),
+                      maxLines: 1, overflow: TextOverflow.ellipsis),
+                ],
+              ),
+            ),
+          ]),
+          const SizedBox(height: 12),
+          Container(
+            decoration: const BoxDecoration(
+              border: Border(
+                top: BorderSide(color: _borderSubtle),
+                bottom: BorderSide(color: _borderSubtle),
+              ),
+            ),
+            padding: const EdgeInsets.symmetric(vertical: 11),
+            child: Row(children: [
+              const Icon(Icons.people_outline, size: 16, color: _success),
+              const SizedBox(width: 9),
+              Text.rich(TextSpan(children: [
+                TextSpan(
+                    text: '$cnt',
+                    style: _body(
+                        size: 13, weight: FontWeight.w700, color: _success)),
+                TextSpan(
+                    text: max == null ? ' tilmeldt' : ' af $max kommer',
+                    style: _body(size: 13, color: _textSecondary)),
+              ])),
+            ]),
+          ),
+          const SizedBox(height: 12),
+          if (isSignedUp)
             Row(children: [
-              const Icon(Icons.place_outlined, size: 15, color: _textSecondary),
-              const SizedBox(width: 6),
               Expanded(
-                child: Text(adresse,
-                    style: theme.textTheme.bodyMedium
-                        ?.copyWith(color: _textSecondary),
-                    overflow: TextOverflow.ellipsis),
+                child: Container(
+                  alignment: Alignment.center,
+                  padding: const EdgeInsets.symmetric(vertical: 11),
+                  decoration: BoxDecoration(
+                    color: _success.withValues(alpha: 0.16),
+                    borderRadius: BorderRadius.circular(11),
+                    border: Border.all(color: _success.withValues(alpha: 0.5)),
+                  ),
+                  child: Row(mainAxisSize: MainAxisSize.min, children: [
+                    const Icon(Icons.check, size: 16, color: _success),
+                    const SizedBox(width: 7),
+                    Text('Tilmeldt',
+                        style: _body(
+                            size: 13.5,
+                            weight: FontWeight.w700,
+                            color: _success)),
+                  ]),
+                ),
+              ),
+              const SizedBox(width: 8),
+              OutlinedButton(
+                onPressed: canDecline ? onDecline : null,
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: _danger,
+                  side: BorderSide(color: _danger.withValues(alpha: 0.5)),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  textStyle: _body(size: 13.5, weight: FontWeight.w700),
+                ),
+                child: const Text('Meld afbud'),
+              ),
+            ])
+          else
+            Row(children: [
+              Expanded(
+                child: FilledButton(
+                  onPressed: canSignUp ? onSignUp : null,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: _neon,
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    textStyle: _body(size: 13.5, weight: FontWeight.w700),
+                  ),
+                  child: const Text('Tilmeld'),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: canDecline ? onDecline : null,
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: _danger,
+                    side: BorderSide(color: _danger.withValues(alpha: 0.5)),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    textStyle: _body(size: 13.5, weight: FontWeight.w700),
+                  ),
+                  child: const Text('Afbud'),
+                ),
               ),
             ]),
-          ],
-          const SizedBox(height: 14),
-          Row(children: [
-            if (names.isNotEmpty) ...[
-              _AvatarStack(names: names),
-              const SizedBox(width: 10),
-            ],
-            Text(
-              max == null ? '$cnt tilmeldt' : '$cnt af $max tilmeldt',
-              style: _body(size: 13, weight: FontWeight.w600, color: _textSecondary),
-            ),
-          ]),
-          const SizedBox(height: 14),
-          Row(children: [
-            Expanded(
-              child: _ActionStatusButton(
-                label: 'TILMELD',
-                color: _success,
-                icon: Icons.check,
-                active: status == 'tilmeldt' || status == 'venteliste',
-                onPressed: canSignUp ? onSignUp : null,
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: _ActionStatusButton(
-                label: 'AFBUD',
-                color: _danger,
-                icon: Icons.block,
-                active: status == 'afmeldt',
-                onPressed: canSignUp ? onDecline : null,
-              ),
-            ),
-          ]),
         ],
       ),
     );

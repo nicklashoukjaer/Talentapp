@@ -354,6 +354,14 @@ class _HomeShellState extends State<HomeShell> {
           ),
         ),
         actions: [
+          // Tragt = hold-filter (som prototypens header). Kun på Oversigt.
+          if (_selectedIndex.clamp(0, pages.length - 1) == _tabOversigt)
+            IconButton(
+              onPressed: () =>
+                  _oversigtKey.currentState?.showHoldFilterSheet(),
+              icon: const Icon(Icons.filter_list, color: _textPrimary),
+              tooltip: 'Filtrér på hold',
+            ),
           const _NotificationsBell(),
           // Ctrl+K kun på brede skærme (desktop/web) — skjult på mobil
           if (MediaQuery.of(context).size.width >= 700) ...[

@@ -354,11 +354,18 @@ class _HomeShellState extends State<HomeShell> {
           ),
         ),
         actions: [
-          // Tragt = hold-filter (som prototypens header). Kun på Oversigt.
-          if (_selectedIndex.clamp(0, pages.length - 1) == _tabOversigt)
+          // Tragt = hold-filter (som prototypens header) på Oversigt + Bøder.
+          if (_selectedIndex.clamp(0, pages.length - 1) == _tabOversigt ||
+              _selectedIndex.clamp(0, pages.length - 1) == _tabBoede)
             IconButton(
-              onPressed: () =>
-                  _oversigtKey.currentState?.showHoldFilterSheet(),
+              onPressed: () {
+                final idx = _selectedIndex.clamp(0, pages.length - 1);
+                if (idx == _tabOversigt) {
+                  _oversigtKey.currentState?.showHoldFilterSheet();
+                } else {
+                  _bodekasseKey.currentState?.showHoldFilterSheet();
+                }
+              },
               icon: const Icon(Icons.filter_list, color: _textPrimary),
               tooltip: 'Filtrér på hold',
             ),

@@ -148,20 +148,139 @@ class BodekasseTabState extends State<BodekasseTab> {
     }
   }
 
+  static Color _commHex(Object? farve) {
+    final h = farve as String?;
+    if (h == null || h.isEmpty) return _neon;
+    return Color(int.parse(h.replaceFirst('#', ''), radix: 16) | 0xFF000000);
+  }
+
+  // Kort label for det aktive hold-filter (vises i titel-rækken).
+  String _filterLabel() {
+    if (_selectedGroupIds.length == 1) {
+      final g = _groups.firstWhere((g) => g['id'] == _selectedGroupIds.first,
+          orElse: () => const {});
+      return (g['navn'] as String?) ?? 'Hold';
+    }
+    return '${_selectedGroupIds.length} hold';
+  }
+
+  /// Hold-filter som bundsheet — kaldes af tragt-ikonet i app-headeren.
+  /// Admin: multi-valg. Træner/spiller: enkelt-valg blandt egne hold.
+  Future<void> showHoldFilterSheet() async {
+    final groups = widget.isAdmin
+        ? _groups
+        : _groups.where((g) => _myGroupIds.contains(g['id'] as String)).toList();
+    if (groups.isEmpty) {
+      _snack(context, 'Ingen hold at filtrere på', _textSecondary);
+      return;
+    }
+    final multi = widget.isAdmin;
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (ctx) => StatefulBuilder(builder: (ctx, setSheet) {
+        void toggle(String? id) {
+          setState(() {
+            if (id == null) {
+              _selectedGroupIds.clear();
+            } else if (multi) {
+              if (_selectedGroupIds.contains(id)) {
+                _selectedGroupIds.remove(id);
+              } else {
+                _selectedGroupIds.add(id);
+              }
+            } else {
+              _selectedGroupIds
+                ..clear()
+                ..add(id);
+            }
+          });
+          setSheet(() {});
+          if (!multi) Navigator.of(ctx).pop();
+        }
+
+        Widget option(String? id, String label, Color dot) {
+          final selected =
+              id == null ? _selectedGroupIds.isEmpty : _selectedGroupIds.contains(id);
+          return InkWell(
+            onTap: () => toggle(id),
+            borderRadius: BorderRadius.circular(12),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+              margin: const EdgeInsets.only(bottom: 8),
+              decoration: BoxDecoration(
+                color: selected ? _neon.withValues(alpha: 0.14) : _surfaceElevated,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: selected ? _neon : _borderSubtle),
+              ),
+              child: Row(children: [
+                Container(
+                  width: 11, height: 11,
+                  decoration: BoxDecoration(color: dot, shape: BoxShape.circle),
+                ),
+                const SizedBox(width: 11),
+                Expanded(
+                  child: Text(label,
+                      style: _body(
+                          size: 14,
+                          weight: FontWeight.w600,
+                          color: selected ? _neon : _textPrimary)),
+                ),
+                if (selected)
+                  Icon(multi ? Icons.check_box : Icons.check,
+                      size: 18, color: _neon),
+              ]),
+            ),
+          );
+        }
+
+        return SafeArea(
+          top: false,
+          child: Container(
+            margin: const EdgeInsets.all(12),
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+            decoration: BoxDecoration(
+              color: _surfaceDark,
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: _borderSubtle),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(children: [
+                  Expanded(
+                    child: Text('FILTRÉR PÅ HOLD',
+                        style: _cond(size: 20, weight: FontWeight.w800)),
+                  ),
+                  if (multi)
+                    TextButton(
+                      onPressed: () => Navigator.of(ctx).pop(),
+                      style: TextButton.styleFrom(foregroundColor: _neon),
+                      child: const Text('Færdig'),
+                    ),
+                ]),
+                const SizedBox(height: 8),
+                option(null, widget.isAdmin ? 'Alle hold' : 'Alle mine hold', _neon),
+                for (final g in groups)
+                  option(g['id'] as String, g['navn'] as String,
+                      _commHex(g['farve'])),
+              ],
+            ),
+          ),
+        );
+      }),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     if (_loading) return _loadingSkeleton();
     if (_error != null) return _ErrorView(error: _error!, onRetry: reload);
 
-    // Admin: alle hold, MULTI-valg, "Alle" = hele klubben.
-    // Træner/spiller: kun egne hold, SINGLE-valg, "Alle" = egne hold slået sammen.
-    final switcherGroups = widget.isAdmin
-        ? _groups
-        : _groups.where((g) => _myGroupIds.contains(g['id'] as String)).toList();
-
     // Grundmængden en bruger overhovedet kan se: admin ser alle; øvrige kun
-    // personer på deres egne hold.
+    // personer på deres egne hold. (Hold-filteret sidder i app-headerens tragt.)
     Iterable<Map<String, dynamic>> base;
     if (widget.isAdmin) {
       base = _rows;
@@ -181,10 +300,6 @@ class BodekasseTabState extends State<BodekasseTab> {
                     .contains(r['id'] as String))))
         .toList();
 
-    // Vis switcheren når der er noget at vælge imellem.
-    final showSwitcher =
-        widget.isAdmin ? switcherGroups.isNotEmpty : switcherGroups.length > 1;
-
     return RefreshIndicator(
       onRefresh: reload,
       child: ListView(
@@ -197,74 +312,22 @@ class BodekasseTabState extends State<BodekasseTab> {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   Padding(
-                    padding: const EdgeInsets.only(bottom: 16, left: 8, top: 8),
-                    child: LayoutBuilder(builder: (ctx, constraints) {
-                      final wide = constraints.maxWidth >= 480;
-                      final titleRow = Row(
-                        children: [
-                          Icon(Icons.emoji_events, size: 28, color: Colors.amber.shade700),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Text('Bødekasse — Highscore',
-                                style: theme.textTheme.headlineSmall,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis),
-                          ),
-                        ],
-                      );
-                      final actions = Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          OutlinedButton.icon(
-                            onPressed: () async {
-                              await showDialog<bool>(
-                                context: context,
-                                builder: (_) => const SuggestFineTypeDialog(),
-                              );
-                            },
-                            icon: const Icon(Icons.lightbulb_outline, size: 18),
-                            label: const Text('Foreslå'),
-                          ),
-                          const SizedBox(width: 4),
-                          IconButton(
-                            onPressed: reload,
-                            icon: const Icon(Icons.refresh),
-                            tooltip: 'Opdater',
-                          ),
-                        ],
-                      );
-                      if (wide) {
-                        return Row(
-                          children: [
-                            Expanded(child: titleRow),
-                            actions,
-                          ],
-                        );
-                      }
-                      return Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          titleRow,
-                          const SizedBox(height: 8),
-                          actions,
-                        ],
-                      );
-                    }),
+                    padding: const EdgeInsets.only(bottom: 16, top: 4),
+                    child: Row(children: [
+                      const Text('🏆', style: TextStyle(fontSize: 22)),
+                      const SizedBox(width: 9),
+                      Text('BØDEKASSE',
+                          style: _cond(size: 22, weight: FontWeight.w800)),
+                      if (_selectedGroupIds.isNotEmpty) ...[
+                        const Spacer(),
+                        Icon(Icons.filter_list, size: 15, color: _neon),
+                        const SizedBox(width: 4),
+                        Text(_filterLabel(),
+                            style: _body(
+                                size: 12, weight: FontWeight.w700, color: _neon)),
+                      ],
+                    ]),
                   ),
-                  if (showSwitcher) ...[
-                    _HoldMultiSwitcher(
-                      groups: switcherGroups,
-                      selectedIds: _selectedGroupIds,
-                      includeAll: true,
-                      multiSelect: widget.isAdmin,
-                      onChanged: (ids) => setState(() {
-                        _selectedGroupIds
-                          ..clear()
-                          ..addAll(ids);
-                      }),
-                    ),
-                    const SizedBox(height: 16),
-                  ],
                   if (filtered.isEmpty)
                     const _EmptyState(
                       icon: Icons.emoji_events_outlined,
@@ -298,101 +361,23 @@ class BodekasseTabState extends State<BodekasseTab> {
                           isOwn: e.value['id'] == widget.currentUserId,
                           onTap: () => _open(e.value),
                         )),
+                    const SizedBox(height: 10),
+                    Center(
+                      child: TextButton.icon(
+                        onPressed: () => showDialog<bool>(
+                          context: context,
+                          builder: (_) => const SuggestFineTypeDialog(),
+                        ),
+                        icon: const Icon(Icons.lightbulb_outline, size: 16),
+                        label: const Text('Foreslå en bødetype'),
+                        style: TextButton.styleFrom(foregroundColor: _textSecondary),
+                      ),
+                    ),
                   ],
                 ],
               ),
             ),
           ),
-        ],
-      ),
-    );
-  }
-}
-
-/// Hold-switcher med MULTI-valg — bruges i bødekassen. "Alle" rydder valget;
-/// hvert hold slås til/fra. Flere hold kan være valgt samtidig.
-class _HoldMultiSwitcher extends StatelessWidget {
-  final List<Map<String, dynamic>> groups;
-  final Set<String> selectedIds;
-  final bool includeAll;
-  final bool multiSelect; // true = flere hold ad gangen; false = single-valg
-  final ValueChanged<Set<String>> onChanged;
-  const _HoldMultiSwitcher({
-    required this.groups,
-    required this.selectedIds,
-    required this.onChanged,
-    this.includeAll = true,
-    this.multiSelect = true,
-  });
-
-  static Color _hex(String? h) {
-    if (h == null || h.isEmpty) return _neon;
-    return Color(int.parse(h.replaceFirst('#', ''), radix: 16) | 0xFF000000);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    Widget chip(String label,
-        {String? id,
-        required Color color,
-        required bool active,
-        required VoidCallback onTap}) {
-      return Padding(
-        padding: const EdgeInsets.only(right: 8),
-        child: GestureDetector(
-          onTap: onTap,
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
-            decoration: BoxDecoration(
-              color: active ? color : _surfaceDark,
-              borderRadius: BorderRadius.circular(999),
-              border: Border.all(color: active ? color : _borderSubtle),
-            ),
-            child: Row(mainAxisSize: MainAxisSize.min, children: [
-              if (id != null) ...[
-                Icon(active ? Icons.check : Icons.circle,
-                    size: active ? 14 : 8,
-                    color: active ? Colors.white : color),
-                const SizedBox(width: 7),
-              ],
-              Text(label,
-                  style: _body(
-                      size: 13,
-                      weight: FontWeight.w700,
-                      color: active ? Colors.white : _textSecondary)),
-            ]),
-          ),
-        ),
-      );
-    }
-
-    return SizedBox(
-      height: 40,
-      child: ListView(
-        scrollDirection: Axis.horizontal,
-        padding: EdgeInsets.zero,
-        children: [
-          if (includeAll)
-            chip('Alle',
-                color: _neon,
-                active: selectedIds.isEmpty,
-                onTap: () => onChanged(<String>{})),
-          for (final g in groups)
-            chip(g['navn'] as String,
-                id: g['id'] as String,
-                color: _hex(g['farve'] as String?),
-                active: selectedIds.contains(g['id'] as String),
-                onTap: () {
-                  final id = g['id'] as String;
-                  if (multiSelect) {
-                    final next = {...selectedIds};
-                    if (!next.add(id)) next.remove(id);
-                    onChanged(next);
-                  } else {
-                    // Single-valg: vælg kun dette hold (tryk igen = tilbage til Alle).
-                    onChanged(selectedIds.contains(id) ? <String>{} : {id});
-                  }
-                }),
         ],
       ),
     );
@@ -658,6 +643,8 @@ class _LeaderboardRow extends StatelessWidget {
                   Text('total', style: _body(size: 11, color: _textMuted)),
                 ],
               ),
+              const SizedBox(width: 6),
+              const Icon(Icons.chevron_right, size: 16, color: _textMuted),
             ],
           ),
         ),

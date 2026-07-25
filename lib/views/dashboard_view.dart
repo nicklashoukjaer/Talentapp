@@ -3405,6 +3405,7 @@ class _CreateTrainingDialogState extends State<CreateTrainingDialog> {
   }
   bool _recurring = false;
   bool _saving = false;
+  String? _seriesId; // sættes ved gem hvis serien har flere begivenheder
   List<Map<String, dynamic>> _groups = const [];
   // Valgte hold. Tom = alle hold (fælles). Kan indeholde ét eller flere hold.
   final Set<String> _groupIds = {};
@@ -3552,6 +3553,9 @@ class _CreateTrainingDialogState extends State<CreateTrainingDialog> {
       'tilmeldings_deadline': deadline.toUtc().toIso8601String(),
       'synlig_fra':           synligFra?.toUtc().toIso8601String(),
       'created_by':           userId,
+      // Serie-id sættes kun på gentagne serier, så "redigér hele serien" kan
+      // finde søsker-begivenhederne.
+      if (_seriesId != null) 'series_id': _seriesId,
       // Flere hold gemmes i group_ids. group_id holdes i sync (ét hold → dét,
       // ellers null) af hensyn til ældre kode der stadig læser group_id.
       'group_ids':            _groupIds.isEmpty ? null : _groupIds.toList(),
@@ -3580,6 +3584,8 @@ class _CreateTrainingDialogState extends State<CreateTrainingDialog> {
     final adresseVal = adresseRaw.isEmpty ? _addressUnspecified : adresseRaw;
     final userId = supabase.auth.currentUser!.id;
     final weeks = _plannedWeeks;
+    // Gentagen serie → fælles serie-id, så hele serien kan redigeres samlet.
+    _seriesId = weeks > 1 ? genUuidV4() : null;
 
     final rows = List<Map<String, dynamic>>.generate(weeks, (i) {
       final delta = Duration(days: 7 * i);

@@ -74,7 +74,7 @@ class _OversigtTabState extends State<OversigtTab> {
       final results = await Future.wait([
         // Træninger 90 dage tilbage og frem
         supabase.from('trainings')
-            .select('id, titel, beskrivelse, max_deltagere, start_tid, slut_tid, adresse, tilmeldings_deadline, group_id, group_ids, synlig_fra, created_by')
+            .select('id, titel, beskrivelse, max_deltagere, start_tid, slut_tid, adresse, tilmeldings_deadline, group_id, group_ids, synlig_fra, created_by, series_id')
             .gte('start_tid', sinceIso).order('start_tid'),
         // Polls (alle — lukkede filtreres client-side)
         supabase.from('polls')
@@ -2306,6 +2306,7 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
   int _commentCount = 0; // vist på kommentar-fanen
   bool _showAllMissing = false; // fold lange "mangler svar"-lister ud
   bool _afbudExpanded = false;   // fold afbud-striben ud
+  final Set<String> _remindSkip = {}; // personer der IKKE skal påmindes
 
   @override
   void initState() {
@@ -2486,46 +2487,6 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
     }
   }
 
-  Widget _guestsSection() {
-    if (_guests.isEmpty && !widget.canManage) return const SizedBox.shrink();
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        if (_guests.isNotEmpty) ...[
-          Padding(
-            padding: const EdgeInsets.only(bottom: 8, top: 4),
-            child: Row(children: [
-              const Icon(Icons.person_add_alt, size: 16, color: _gold),
-              const SizedBox(width: 6),
-              Text('AFLØSERE · ${_guests.length}',
-                  style: _body(
-                      size: 12,
-                      weight: FontWeight.w700,
-                      spacing: 0.8,
-                      color: _gold)),
-            ]),
-          ),
-          for (final g in _guests) _guestRow(g),
-          const SizedBox(height: 8),
-        ],
-        if (widget.canManage)
-          Align(
-            alignment: Alignment.centerLeft,
-            child: OutlinedButton.icon(
-              onPressed: _busy ? null : _addGuest,
-              icon: const Icon(Icons.person_add_alt_1, size: 18),
-              label: const Text('Tilføj afløser'),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: _gold,
-                side: BorderSide(color: _gold.withValues(alpha: 0.5)),
-              ),
-            ),
-          ),
-        const SizedBox(height: 4),
-      ],
-    );
-  }
-
   Widget _guestRow(Map<String, dynamic> g) {
     final navn = g['navn'] as String? ?? 'Gæst';
     final by = (g['profiles'] as Map<String, dynamic>?)?['navn'] as String?;
@@ -2593,8 +2554,10 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
   Future<void> _remindMissing() async {
     setState(() => _busy = true);
     try {
-      final count = await supabase.rpc('send_training_reminders',
-          params: {'p_training_id': widget.training['id']});
+      final count = await supabase.rpc('send_training_reminders', params: {
+        'p_training_id': widget.training['id'],
+        'p_exclude': _remindSkip.toList(),
+      });
       if (mounted) {
         _snack(context, 'Rykker sendt til $count medlem${count == 1 ? '' : 'mer'}',
             _success);
@@ -2824,19 +2787,43 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                             ],
                             const SizedBox(height: 18),
                             _tilmeldtSection(),
-                            _guestsSection(),
                             _manglerSection(),
                             _afbudSection(),
                             if (widget.canManage && _mangler.isNotEmpty) ...[
-                              const SizedBox(height: 8),
-                              SizedBox(
-                                width: double.infinity,
-                                child: FilledButton.icon(
-                                  onPressed: _busy ? null : _remindMissing,
-                                  icon: const Icon(Icons.notifications_active_outlined, size: 18),
-                                  label: const Text('Påmind alle der mangler'),
+                              const SizedBox(height: 4),
+                              Row(children: [
+                                const Icon(Icons.notifications_active_outlined,
+                                    size: 13, color: _textMuted),
+                                const SizedBox(width: 6),
+                                Expanded(
+                                  child: Text(
+                                      'Tryk klokken for at udelade nogen fra '
+                                      'påmindelsen',
+                                      style: _body(
+                                          size: 11, color: _textMuted)),
                                 ),
-                              ),
+                              ]),
+                              const SizedBox(height: 8),
+                              Builder(builder: (_) {
+                                final n = _mangler
+                                    .where((p) => !_remindSkip.contains(p.id))
+                                    .length;
+                                return SizedBox(
+                                  width: double.infinity,
+                                  child: FilledButton.icon(
+                                    onPressed:
+                                        (_busy || n == 0) ? null : _remindMissing,
+                                    icon: const Icon(
+                                        Icons.notifications_active_outlined,
+                                        size: 18),
+                                    label: Text(n == 0
+                                        ? 'Ingen valgt til påmindelse'
+                                        : (n == _mangler.length
+                                            ? 'Påmind alle $n der mangler'
+                                            : 'Påmind $n af ${_mangler.length}')),
+                                  ),
+                                );
+                              }),
                             ],
                             if (widget.canManage && started && _tilmeldt.isNotEmpty) ...[
                               const SizedBox(height: 8),
@@ -2880,7 +2867,7 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
 
   // ── 13b: renere fremmøde-overblik ──────────────────────────────────────────
 
-  Widget _sectionHeader(String label, int n, Color color) {
+  Widget _sectionHeader(String label, int n, Color color, {Widget? trailing}) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 8, top: 4),
       child: Row(children: [
@@ -2890,6 +2877,7 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
         Text('$label · $n',
             style: _body(
                 size: 12, weight: FontWeight.w800, spacing: 0.8, color: color)),
+        if (trailing != null) ...[const Spacer(), trailing],
       ]),
     );
   }
@@ -2949,12 +2937,31 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
   }
 
   Widget _tilmeldtSection() {
-    if (_tilmeldt.isEmpty) return const SizedBox.shrink();
+    // Tilmeldt-sektionen vises altid for staff (så "+ Afløser" er tilgængelig).
+    if (_tilmeldt.isEmpty && _guests.isEmpty && !widget.canManage) {
+      return const SizedBox.shrink();
+    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _sectionHeader('TILMELDT', _tilmeldt.length + _guests.length, _success),
+        _sectionHeader(
+          'TILMELDT', _tilmeldt.length + _guests.length, _success,
+          trailing: widget.canManage
+              ? TextButton.icon(
+                  onPressed: _busy ? null : _addGuest,
+                  icon: const Icon(Icons.person_add_alt_1, size: 16),
+                  label: const Text('Afløser'),
+                  style: TextButton.styleFrom(
+                    foregroundColor: _neon,
+                    visualDensity: VisualDensity.compact,
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  ),
+                )
+              : null,
+        ),
         for (final p in _tilmeldt) _answeredRow(p, tilmeldt: true),
+        for (final g in _guests) _guestRow(g),
         const SizedBox(height: 4),
       ],
     );
@@ -2982,6 +2989,8 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                     maxLines: 1, overflow: TextOverflow.ellipsis),
               ),
               if (widget.canManage) ...[
+                _bellToggle(p.id),
+                const SizedBox(width: 6),
                 _miniBtn(Icons.check, _success, () => _setStatus(p.id, 'tilmeldt')),
                 const SizedBox(width: 6),
                 _miniBtn(Icons.close, _danger, () => _setStatus(p.id, 'afmeldt')),
@@ -3048,6 +3057,34 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
           border: Border.all(color: color.withValues(alpha: 0.5)),
         ),
         child: Icon(icon, size: 18, color: color),
+      ),
+    );
+  }
+
+  /// Klokke-toggle: bestemmer om personen skal have rykkeren (aktiv = ja).
+  Widget _bellToggle(String userId) {
+    final skip = _remindSkip.contains(userId);
+    return GestureDetector(
+      onTap: () => setState(() {
+        if (skip) {
+          _remindSkip.remove(userId);
+        } else {
+          _remindSkip.add(userId);
+        }
+      }),
+      child: Container(
+        width: 34, height: 34,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: skip ? Colors.transparent : _neon.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+              color: skip ? _borderSubtle : _neon.withValues(alpha: 0.45)),
+        ),
+        child: Icon(
+            skip ? Icons.notifications_off_outlined : Icons.notifications_active_outlined,
+            size: 17,
+            color: skip ? _textMuted : _neon),
       ),
     );
   }
@@ -3570,7 +3607,12 @@ class _EditEventSheetState extends State<_EditEventSheet> {
   DateTime? _dato;
   TimeOfDay? _fra;
   TimeOfDay? _til;
+  int? _deadlineDays; // null = ingen frist
+  int? _visibleDays;  // null = straks synlig
+  bool _applySeries = false;
   bool _saving = false;
+
+  String? get _seriesId => widget.training['series_id'] as String?;
 
   @override
   void initState() {
@@ -3588,6 +3630,17 @@ class _EditEventSheetState extends State<_EditEventSheet> {
       final slut = DateTime.parse(t['slut_tid'] as String).toLocal();
       _til = TimeOfDay(hour: slut.hour, minute: slut.minute);
     }
+    // Udled relativ frist/udgivelse (dage før start) fra de gemte tidspunkter.
+    int? daysBefore(String? iso) {
+      if (iso == null) return null;
+      final when = DateTime.parse(iso).toLocal();
+      final d = DateTime(start.year, start.month, start.day)
+          .difference(DateTime(when.year, when.month, when.day))
+          .inDays;
+      return d <= 0 ? null : d;
+    }
+    _deadlineDays = daysBefore(t['tilmeldings_deadline'] as String?);
+    _visibleDays = daysBefore(t['synlig_fra'] as String?);
   }
 
   @override
@@ -3600,6 +3653,31 @@ class _EditEventSheetState extends State<_EditEventSheet> {
 
   static DateTime _combine(DateTime d, TimeOfDay t) =>
       DateTime(d.year, d.month, d.day, t.hour, t.minute);
+
+  // Beregner start/slut/frist/synlig-fra for én begivenhed ud fra dens dato.
+  Map<String, dynamic> _fieldsFor(DateTime evStart) {
+    final slut = _til != null
+        ? _combine(DateTime(evStart.year, evStart.month, evStart.day), _til!)
+        : evStart.add(const Duration(minutes: 90));
+    final deadline = _deadlineDays == null
+        ? evStart
+        : evStart.subtract(Duration(days: _deadlineDays!));
+    final synlig = _visibleDays == null
+        ? null
+        : evStart.subtract(Duration(days: _visibleDays!));
+    final maxRaw = _maxCtrl.text.trim();
+    return {
+      'titel': _titel.text.trim(),
+      'start_tid': evStart.toUtc().toIso8601String(),
+      'slut_tid': slut.toUtc().toIso8601String(),
+      'adresse': _adresse.text.trim().isEmpty
+          ? _addressUnspecified
+          : _adresse.text.trim(),
+      'max_deltagere': maxRaw.isEmpty ? null : int.tryParse(maxRaw),
+      'tilmeldings_deadline': deadline.toUtc().toIso8601String(),
+      'synlig_fra': synlig?.toUtc().toIso8601String(),
+    };
+  }
 
   Future<void> _save() async {
     if (_titel.text.trim().isEmpty) {
@@ -3619,19 +3697,38 @@ class _EditEventSheetState extends State<_EditEventSheet> {
     }
     setState(() => _saving = true);
     try {
-      final maxRaw = _maxCtrl.text.trim();
-      await supabase.from('trainings').update({
-        'titel': _titel.text.trim(),
-        'start_tid': start.toUtc().toIso8601String(),
-        'slut_tid': slut.toUtc().toIso8601String(),
-        'adresse': _adresse.text.trim().isEmpty
-            ? _addressUnspecified
-            : _adresse.text.trim(),
-        'max_deltagere': maxRaw.isEmpty ? null : int.tryParse(maxRaw),
-      }).eq('id', widget.training['id']);
-      if (mounted) {
-        _snack(context, 'Begivenhed opdateret', _success);
-        Navigator.pop(context, true);
+      if (_applySeries && _seriesId != null) {
+        // Hele serien fra og med denne begivenhed: behold hver begivenheds egen
+        // DATO, men anvend ny titel/sted/tid/frist/udgivelse.
+        final origStart = DateTime.parse(widget.training['start_tid'] as String);
+        final siblings = List<Map<String, dynamic>>.from(await supabase
+            .from('trainings')
+            .select('id, start_tid')
+            .eq('series_id', _seriesId!)
+            .gte('start_tid', origStart.toUtc().toIso8601String()) as List);
+        for (final s in siblings) {
+          final sibStart = DateTime.parse(s['start_tid'] as String).toLocal();
+          // Behold søskens dato, men brug den valgte fra-tid.
+          final evStart = _combine(
+              DateTime(sibStart.year, sibStart.month, sibStart.day), _fra!);
+          await supabase
+              .from('trainings')
+              .update(_fieldsFor(evStart))
+              .eq('id', s['id']);
+        }
+        if (mounted) {
+          _snack(context, 'Hele serien opdateret (${siblings.length})', _success);
+          Navigator.pop(context, true);
+        }
+      } else {
+        await supabase
+            .from('trainings')
+            .update(_fieldsFor(start))
+            .eq('id', widget.training['id']);
+        if (mounted) {
+          _snack(context, 'Begivenhed opdateret', _success);
+          Navigator.pop(context, true);
+        }
       }
     } on PostgrestException catch (e) {
       if (mounted) {
@@ -3639,6 +3736,26 @@ class _EditEventSheetState extends State<_EditEventSheet> {
         setState(() => _saving = false);
       }
     }
+  }
+
+  Widget _relChip(String label, int? days, int? current, ValueChanged<int?> onTap) {
+    final active = current == days;
+    return GestureDetector(
+      onTap: () => onTap(days),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 8),
+        decoration: BoxDecoration(
+          color: active ? _neon : Colors.transparent,
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: active ? _neon : _borderSubtle),
+        ),
+        child: Text(label,
+            style: _body(
+                size: 12.5,
+                weight: FontWeight.w700,
+                color: active ? Colors.white : _textSecondary)),
+      ),
+    );
   }
 
   Widget _dateField() => InkWell(
@@ -3750,10 +3867,97 @@ class _EditEventSheetState extends State<_EditEventSheet> {
                         flex: 2,
                         child: TextField(
                           controller: _adresse,
-                          decoration: const InputDecoration(labelText: 'Sted'),
+                          decoration: const InputDecoration(
+                              labelText: 'Sted / adresse'),
                         ),
                       ),
                     ]),
+                    const SizedBox(height: 16),
+                    _fieldGroup('SVAR FRIST', [
+                      Wrap(spacing: 8, runSpacing: 8, children: [
+                        _relChip('Ingen frist', null, _deadlineDays,
+                            (v) => setState(() => _deadlineDays = v)),
+                        _relChip('På dagen', 0, _deadlineDays,
+                            (v) => setState(() => _deadlineDays = v)),
+                        _relChip('1 dag før', 1, _deadlineDays,
+                            (v) => setState(() => _deadlineDays = v)),
+                        _relChip('2 dage før', 2, _deadlineDays,
+                            (v) => setState(() => _deadlineDays = v)),
+                        _relChip('3 dage før', 3, _deadlineDays,
+                            (v) => setState(() => _deadlineDays = v)),
+                        _relChip('1 uge før', 7, _deadlineDays,
+                            (v) => setState(() => _deadlineDays = v)),
+                      ]),
+                    ]),
+                    const SizedBox(height: 16),
+                    _fieldGroup('UDGIVELSE', [
+                      Wrap(spacing: 8, runSpacing: 8, children: [
+                        _relChip('Straks', null, _visibleDays,
+                            (v) => setState(() => _visibleDays = v)),
+                        _relChip('1 dag før', 1, _visibleDays,
+                            (v) => setState(() => _visibleDays = v)),
+                        _relChip('3 dage før', 3, _visibleDays,
+                            (v) => setState(() => _visibleDays = v)),
+                        _relChip('1 uge før', 7, _visibleDays,
+                            (v) => setState(() => _visibleDays = v)),
+                        _relChip('2 uger før', 14, _visibleDays,
+                            (v) => setState(() => _visibleDays = v)),
+                      ]),
+                      Padding(
+                        padding: const EdgeInsets.only(top: 8),
+                        child: Text(
+                            'Bestemmer hvornår begivenheden bliver synlig for '
+                            'spillerne. "Straks" = synlig med det samme.',
+                            style: _body(size: 11.5, color: _textMuted)),
+                      ),
+                    ]),
+                    if (_seriesId != null) ...[
+                      const SizedBox(height: 16),
+                      InkWell(
+                        onTap: () =>
+                            setState(() => _applySeries = !_applySeries),
+                        borderRadius: BorderRadius.circular(14),
+                        child: Container(
+                          padding: const EdgeInsets.all(14),
+                          decoration: BoxDecoration(
+                            color: _applySeries
+                                ? _neon.withValues(alpha: 0.10)
+                                : _surfaceElevated,
+                            borderRadius: BorderRadius.circular(14),
+                            border: Border.all(
+                                color: _applySeries ? _neon : _borderSubtle),
+                          ),
+                          child: Row(children: [
+                            Icon(Icons.repeat,
+                                size: 20,
+                                color: _applySeries ? _neon : _textSecondary),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text('Gælder hele serien',
+                                      style: _body(
+                                          size: 14, weight: FontWeight.w700)),
+                                  Text(
+                                      'Anvend titel, sted, tid, frist og '
+                                      'udgivelse på alle fremtidige begivenheder '
+                                      'i serien (hver beholder sin egen dato).',
+                                      style: _body(
+                                          size: 11.5, color: _textSecondary)),
+                                ],
+                              ),
+                            ),
+                            Switch(
+                              value: _applySeries,
+                              onChanged: (v) =>
+                                  setState(() => _applySeries = v),
+                            ),
+                          ]),
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),

@@ -2582,6 +2582,14 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
     );
   }
 
+  /// Åbner adressen i kort-app / Google Maps.
+  Future<void> _openMaps(String adresse) async {
+    final uri = Uri.parse(
+        'https://www.google.com/maps/search/?api=1&query=${Uri.encodeComponent(adresse)}');
+    final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!ok && mounted) _snack(context, 'Kunne ikke åbne kort', _danger);
+  }
+
   Future<void> _remindMissing() async {
     setState(() => _busy = true);
     try {
@@ -2712,14 +2720,26 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                                       ?.copyWith(color: _textSecondary)),
                             ]),
                             if (hasAddr) ...[
-                              const SizedBox(height: 4),
-                              Row(children: [
-                                const Icon(Icons.place_outlined, size: 15, color: _textSecondary),
-                                const SizedBox(width: 6),
-                                Expanded(child: Text(adresse,
-                                    style: theme.textTheme.bodyMedium
-                                        ?.copyWith(color: _textSecondary))),
-                              ]),
+                              const SizedBox(height: 5),
+                              InkWell(
+                                onTap: () => _openMaps(adresse),
+                                borderRadius: BorderRadius.circular(6),
+                                child: Row(children: [
+                                  const Icon(Icons.place_outlined,
+                                      size: 15, color: _neon),
+                                  const SizedBox(width: 6),
+                                  Flexible(
+                                    child: Text(adresse,
+                                        style: _body(size: 14, color: _neon).copyWith(
+                                            decoration: TextDecoration.underline,
+                                            decorationColor: _neon),
+                                        overflow: TextOverflow.ellipsis),
+                                  ),
+                                  const SizedBox(width: 5),
+                                  const Icon(Icons.open_in_new,
+                                      size: 13, color: _neon),
+                                ]),
+                              ),
                             ],
                             const SizedBox(height: 16),
                             _DetailTabs(

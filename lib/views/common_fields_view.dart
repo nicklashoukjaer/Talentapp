@@ -380,8 +380,3 @@ Future<DateTime?> _showQuickDatePicker(BuildContext ctx, DateTime initial) {
     ),
   );
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Training board — drag-and-drop kanban (Fase 2)
-// ─────────────────────────────────────────────────────────────────────────────
-

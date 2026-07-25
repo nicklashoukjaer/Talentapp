@@ -658,14 +658,6 @@ class _OversigtTabState extends State<OversigtTab> {
                   _canManageTraining(t.training) ? () => _deleteTraining(t) : null,
               onPublish:
                   _canManageTraining(t.training) ? () => _publishTraining(t) : null,
-              onOpenBoard: _canManageTraining(t.training)
-                  ? () => Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (_) =>
-                              TrainingBoardScreen(training: t.training),
-                        ),
-                      ).then((_) => reload())
-                  : null,
             ),
       _PollFeedItem p => _FeedPollCard(
           item: p,
@@ -972,7 +964,6 @@ class _FeedTrainingCard extends StatefulWidget {
   final bool isAdmin;
   final VoidCallback onSignUp;
   final VoidCallback onDecline;
-  final VoidCallback? onOpenBoard;
   final VoidCallback? onDelete;
   final VoidCallback? onPublish;
   final List<String> groupNames;
@@ -984,7 +975,6 @@ class _FeedTrainingCard extends StatefulWidget {
     this.groupNames = const [],
     required this.onSignUp,
     required this.onDecline,
-    this.onOpenBoard,
     this.onDelete,
     this.onPublish,
   });
@@ -1058,10 +1048,7 @@ class _FeedTrainingCardState extends State<_FeedTrainingCard> {
               ),
               if (widget.canManage) ...[
                 const SizedBox(width: 6),
-                _CardMenu(
-                  onBoard: widget.onOpenBoard,
-                  onDelete: widget.onDelete,
-                ),
+                _CardMenu(onDelete: widget.onDelete),
               ],
             ]),
             const SizedBox(height: 11),
@@ -1159,40 +1146,28 @@ class _FeedTrainingCardState extends State<_FeedTrainingCard> {
   }
 }
 
-/// Kort-overløbsmenu (kaptajn/staff): board + slet. Stopper tap i at åbne detalje.
+/// Kort-overløbsmenu (kaptajn/staff): slet. Stopper tap i at åbne detalje.
 class _CardMenu extends StatelessWidget {
-  final VoidCallback? onBoard;
   final VoidCallback? onDelete;
-  const _CardMenu({this.onBoard, this.onDelete});
+  const _CardMenu({this.onDelete});
   @override
   Widget build(BuildContext context) {
-    if (onBoard == null && onDelete == null) return const SizedBox.shrink();
+    if (onDelete == null) return const SizedBox.shrink();
     return PopupMenuButton<String>(
       icon: const Icon(Icons.more_vert, size: 20, color: _textMuted),
       padding: EdgeInsets.zero,
       onSelected: (v) {
-        if (v == 'board') onBoard?.call();
         if (v == 'delete') onDelete?.call();
       },
       itemBuilder: (_) => [
-        if (onBoard != null)
-          const PopupMenuItem(
-            value: 'board',
-            child: Row(children: [
-              Icon(Icons.view_kanban_outlined, size: 18, color: _neon),
-              SizedBox(width: 10),
-              Text('Drag-and-drop board'),
-            ]),
-          ),
-        if (onDelete != null)
-          const PopupMenuItem(
-            value: 'delete',
-            child: Row(children: [
-              Icon(Icons.delete_outline, size: 18, color: _danger),
-              SizedBox(width: 10),
-              Text('Slet begivenhed'),
-            ]),
-          ),
+        const PopupMenuItem(
+          value: 'delete',
+          child: Row(children: [
+            Icon(Icons.delete_outline, size: 18, color: _danger),
+            SizedBox(width: 10),
+            Text('Slet begivenhed'),
+          ]),
+        ),
       ],
     );
   }

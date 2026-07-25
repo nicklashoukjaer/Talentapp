@@ -31,7 +31,6 @@ part 'views/bodekasse_view.dart';
 part 'views/dashboard_view.dart';
 part 'views/polls_view.dart';
 part 'views/common_fields_view.dart';
-part 'views/board_view.dart';
 
 const _supabaseUrl     = String.fromEnvironment('SUPABASE_URL');
 const _supabaseAnonKey = String.fromEnvironment('SUPABASE_ANON_KEY');

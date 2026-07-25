@@ -12,7 +12,6 @@ class AfstemningerTab extends StatefulWidget {
 
 class _AfstemningerTabState extends State<AfstemningerTab> {
   List<Map<String, dynamic>> _polls = const [];
-  Map<String, Map<String, dynamic>> _groupById = {};
   Set<String> _myCaptainGroupIds = {};
 
   /// Må den aktuelle bruger slette denne afstemning? (staff, opretter eller
@@ -26,11 +25,6 @@ class _AfstemningerTabState extends State<AfstemningerTab> {
   bool _loading = true;
   String? _error;
   int _tab = 0; // 0 = Åbne, 1 = Afsluttede
-
-  static Color _hexColor(String? h) {
-    if (h == null || h.isEmpty) return _neon;
-    return Color(int.parse(h.replaceFirst('#', ''), radix: 16) | 0xFF000000);
-  }
 
   @override
   void initState() {
@@ -47,14 +41,12 @@ class _AfstemningerTabState extends State<AfstemningerTab> {
       final userId = supabase.auth.currentUser!.id;
       final results = await Future.wait([
         supabase.from('polls')
-            .select('id, titel, beskrivelse, lukket_at, created_at, group_id, created_by')
+            .select('id, titel, beskrivelse, lukket_at, created_at, group_id, created_by, type')
             .order('created_at', ascending: false),
-        supabase.from('groups').select('id, navn, farve'),
         supabase.from('group_members').select('group_id, is_captain').eq('user_id', userId),
       ]);
       final allPolls = List<Map<String, dynamic>>.from(results[0] as List);
-      final groups = List<Map<String, dynamic>>.from(results[1] as List);
-      final myGm = List<Map<String, dynamic>>.from(results[2] as List);
+      final myGm = List<Map<String, dynamic>>.from(results[1] as List);
       final myIds = myGm.map((r) => r['group_id'] as String).toSet();
       final myCaptainIds = myGm
           .where((r) => r['is_captain'] == true)
@@ -71,28 +63,12 @@ class _AfstemningerTabState extends State<AfstemningerTab> {
       if (!mounted) return;
       setState(() {
         _polls = visible;
-        _groupById = {for (final g in groups) g['id'] as String: g};
         _myCaptainGroupIds = myCaptainIds;
         _loading = false;
       });
     } catch (e) {
       if (mounted) setState(() { _loading = false; _error = e.toString(); });
     }
-  }
-
-  Widget _groupBadge(String? gid) {
-    final g = gid == null ? null : _groupById[gid];
-    final navn = g?['navn'] as String? ?? (gid == null ? 'Alle' : 'Hold');
-    final c = gid == null ? _textSecondary : _hexColor(g?['farve'] as String?);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
-      decoration: BoxDecoration(
-        color: c.withValues(alpha: 0.16),
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Text(navn.toUpperCase(),
-          style: _body(size: 10, weight: FontWeight.w700, spacing: 0.8, color: c)),
-    );
   }
 
   void _open(Map<String, dynamic> poll) {
@@ -172,7 +148,6 @@ class _AfstemningerTabState extends State<AfstemningerTab> {
         ),
       );
     }
-    final theme = Theme.of(context);
     return RefreshIndicator(
       onRefresh: _load,
       child: ListView(
@@ -184,21 +159,7 @@ class _AfstemningerTabState extends State<AfstemningerTab> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 16, left: 4, top: 4),
-                    child: Row(children: [
-                      Container(
-                        width: 4, height: 32,
-                        decoration: const BoxDecoration(
-                          color: _neon,
-                          borderRadius: BorderRadius.all(Radius.circular(2)),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Text('AFSTEMNINGER', style: theme.textTheme.headlineSmall),
-                    ]),
-                  ),
-                  // Åbne / Afsluttede — pille-toggle
+                  // Åbne / Afsluttede — kompakt pille-toggle (som prototypen)
                   Builder(builder: (context) {
                     bool erLukket(Map<String, dynamic> p) =>
                         p['lukket_at'] != null &&
@@ -208,40 +169,43 @@ class _AfstemningerTabState extends State<AfstemningerTab> {
                     final lukkede = _polls.where(erLukket).length;
                     Widget seg(String label, int i) {
                       final active = _tab == i;
-                      return Expanded(
-                        child: GestureDetector(
-                          onTap: () => setState(() => _tab = i),
-                          child: AnimatedContainer(
-                            duration: const Duration(milliseconds: 180),
-                            height: 40,
-                            alignment: Alignment.center,
-                            decoration: BoxDecoration(
-                              color: active ? _neon : Colors.transparent,
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                            child: Text(label,
-                                style: _body(
-                                    size: 13,
-                                    weight: FontWeight.w700,
-                                    color: active ? Colors.white : _textSecondary)),
+                      return GestureDetector(
+                        onTap: () => setState(() => _tab = i),
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 180),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 16, vertical: 8),
+                          decoration: BoxDecoration(
+                            color: active ? _surfaceElevated : Colors.transparent,
+                            borderRadius: BorderRadius.circular(9),
+                            boxShadow: active
+                                ? [BoxShadow(color: Colors.black.withValues(alpha: 0.4), blurRadius: 3, offset: const Offset(0, 1))]
+                                : null,
                           ),
+                          child: Text(label.toUpperCase(),
+                              style: _cond(
+                                  size: 15,
+                                  weight: FontWeight.w800,
+                                  spacing: 0.3,
+                                  color: active ? _textPrimary : _textMuted)),
                         ),
                       );
                     }
                     return Padding(
-                      padding: const EdgeInsets.only(bottom: 16),
-                      child: Container(
-                        padding: const EdgeInsets.all(4),
-                        decoration: BoxDecoration(
-                          color: _surfaceDark,
-                          borderRadius: BorderRadius.circular(14),
-                          border: Border.all(color: _borderSubtle),
+                      padding: const EdgeInsets.only(bottom: 16, top: 4),
+                      child: Row(children: [
+                        Container(
+                          padding: const EdgeInsets.all(4),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF1C1713),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Row(mainAxisSize: MainAxisSize.min, children: [
+                            seg('Åbne · $aabne', 0),
+                            seg('Afsluttede · $lukkede', 1),
+                          ]),
                         ),
-                        child: Row(children: [
-                          seg('Åbne · $aabne', 0),
-                          seg('Afsluttede · $lukkede', 1),
-                        ]),
-                      ),
+                      ]),
                     );
                   }),
                   ..._polls.where((p) {
@@ -259,29 +223,47 @@ class _AfstemningerTabState extends State<AfstemningerTab> {
                       if (lukket) return 'Afsluttet · du stemte';
                       return 'Lukker ${_omDage(l).toLowerCase()}';
                     }();
+                    final isDato = (p['type'] as String?) != 'tekst';
                     return Padding(
-                      padding: const EdgeInsets.only(bottom: 12),
+                      padding: const EdgeInsets.only(bottom: 11),
                       child: Opacity(
-                        opacity: lukket ? 0.75 : 1,
-                        child: Card(
+                        opacity: lukket ? 0.8 : 1,
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: _surfaceDark,
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(color: _borderSubtle),
+                          ),
                           child: InkWell(
                             borderRadius: BorderRadius.circular(16),
                             onTap: () => _open(p),
                             child: Padding(
-                              padding: const EdgeInsets.all(16),
+                              padding: const EdgeInsets.all(15),
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   Row(children: [
                                     if (lukket)
-                                      const Icon(Icons.check_circle,
-                                          size: 18, color: _success)
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 9, vertical: 3),
+                                        decoration: BoxDecoration(
+                                          color: _textMuted.withValues(alpha: 0.16),
+                                          borderRadius: BorderRadius.circular(999),
+                                        ),
+                                        child: Text('LUKKET',
+                                            style: _body(
+                                                size: 10,
+                                                weight: FontWeight.w700,
+                                                spacing: 1,
+                                                color: _textSecondary)),
+                                      )
                                     else
                                       Container(
                                         padding: const EdgeInsets.symmetric(
                                             horizontal: 9, vertical: 3),
                                         decoration: BoxDecoration(
-                                          color: _neon.withValues(alpha: 0.16),
+                                          color: _success.withValues(alpha: 0.16),
                                           borderRadius: BorderRadius.circular(999),
                                         ),
                                         child: Text('ÅBEN',
@@ -289,50 +271,78 @@ class _AfstemningerTabState extends State<AfstemningerTab> {
                                                 size: 10,
                                                 weight: FontWeight.w700,
                                                 spacing: 1,
-                                                color: _neon)),
+                                                color: _success)),
                                       ),
                                     const SizedBox(width: 8),
-                                    _groupBadge(p['group_id'] as String?),
+                                    Icon(
+                                        isDato
+                                            ? Icons.event_outlined
+                                            : Icons.how_to_vote_outlined,
+                                        size: 13,
+                                        color: isDato ? _neon : _textMuted),
+                                    const SizedBox(width: 4),
+                                    Text(isDato ? 'Datovalg' : 'Afstemning',
+                                        style: _body(
+                                            size: 10.5,
+                                            weight: FontWeight.w700,
+                                            color: isDato ? _neon : _textMuted)),
                                     const Spacer(),
                                     Text(lukkeInfo,
-                                        style: _body(size: 12, color: _textSecondary)),
-                                    if (_canManagePoll(p)) ...[
-                                      IconButton(
-                                        onPressed: () => _editPoll(p),
-                                        icon: const Icon(Icons.edit_outlined,
-                                            size: 19, color: _textSecondary),
-                                        tooltip: 'Redigér afstemning',
-                                        visualDensity: VisualDensity.compact,
+                                        style: _body(
+                                            size: 11, color: _textSecondary)),
+                                    if (_canManagePoll(p))
+                                      PopupMenuButton<String>(
+                                        icon: const Icon(Icons.more_vert,
+                                            size: 18, color: _textMuted),
                                         padding: EdgeInsets.zero,
-                                        constraints: const BoxConstraints(
-                                            minWidth: 34, minHeight: 34),
-                                      ),
-                                      IconButton(
-                                        onPressed: () => _deletePoll(p),
-                                        icon: const Icon(Icons.delete_outline,
-                                            size: 19, color: _danger),
-                                        tooltip: 'Slet afstemning',
-                                        visualDensity: VisualDensity.compact,
-                                        padding: EdgeInsets.zero,
-                                        constraints: const BoxConstraints(
-                                            minWidth: 34, minHeight: 34),
-                                      ),
-                                    ] else
-                                      const Padding(
-                                        padding: EdgeInsets.only(left: 6),
-                                        child: Icon(Icons.chevron_right,
-                                            size: 20, color: _textMuted),
+                                        onSelected: (v) {
+                                          if (v == 'edit') _editPoll(p);
+                                          if (v == 'delete') _deletePoll(p);
+                                        },
+                                        itemBuilder: (_) => const [
+                                          PopupMenuItem(
+                                            value: 'edit',
+                                            child: Row(children: [
+                                              Icon(Icons.edit_outlined,
+                                                  size: 18, color: _textSecondary),
+                                              SizedBox(width: 10),
+                                              Text('Redigér'),
+                                            ]),
+                                          ),
+                                          PopupMenuItem(
+                                            value: 'delete',
+                                            child: Row(children: [
+                                              Icon(Icons.delete_outline,
+                                                  size: 18, color: _danger),
+                                              SizedBox(width: 10),
+                                              Text('Slet'),
+                                            ]),
+                                          ),
+                                        ],
                                       ),
                                   ]),
                                   const SizedBox(height: 10),
-                                  Text(p['titel'] as String,
-                                      style: theme.textTheme.titleLarge),
+                                  Text((p['titel'] as String).toUpperCase(),
+                                      style: _cond(
+                                          size: 18, weight: FontWeight.w800)),
                                   if (beskr != null && beskr.isNotEmpty) ...[
-                                    const SizedBox(height: 4),
+                                    const SizedBox(height: 3),
                                     Text(beskr,
-                                        style: theme.textTheme.bodyMedium
-                                            ?.copyWith(color: _textSecondary)),
+                                        style: _body(
+                                            size: 12.5, color: _textSecondary)),
                                   ],
+                                  const SizedBox(height: 12),
+                                  Row(children: [
+                                    Icon(Icons.arrow_forward,
+                                        size: 15,
+                                        color: lukket ? _textSecondary : _neon),
+                                    const SizedBox(width: 7),
+                                    Text(lukket ? 'Se resultat' : 'Åbn og stem',
+                                        style: _body(
+                                            size: 13,
+                                            weight: FontWeight.w600,
+                                            color: lukket ? _textSecondary : _neon)),
+                                  ]),
                                 ],
                               ),
                             ),

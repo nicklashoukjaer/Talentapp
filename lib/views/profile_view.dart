@@ -527,7 +527,11 @@ class _ProfileCard extends StatelessWidget {
     final navn = profile['navn'] as String;
     final email = profile['email'] as String;
     final rolle = profile['rolle'] as String;
-    final isAdmin = rolle == 'admin';
+    final (roleLabel, roleBg, roleFg) = switch (rolle) {
+      'admin'  => ('ADMIN', _gold, _onGold),
+      'træner' => ('TRÆNER', _info, Colors.white),
+      _        => ('MEDLEM', _surfaceElevated, _textSecondary),
+    };
 
     return Container(
       decoration: BoxDecoration(
@@ -573,15 +577,15 @@ class _ProfileCard extends StatelessWidget {
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                   decoration: BoxDecoration(
-                    color: isAdmin ? _gold : _surfaceElevated,
+                    color: roleBg,
                     borderRadius: BorderRadius.circular(999),
                   ),
-                  child: Text(isAdmin ? 'ADMIN' : 'MEDLEM',
+                  child: Text(roleLabel,
                       style: _body(
                           size: 10,
                           weight: FontWeight.w800,
                           spacing: 0.8,
-                          color: isAdmin ? _onGold : _textSecondary)),
+                          color: roleFg)),
                 ),
               ],
             ),

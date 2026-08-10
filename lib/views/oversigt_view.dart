@@ -4,6 +4,7 @@ part of '../main.dart';
 
 /// Holdene en aktivitet gælder. Nye rækker bruger group_ids (flere hold);
 /// gamle rækker falder tilbage til det enkelte group_id. Tom = alle hold.
+/// Gælder både begivenheder og afstemninger — de har samme to kolonner.
 List<String> _trainingGroupIds(Map<String, dynamic> t) {
   final arr = t['group_ids'];
   if (arr is List && arr.isNotEmpty) {
@@ -12,6 +13,9 @@ List<String> _trainingGroupIds(Map<String, dynamic> t) {
   final single = t['group_id'] as String?;
   return (single == null || single.isEmpty) ? const [] : [single];
 }
+
+/// Samme regel for afstemninger — eget navn, så kaldstederne læses rigtigt.
+List<String> _pollGroupIds(Map<String, dynamic> p) => _trainingGroupIds(p);
 
 class OversigtTab extends StatefulWidget {
   /// Staff (admin ELLER træner): ser skjulte begivenheder og må administrere.
@@ -87,7 +91,7 @@ class _OversigtTabState extends State<OversigtTab> {
             .gte('start_tid', sinceIso).order('start_tid'),
         // Polls (alle — lukkede filtreres client-side)
         supabase.from('polls')
-            .select('id, titel, beskrivelse, lukket_at, created_at, group_id, created_by')
+            .select('id, titel, beskrivelse, lukket_at, created_at, group_id, group_ids, created_by')
             .order('created_at', ascending: false),
         // Profiles for count
         supabase.from('profiles').select('id'),
@@ -298,13 +302,17 @@ class _OversigtTabState extends State<OversigtTab> {
             respondents.add(r['user_id'] as String);
           }
         }
-        // "X af Y har svaret": Y er afstemningens eget hold uden trænere.
+        // "X af Y har svaret": Y er afstemningens hold uden trænere. Gælder
+        // den flere hold, tælles spillerne på tværs (uden dubletter).
         // (Tidligere blev ALLE klubbens profiler talt med, også folk der slet
         // ikke var på holdet — så tallet var altid for højt.)
-        final pollGid = p['group_id'] as String?;
-        final totalMembers = pollGid == null
+        final pollGids = _pollGroupIds(p);
+        final totalMembers = pollGids.isEmpty
             ? profileRows.length
-            : (playersPerGroup[pollGid] ?? const <String>{}).length;
+            : {
+                for (final gid in pollGids)
+                  ...(playersPerGroup[gid] ?? const <String>{})
+              }.length;
         items.add(_PollFeedItem(
           poll: p,
           options: options,
@@ -468,8 +476,8 @@ class _OversigtTabState extends State<OversigtTab> {
   bool _canManagePoll(Map<String, dynamic> p) {
     if (widget.isAdmin) return true;
     if (p['created_by'] == supabase.auth.currentUser?.id) return true;
-    final gid = p['group_id'] as String?;
-    return gid != null && _myCaptainGroupIds.contains(gid);
+    // Kaptajn for mindst ét af afstemningens hold.
+    return _pollGroupIds(p).any(_myCaptainGroupIds.contains);
   }
 
   /// Navne på de hold en aktivitet gælder (tom = alle hold → vis intet).
@@ -747,6 +755,7 @@ class _OversigtTabState extends State<OversigtTab> {
       _PollFeedItem p => _FeedPollCard(
           item: p,
           isAdmin: widget.isAdmin,
+          groupNames: _groupNamesFor(p.poll),
           onVote: (optionId, svar) => _vote(p, optionId, svar),
           onDelete: _canManagePoll(p.poll) ? () => _deletePoll(p) : null,
           onOpenSynergy: widget.isAdmin
@@ -813,18 +822,11 @@ class _OversigtTabState extends State<OversigtTab> {
     // Hold-filtrering: vis kun begivenheder/afstemninger for hold jeg er på
     // (eller fælles uden hold). Switcheren filtrerer yderligere til ét hold.
     // Afstemninger hører til ét hold; aktiviteter kan høre til flere.
-    // _allTeams (kun admin) løfter "kun mine hold"-begrænsningen, så hele
-    // klubbens indhold kan ses. Switcheren filtrerer stadig til ét hold.
-    bool visibleGroup(String? gid) {
-      final mine = _allTeams || gid == null || _myGroupIds.contains(gid);
-      if (!mine) return false;
-      if (_switcherGroupId != null && gid != null && gid != _switcherGroupId) {
-        return false;
-      }
-      return true;
-    }
     // Flere hold: tom liste = alle. Synlig hvis mindst ét hold er mit; switcheren
-    // kræver at det valgte hold er blandt aktivitetens hold.
+    // kræver at det valgte hold er blandt aktivitetens hold. Gælder både
+    // begivenheder og afstemninger.
+    // _allTeams (kun admin) løfter "kun mine hold"-begrænsningen, så hele
+    // klubbens indhold kan ses.
     bool visibleGroups(List<String> gids) {
       if (gids.isEmpty) return true; // fælles for alle
       if (!_allTeams && !gids.any(_myGroupIds.contains)) return false;
@@ -835,7 +837,7 @@ class _OversigtTabState extends State<OversigtTab> {
     }
     final polls = _items
         .whereType<_PollFeedItem>()
-        .where((p) => visibleGroup(p.poll['group_id'] as String?))
+        .where((p) => visibleGroups(_pollGroupIds(p.poll)))
         .toList();
     bool visibleToMe(_TrainingFeedItem t) =>
         visibleGroups(_trainingGroupIds(t.training));
@@ -1330,12 +1332,15 @@ class _FeedPollCard extends StatefulWidget {
   final void Function(String optionId, bool svar) onVote;
   final VoidCallback? onOpenSynergy;
   final VoidCallback? onDelete;
+  /// Hold afstemningen gælder. Tom = klub-bred → ingen badge.
+  final List<String> groupNames;
   const _FeedPollCard({
     required this.item,
     required this.isAdmin,
     required this.onVote,
     this.onOpenSynergy,
     this.onDelete,
+    this.groupNames = const [],
   });
   @override
   State<_FeedPollCard> createState() => _FeedPollCardState();
@@ -1381,6 +1386,23 @@ class _FeedPollCardState extends State<_FeedPollCard> {
                               fontWeight: FontWeight.bold,
                               letterSpacing: 1.5)),
                     ),
+                    // Hvilke hold er spurgt? Vigtigt nu hvor en afstemning kan
+                    // dække flere hold. Tom = klub-bred → ingen badge.
+                    if (widget.groupNames.isNotEmpty)
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: _surfaceElevated,
+                          borderRadius: BorderRadius.circular(999),
+                          border: Border.all(color: _borderSubtle),
+                        ),
+                        child: Text(widget.groupNames.join(' + '),
+                            style: _body(
+                                size: 10.5,
+                                weight: FontWeight.w700,
+                                color: _textSecondary)),
+                      ),
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                       decoration: BoxDecoration(

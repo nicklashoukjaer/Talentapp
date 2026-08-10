@@ -30,7 +30,9 @@ class _CreatePollDialogState extends State<CreatePollDialog> {
   bool _saving = false;
   DateTime? _frist; // stemmefrist — afstemningen lukker automatisk her
   List<Map<String, dynamic>> _groups = const [];
-  String? _groupId; // null = klub-bred (alle kan stemme)
+  // Hold afstemningen gælder. Tom = klub-bred (alle kan stemme). Flere hold
+  // understøttes, præcis som på begivenheder.
+  final Set<String> _groupIds = {};
   String _type = 'dato';     // 'dato' | 'tekst'
   bool _allowMultiple = true; // (tekst) må man vælge flere svar?
 
@@ -71,9 +73,9 @@ class _CreatePollDialogState extends State<CreatePollDialog> {
       setState(() {
         _groups = groups;
         // Forudvælg trænerens hold hvis de kun er på ét (kan stadig ændres).
-        if (_groupId == null && myIds.length == 1) {
+        if (_groupIds.isEmpty && myIds.length == 1) {
           final only = myIds.first;
-          if (groups.any((g) => g['id'] == only)) _groupId = only;
+          if (groups.any((g) => g['id'] == only)) _groupIds.add(only);
         }
       });
     } catch (_) {}
@@ -102,10 +104,18 @@ class _CreatePollDialogState extends State<CreatePollDialog> {
     );
   }
 
+  /// "Alle hold" (id == null) rydder valget; ellers slås holdet til/fra, så
+  /// man kan vælge fx T1 + T2 til én afstemning.
   Widget _groupChip(String label, String? id) {
-    final active = _groupId == id;
+    final active = id == null ? _groupIds.isEmpty : _groupIds.contains(id);
     return GestureDetector(
-      onTap: () => setState(() => _groupId = id),
+      onTap: () => setState(() {
+        if (id == null) {
+          _groupIds.clear();
+        } else {
+          if (!_groupIds.add(id)) _groupIds.remove(id);
+        }
+      }),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
         decoration: BoxDecoration(
@@ -172,7 +182,11 @@ class _CreatePollDialogState extends State<CreatePollDialog> {
         'titel':          _titel.text.trim(),
         'beskrivelse':    _beskr.text.trim().isEmpty ? null : _beskr.text.trim(),
         'created_by':     supabase.auth.currentUser!.id,
-        'group_id':       _groupId,
+        // Samme mønster som begivenheder: group_ids er sandheden, group_id
+        // udfyldes kun ved præcis ét hold, så ældre kode der læser den stadig
+        // virker.
+        'group_ids':      _groupIds.isEmpty ? null : _groupIds.toList(),
+        'group_id':       _groupIds.length == 1 ? _groupIds.first : null,
         'type':           _type,
         'allow_multiple': isText ? _allowMultiple : true,
         if (_frist != null) 'lukket_at': _frist!.toUtc().toIso8601String(),

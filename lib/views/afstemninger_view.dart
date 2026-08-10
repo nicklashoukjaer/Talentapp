@@ -22,8 +22,8 @@ class _AfstemningerTabState extends State<AfstemningerTab> {
   bool _canManagePoll(Map<String, dynamic> p) {
     if (widget.isStaff) return true;
     if (p['created_by'] == supabase.auth.currentUser?.id) return true;
-    final gid = p['group_id'] as String?;
-    return gid != null && _myCaptainGroupIds.contains(gid);
+    // Kaptajn for mindst ét af afstemningens hold.
+    return _pollGroupIds(p).any(_myCaptainGroupIds.contains);
   }
   bool _loading = true;
   String? _error;
@@ -44,7 +44,7 @@ class _AfstemningerTabState extends State<AfstemningerTab> {
       final userId = supabase.auth.currentUser!.id;
       final results = await Future.wait([
         supabase.from('polls')
-            .select('id, titel, beskrivelse, lukket_at, created_at, group_id, created_by, type')
+            .select('id, titel, beskrivelse, lukket_at, created_at, group_id, group_ids, created_by, type')
             .order('created_at', ascending: false),
         supabase.from('group_members').select('group_id, is_captain').eq('user_id', userId),
         supabase.from('groups').select('id, navn, farve, sort').order('sort'),
@@ -62,8 +62,8 @@ class _AfstemningerTabState extends State<AfstemningerTab> {
       final visible = widget.isAdmin
           ? allPolls
           : allPolls.where((p) {
-              final gid = p['group_id'] as String?;
-              return gid == null || myIds.contains(gid);
+              final gids = _pollGroupIds(p);
+              return gids.isEmpty || gids.any(myIds.contains);
             }).toList();
       if (!mounted) return;
       setState(() {
@@ -81,10 +81,22 @@ class _AfstemningerTabState extends State<AfstemningerTab> {
   /// Er der et aktivt hold-filter? (styrer tragt-badgen i app-headeren)
   bool get holdFilterActive => _filterGroupId != null;
 
+  /// Navnene på de hold en afstemning gælder (tom = klub-bred).
+  List<String> _groupNamesOf(Map<String, dynamic> p) => _pollGroupIds(p)
+      .map((id) {
+        final g = _groups.firstWhere((e) => e['id'] == id,
+            orElse: () => const <String, dynamic>{});
+        return g['navn'] as String?;
+      })
+      .whereType<String>()
+      .toList();
+
   /// Afstemninger efter hold-filteret. Uden filter vises alt brugeren må se.
   List<Map<String, dynamic>> get _visiblePolls => _filterGroupId == null
       ? _polls
-      : _polls.where((p) => p['group_id'] == _filterGroupId).toList();
+      : _polls
+          .where((p) => _pollGroupIds(p).contains(_filterGroupId))
+          .toList();
 
   /// Hold-filter som bundsheet — kaldes af tragt-ikonet i app-headeren.
   /// Admin kan vælge hvilket som helst hold; øvrige kun deres egne.
@@ -431,6 +443,33 @@ class _AfstemningerTabState extends State<AfstemningerTab> {
                                   Text((p['titel'] as String).toUpperCase(),
                                       style: _cond(
                                           size: 18, weight: FontWeight.w800)),
+                                  // Hvilke hold er spurgt? Tom = klub-bred.
+                                  if (_groupNamesOf(p).isNotEmpty) ...[
+                                    const SizedBox(height: 5),
+                                    Wrap(
+                                      spacing: 6,
+                                      runSpacing: 6,
+                                      children: [
+                                        for (final navn in _groupNamesOf(p))
+                                          Container(
+                                            padding: const EdgeInsets.symmetric(
+                                                horizontal: 9, vertical: 3),
+                                            decoration: BoxDecoration(
+                                              color: _surfaceElevated,
+                                              borderRadius:
+                                                  BorderRadius.circular(999),
+                                              border: Border.all(
+                                                  color: _borderSubtle),
+                                            ),
+                                            child: Text(navn,
+                                                style: _body(
+                                                    size: 10.5,
+                                                    weight: FontWeight.w700,
+                                                    color: _textSecondary)),
+                                          ),
+                                      ],
+                                    ),
+                                  ],
                                   if (beskr != null && beskr.isNotEmpty) ...[
                                     const SizedBox(height: 3),
                                     Text(beskr,
@@ -483,13 +522,13 @@ class _EditPollSheetState extends State<_EditPollSheet> {
       TextEditingController(text: widget.poll['beskrivelse'] as String? ?? '');
   DateTime? _frist;
   List<Map<String, dynamic>> _groups = const [];
-  String? _groupId;
+  final Set<String> _groupIds = {}; // tom = klub-bred
   bool _saving = false;
 
   @override
   void initState() {
     super.initState();
-    _groupId = widget.poll['group_id'] as String?;
+    _groupIds.addAll(_pollGroupIds(widget.poll));
     final l = widget.poll['lukket_at'] as String?;
     if (l != null) _frist = DateTime.parse(l).toLocal();
     _loadGroups();
@@ -525,7 +564,8 @@ class _EditPollSheetState extends State<_EditPollSheet> {
         'titel': _titel.text.trim(),
         'beskrivelse':
             _beskr.text.trim().isEmpty ? null : _beskr.text.trim(),
-        'group_id': _groupId,
+        'group_ids': _groupIds.isEmpty ? null : _groupIds.toList(),
+        'group_id': _groupIds.length == 1 ? _groupIds.first : null,
         'lukket_at': _frist?.toUtc().toIso8601String(),
       }).eq('id', widget.poll['id']);
       if (!mounted) return;
@@ -539,9 +579,15 @@ class _EditPollSheetState extends State<_EditPollSheet> {
   }
 
   Widget _chip(String label, String? id) {
-    final active = _groupId == id;
+    final active = id == null ? _groupIds.isEmpty : _groupIds.contains(id);
     return GestureDetector(
-      onTap: () => setState(() => _groupId = id),
+      onTap: () => setState(() {
+        if (id == null) {
+          _groupIds.clear();
+        } else {
+          if (!_groupIds.add(id)) _groupIds.remove(id);
+        }
+      }),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
         decoration: BoxDecoration(

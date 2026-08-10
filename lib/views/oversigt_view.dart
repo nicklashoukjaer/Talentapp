@@ -14,8 +14,16 @@ List<String> _trainingGroupIds(Map<String, dynamic> t) {
 }
 
 class OversigtTab extends StatefulWidget {
+  /// Staff (admin ELLER træner): ser skjulte begivenheder og må administrere.
   final bool isAdmin;
-  const OversigtTab({super.key, required this.isAdmin});
+  /// Kun rigtige admins: må slå hold-filteret over på hele klubben.
+  /// Trænere er bevidst udenfor — de skal kun se deres egne hold.
+  final bool isFullAdmin;
+  const OversigtTab({
+    super.key,
+    required this.isAdmin,
+    this.isFullAdmin = false,
+  });
   @override
   State<OversigtTab> createState() => _OversigtTabState();
 }
@@ -53,6 +61,7 @@ class _OversigtTabState extends State<OversigtTab> {
   Set<String> _myGroupIds = {};   // brugerens gruppe-id'er
   Set<String> _myCaptainGroupIds = {}; // hold hvor brugeren er kaptajn
   String? _switcherGroupId;       // valgt hold i switcheren (null = alle mine)
+  bool _allTeams = false;         // admin: vis hele klubben, ikke kun mine hold
 
   @override
   void initState() {
@@ -85,6 +94,9 @@ class _OversigtTabState extends State<OversigtTab> {
         // Grupper + mit medlemskab (til hold-filtrering)
         supabase.from('groups').select('id, navn, type, farve, sort').order('sort'),
         supabase.from('group_members').select('group_id, is_captain').eq('user_id', userId),
+        // Alle medlemskaber (uden trænere) → bruges til "X af Y har svaret"
+        // på afstemninger. Trænere tæller ikke med som svar-pligtige.
+        supabase.from('group_members').select('group_id, user_id, is_trainer'),
       ]);
 
       final trainingsRaw = List<Map<String, dynamic>>.from(results[0] as List);
@@ -107,6 +119,23 @@ class _OversigtTabState extends State<OversigtTab> {
           .where((r) => r['is_captain'] == true)
           .map((r) => r['group_id'] as String)
           .toSet();
+
+      // Hvem er træner for hvilke hold? Bruges to steder: til at afgøre om en
+      // deltager optager en spillerplads, og til at tælle svar-pligtige på
+      // afstemninger. En person kan være træner på ét hold og spiller på et
+      // andet, så det afgøres pr. hold — ikke på profil-rollen.
+      final allGmRows = List<Map<String, dynamic>>.from(results[5] as List);
+      final trainerGroupsOf = <String, Set<String>>{};
+      final playersPerGroup = <String, Set<String>>{};
+      for (final r in allGmRows) {
+        final uid = r['user_id'] as String;
+        final gid = r['group_id'] as String;
+        if (r['is_trainer'] == true) {
+          (trainerGroupsOf[uid] ??= {}).add(gid);
+        } else {
+          (playersPerGroup[gid] ??= {}).add(uid);
+        }
+      }
 
       // Filtrér åbne polls
       final polls = pollsAll.where((p) {
@@ -147,6 +176,24 @@ class _OversigtTabState extends State<OversigtTab> {
                       'profiles!poll_responses_user_id_fkey(navn)')
               .inFilter('poll_option_id', optionIds) as List);
 
+      // Hold pr. begivenhed — afgør hvem der deltager som træner.
+      final trainingGroups = <String, Set<String>>{
+        for (final t in trainings)
+          t['id'] as String: _trainingGroupIds(t).toSet()
+      };
+
+      /// Deltager personen som træner på netop denne begivenhed? Er der hold
+      /// på begivenheden, tæller kun træner-flaget for dét/de hold. Er den
+      /// klub-bred (uden hold), tæller det at være træner for et hold i det
+      /// hele taget.
+      bool trainerHere(String uid, String tid) {
+        final mine = trainerGroupsOf[uid];
+        if (mine == null || mine.isEmpty) return false;
+        final gids = trainingGroups[tid] ?? const <String>{};
+        if (gids.isEmpty) return true;
+        return gids.any(mine.contains);
+      }
+
       // Aggregér: deltagere pr. træning/status. Trænere tælles separat
       // og optager ikke en spillerplads.
       final tpGrouped = <String, Map<String, List<_Participant>>>{};
@@ -157,8 +204,7 @@ class _OversigtTabState extends State<OversigtTab> {
         final status = r['status']      as String;
         final profile = r['profiles'] as Map<String, dynamic>?;
         final navn   = profile?['navn'] as String? ?? '(ukendt)';
-        final rolle  = profile?['rolle'] as String? ?? 'medlem';
-        final isTrainer = rolle == 'træner';
+        final isTrainer = trainerHere(uid, tid);
         final updatedAt = DateTime.parse(r['updated_at'] as String);
 
         tpGrouped.putIfAbsent(tid, () => {
@@ -252,12 +298,19 @@ class _OversigtTabState extends State<OversigtTab> {
             respondents.add(r['user_id'] as String);
           }
         }
+        // "X af Y har svaret": Y er afstemningens eget hold uden trænere.
+        // (Tidligere blev ALLE klubbens profiler talt med, også folk der slet
+        // ikke var på holdet — så tallet var altid for højt.)
+        final pollGid = p['group_id'] as String?;
+        final totalMembers = pollGid == null
+            ? profileRows.length
+            : (playersPerGroup[pollGid] ?? const <String>{}).length;
         items.add(_PollFeedItem(
           poll: p,
           options: options,
           myVotes: myVotes,
           respondedCount: respondents.length,
-          totalMembers: profileRows.length,
+          totalMembers: totalMembers,
           votersByOption: voters,
         ));
       }
@@ -551,25 +604,32 @@ class _OversigtTabState extends State<OversigtTab> {
   }
 
   /// Er der et aktivt hold-filter (bruges af tragt-badgen i app-headeren)?
-  bool get holdFilterActive => _switcherGroupId != null;
+  bool get holdFilterActive => _switcherGroupId != null || _allTeams;
 
   /// Åbner hold-filteret som bundsheet — kaldes af tragt-ikonet i app-headeren.
   Future<void> showHoldFilterSheet() async {
     final myGroups =
         _groups.where((g) => _myGroupIds.contains(g['id'])).toList();
-    if (myGroups.isEmpty) {
+    // Admin kan slå over på hele klubben; alle andre ser kun deres egne hold.
+    final canSeeAll = widget.isFullAdmin;
+    if (myGroups.isEmpty && !canSeeAll) {
       _snack(context, 'Du er ikke på noget hold endnu', _textSecondary);
       return;
     }
     await showModalBottomSheet<void>(
       context: context,
       backgroundColor: Colors.transparent,
+      isScrollControlled: true,
       builder: (ctx) {
-        Widget option(String? id, String label, Color dot) {
-          final selected = _switcherGroupId == id;
+        // id == null → "alle" på det aktuelle niveau (mine hold / hele klubben)
+        Widget option(String? id, String label, Color dot, {bool all = false}) {
+          final selected = _switcherGroupId == id && _allTeams == all;
           return InkWell(
             onTap: () {
-              setState(() => _switcherGroupId = id);
+              setState(() {
+                _switcherGroupId = id;
+                _allTeams = all;
+              });
               Navigator.of(ctx).pop();
             },
             borderRadius: BorderRadius.circular(12),
@@ -609,31 +669,56 @@ class _OversigtTabState extends State<OversigtTab> {
           return Color(int.parse(h.replaceFirst('#', ''), radix: 16) | 0xFF000000);
         }
 
+        final otherGroups = _groups
+            .where((g) => !_myGroupIds.contains(g['id']))
+            .toList();
         return SafeArea(
           top: false,
           child: Container(
             margin: const EdgeInsets.all(12),
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+            constraints: BoxConstraints(
+                maxHeight: MediaQuery.of(ctx).size.height * 0.8),
             decoration: BoxDecoration(
               color: _surfaceDark,
               borderRadius: BorderRadius.circular(20),
               border: Border.all(color: _borderSubtle),
             ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text('VÆLG HOLD',
-                    style: _cond(size: 20, weight: FontWeight.w800)),
-                const SizedBox(height: 4),
-                Text('Filtrér begivenhederne til ét af dine hold.',
-                    style: _body(size: 12.5, color: _textSecondary)),
-                const SizedBox(height: 14),
-                option(null, 'Alle mine hold', _neon),
-                for (final g in myGroups)
-                  option(g['id'] as String, g['navn'] as String,
-                      hex(g['farve'] as String?)),
-              ],
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text('VÆLG HOLD',
+                      style: _cond(size: 20, weight: FontWeight.w800)),
+                  const SizedBox(height: 4),
+                  Text(
+                      canSeeAll
+                          ? 'Filtrér begivenhederne — dine egne hold, hele '
+                              'klubben, eller ét bestemt hold.'
+                          : 'Filtrér begivenhederne til ét af dine hold.',
+                      style: _body(size: 12.5, color: _textSecondary)),
+                  const SizedBox(height: 14),
+                  if (myGroups.isNotEmpty) option(null, 'Alle mine hold', _neon),
+                  for (final g in myGroups)
+                    option(g['id'] as String, g['navn'] as String,
+                        hex(g['farve'] as String?)),
+                  if (canSeeAll) ...[
+                    const SizedBox(height: 10),
+                    Text('HELE KLUBBEN',
+                        style: _body(
+                            size: 11.5,
+                            weight: FontWeight.w700,
+                            color: _textMuted,
+                            spacing: 1)),
+                    const SizedBox(height: 8),
+                    option(null, 'Alle klubbens hold', _gold, all: true),
+                    for (final g in otherGroups)
+                      option(g['id'] as String, g['navn'] as String,
+                          hex(g['farve'] as String?), all: true),
+                  ],
+                ],
+              ),
             ),
           ),
         );
@@ -728,8 +813,10 @@ class _OversigtTabState extends State<OversigtTab> {
     // Hold-filtrering: vis kun begivenheder/afstemninger for hold jeg er på
     // (eller fælles uden hold). Switcheren filtrerer yderligere til ét hold.
     // Afstemninger hører til ét hold; aktiviteter kan høre til flere.
+    // _allTeams (kun admin) løfter "kun mine hold"-begrænsningen, så hele
+    // klubbens indhold kan ses. Switcheren filtrerer stadig til ét hold.
     bool visibleGroup(String? gid) {
-      final mine = gid == null || _myGroupIds.contains(gid);
+      final mine = _allTeams || gid == null || _myGroupIds.contains(gid);
       if (!mine) return false;
       if (_switcherGroupId != null && gid != null && gid != _switcherGroupId) {
         return false;
@@ -740,7 +827,7 @@ class _OversigtTabState extends State<OversigtTab> {
     // kræver at det valgte hold er blandt aktivitetens hold.
     bool visibleGroups(List<String> gids) {
       if (gids.isEmpty) return true; // fælles for alle
-      if (!gids.any(_myGroupIds.contains)) return false;
+      if (!_allTeams && !gids.any(_myGroupIds.contains)) return false;
       if (_switcherGroupId != null && !gids.contains(_switcherGroupId)) {
         return false;
       }
@@ -2272,6 +2359,7 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
   List<_AttPerson> _tilmeldt = const [];
   List<_AttPerson> _afbud = const [];
   List<_AttPerson> _mangler = const [];
+  List<_AttPerson> _trainere = const []; // trænere for holdet der har svaret
   List<Map<String, dynamic>> _guests = const []; // afløsere (uden konto)
   bool _loading = true;
   String? _error;
@@ -2307,29 +2395,46 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
 
       // Holdspecifik aktivitet: vis kun medlemmer af aktivitetens hold(s).
       // Alle der allerede har svaret beholdes uanset (fx en træner/admin).
+      // Trænere for holdet er ikke svar-pligtige og ryger derfor ikke i
+      // "Mangler svar" — men har de svaret, vises de under TRÆNERE.
       final groupIds = _trainingGroupIds(widget.training);
+      final trainerIds = <String>{};
       if (groupIds.isNotEmpty) {
         final gm = await supabase
             .from('group_members')
-            .select('user_id')
+            .select('user_id, is_trainer')
             .inFilter('group_id', groupIds);
-        final eligible = List<Map<String, dynamic>>.from(gm as List)
-            .map((r) => r['user_id'] as String)
-            .toSet();
+        final rows = List<Map<String, dynamic>>.from(gm as List);
+        final eligible = <String>{};
+        for (final r in rows) {
+          final uid = r['user_id'] as String;
+          if (r['is_trainer'] == true) {
+            trainerIds.add(uid);
+          } else {
+            eligible.add(uid);
+          }
+        }
+        // Er man både træner på ét af holdene og spiller på et andet, tæller
+        // spiller-medlemskabet.
+        trainerIds.removeAll(eligible);
         profiles = profiles
             .where((p) =>
                 eligible.contains(p['id'] as String) ||
+                trainerIds.contains(p['id'] as String) ||
                 byUser.containsKey(p['id'] as String))
             .toList();
       }
 
       final tilmeldt = <_AttPerson>[], afbud = <_AttPerson>[], mangler = <_AttPerson>[];
+      final trainere = <_AttPerson>[];
       for (final prof in profiles) {
         final id = prof['id'] as String;
         final navn = prof['navn'] as String? ?? '(ukendt)';
         final part = byUser[id];
+        final isTrainer = trainerIds.contains(id);
         if (part == null) {
-          mangler.add(_AttPerson(id, navn, null));
+          // Trænere rykkes ikke — de skal ikke stå som "mangler svar".
+          if (!isTrainer) mangler.add(_AttPerson(id, navn, null));
         } else {
           final status = part['status'] as String;
           final ts = part['updated_at'] == null
@@ -2337,6 +2442,8 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
               : DateTime.parse(part['updated_at'] as String);
           if (status == 'afmeldt') {
             afbud.add(_AttPerson(id, navn, ts));
+          } else if (isTrainer) {
+            trainere.add(_AttPerson(id, navn, ts));
           } else {
             tilmeldt.add(_AttPerson(id, navn, ts));
           }
@@ -2360,6 +2467,7 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
         _tilmeldt = tilmeldt;
         _afbud = afbud;
         _mangler = mangler;
+        _trainere = trainere;
         _guests = guests;
         _commentCount = commentCount;
         _loading = false;
@@ -2761,6 +2869,7 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                               ),
                             ],
                             const SizedBox(height: 18),
+                            _trainerSection(),
                             _tilmeldtSection(),
                             _manglerSection(),
                             _afbudSection(),
@@ -2908,6 +3017,46 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
           Container(width: 10, height: 10,
               decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
       ]),
+    );
+  }
+
+  /// Trænere for holdet der har trykket deltag — vist for sig selv, så det er
+  /// tydeligt at de er med uden at optage en spillerplads.
+  Widget _trainerSection() {
+    if (_trainere.isEmpty) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _sectionHeader('TRÆNER', _trainere.length, _info),
+        for (final p in _trainere)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 5),
+            child: Row(children: [
+              _InitialAvatar(navn: p.navn, size: 32),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(p.navn,
+                    style: _body(size: 14, weight: FontWeight.w600),
+                    maxLines: 1, overflow: TextOverflow.ellipsis),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+                decoration: BoxDecoration(
+                  color: _info.withValues(alpha: 0.16),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Text('TRÆNER',
+                    style: _body(
+                        size: 10, weight: FontWeight.w700, color: _info)),
+              ),
+              const SizedBox(width: 8),
+              Text('Tilmeldt',
+                  style: _body(
+                      size: 12.5, weight: FontWeight.w600, color: _success)),
+            ]),
+          ),
+        const SizedBox(height: 4),
+      ],
     );
   }
 

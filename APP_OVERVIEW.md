@@ -31,6 +31,9 @@ Damer") + evt. grupper på tværs (kamp-trup). Næsten alt indhold kan knyttes t
 - **Backend:** Supabase (Postgres + Auth + RLS + edge functions + pg_cron).
 - **Push:** OneSignal (native) + web-push via `web/index.html`. iOS web-push er
   upålideligt → in-app notifikations-klokke er den pålidelige kanal.
+  Edge-funktionen `notify` er **hold-bevidst**: en begivenhed/afstemning knyttet
+  til hold rammer kun de holds medlemmer + alle admins; klub-brede (uden hold)
+  rammer alle. Bøder rammer kun modtageren.
 - **Kodestruktur:** ét Dart-bibliotek. `lib/main.dart` er roden; alle views er
   `part of '../main.dart'` (så private medlemmer deles på tværs af filer).
   - `lib/core/theme.dart` — design-tokens + ThemeData.
@@ -142,7 +145,17 @@ Bund-navigation (mobil) / sidebar (bred skærm), 4–5 faner afhængigt af rolle
 ## 5. Roller & rettigheder (nuværende)
 
 Base-rolle på profilen: **admin / træner / medlem**. Oven på kan et medlem være
-**kaptajn** pr. hold (flag `is_captain` i `group_members`).
+**kaptajn** pr. hold (flag `is_captain` i `group_members`) og/eller **træner for
+et bestemt hold** (flag `is_trainer` i `group_members`).
+
+**Træner pr. hold vs. træner-rollen:** profil-rollen `træner` giver
+RETTIGHEDER i hele klubben. `is_trainer` på et medlemskab siger at personen er
+træner for netop dét hold og derfor ikke er spiller der: de tæller ikke i
+holdets spillertal, optager ingen spillerplads på begivenheder, får hverken
+rykkere eller "mangler svar", kan ikke vælges som makker, og optræder ikke i
+bødekassen (medmindre de faktisk har fået en bøde). Flaget er uafhængigt af
+rollen, så en spiller kan være træner for ét hold — og en træner kan være
+almindelig spiller på et andet hold, hvor flaget bare er slået fra.
 
 | Område | Admin | Træner | Kaptajn (egne hold) | Spiller |
 |---|---|---|---|---|
@@ -175,7 +188,8 @@ skrivning er gated på rolle-helpers (`is_admin()`, `is_staff()`, `is_captain()`
 - **profiles** — id, navn, email, rolle (admin/træner/medlem), makker_prio_1/2.
 - **groups** — hold/grupper: id, navn, type (hold/kamp-trup/anden), farve, sort,
   mobilepay_box_id.
-- **group_members** — group_id, user_id, **is_captain**, **is_fine_admin**.
+- **group_members** — group_id, user_id, **is_captain**, **is_trainer**,
+  **is_fine_admin**.
 - **trainings** — begivenheder: titel, beskrivelse, start_tid, slut_tid, adresse,
   max_deltagere, tilmeldings_deadline, **group_id**, **group_ids[]** (ét el. flere
   hold), **synlig_fra** (planlagt synlighed), reminder_48/24_sent_at, created_by.
@@ -208,7 +222,8 @@ skrivning er gated på rolle-helpers (`is_admin()`, `is_staff()`, `is_captain()`
 ## 7. Nøgle-funktioner (kort)
 
 - Hold-opdeling af alt (aktiviteter, afstemninger, bødekasse, makkere).
-- Serie-oprettelse af træninger (ugentlig gentagelse).
+- Serie-oprettelse af træninger (gentagelse med interval: hver 1.–4. uge).
+  Skiftende tider laves som to forskudte serier med interval 2.
 - Planlagt synlighed ("vis for spillere 1 uge før") + "Udgiv nu"-override.
 - Relativ tilmeldingsfrist (X dage før hver begivenhed).
 - Automatiske rykkere (48t/24t) via cron → in-app klokke.

@@ -13,6 +13,9 @@ class AfstemningerTab extends StatefulWidget {
 class _AfstemningerTabState extends State<AfstemningerTab> {
   List<Map<String, dynamic>> _polls = const [];
   Set<String> _myCaptainGroupIds = {};
+  List<Map<String, dynamic>> _groups = const []; // alle hold (til filteret)
+  Set<String> _myGroupIds = {};
+  String? _filterGroupId; // valgt hold i tragt-filteret (null = ingen)
 
   /// Må den aktuelle bruger slette denne afstemning? (staff, opretter eller
   /// kaptajn for afstemningens hold)
@@ -44,9 +47,11 @@ class _AfstemningerTabState extends State<AfstemningerTab> {
             .select('id, titel, beskrivelse, lukket_at, created_at, group_id, created_by, type')
             .order('created_at', ascending: false),
         supabase.from('group_members').select('group_id, is_captain').eq('user_id', userId),
+        supabase.from('groups').select('id, navn, farve, sort').order('sort'),
       ]);
       final allPolls = List<Map<String, dynamic>>.from(results[0] as List);
       final myGm = List<Map<String, dynamic>>.from(results[1] as List);
+      final groups = List<Map<String, dynamic>>.from(results[2] as List);
       final myIds = myGm.map((r) => r['group_id'] as String).toSet();
       final myCaptainIds = myGm
           .where((r) => r['is_captain'] == true)
@@ -63,12 +68,113 @@ class _AfstemningerTabState extends State<AfstemningerTab> {
       if (!mounted) return;
       setState(() {
         _polls = visible;
+        _groups = groups;
+        _myGroupIds = myIds;
         _myCaptainGroupIds = myCaptainIds;
         _loading = false;
       });
     } catch (e) {
       if (mounted) setState(() { _loading = false; _error = e.toString(); });
     }
+  }
+
+  /// Er der et aktivt hold-filter? (styrer tragt-badgen i app-headeren)
+  bool get holdFilterActive => _filterGroupId != null;
+
+  /// Afstemninger efter hold-filteret. Uden filter vises alt brugeren må se.
+  List<Map<String, dynamic>> get _visiblePolls => _filterGroupId == null
+      ? _polls
+      : _polls.where((p) => p['group_id'] == _filterGroupId).toList();
+
+  /// Hold-filter som bundsheet — kaldes af tragt-ikonet i app-headeren.
+  /// Admin kan vælge hvilket som helst hold; øvrige kun deres egne.
+  Future<void> showHoldFilterSheet() async {
+    final selectable = widget.isAdmin
+        ? _groups
+        : _groups.where((g) => _myGroupIds.contains(g['id'] as String)).toList();
+    if (selectable.isEmpty) {
+      _snack(context, 'Ingen hold at filtrere på', _textSecondary);
+      return;
+    }
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (ctx) {
+        Color hex(String? h) {
+          if (h == null || h.isEmpty) return _textSecondary;
+          return Color(int.parse(h.replaceFirst('#', ''), radix: 16) | 0xFF000000);
+        }
+
+        Widget option(String? id, String label, Color dot) {
+          final selected = _filterGroupId == id;
+          return InkWell(
+            onTap: () {
+              setState(() => _filterGroupId = id);
+              Navigator.of(ctx).pop();
+            },
+            borderRadius: BorderRadius.circular(12),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+              margin: const EdgeInsets.only(bottom: 8),
+              decoration: BoxDecoration(
+                color: selected ? _neon.withValues(alpha: 0.14) : _surfaceElevated,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: selected ? _neon : _borderSubtle),
+              ),
+              child: Row(children: [
+                Container(
+                  width: 11, height: 11,
+                  decoration: BoxDecoration(color: dot, shape: BoxShape.circle),
+                ),
+                const SizedBox(width: 11),
+                Expanded(
+                  child: Text(label,
+                      style: _body(
+                          size: 14,
+                          weight: FontWeight.w600,
+                          color: selected ? _neon : _textPrimary)),
+                ),
+                if (selected) const Icon(Icons.check, size: 18, color: _neon),
+              ]),
+            ),
+          );
+        }
+
+        return SafeArea(
+          top: false,
+          child: Container(
+            margin: const EdgeInsets.all(12),
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+            constraints:
+                BoxConstraints(maxHeight: MediaQuery.of(ctx).size.height * 0.8),
+            decoration: BoxDecoration(
+              color: _surfaceDark,
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: _borderSubtle),
+            ),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text('VÆLG HOLD',
+                      style: _cond(size: 20, weight: FontWeight.w800)),
+                  const SizedBox(height: 4),
+                  Text('Filtrér afstemningerne til ét hold.',
+                      style: _body(size: 12.5, color: _textSecondary)),
+                  const SizedBox(height: 14),
+                  option(null, 'Alle afstemninger', _neon),
+                  for (final g in selectable)
+                    option(g['id'] as String, g['navn'] as String,
+                        hex(g['farve'] as String?)),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
   }
 
   void _open(Map<String, dynamic> poll) {
@@ -165,8 +271,8 @@ class _AfstemningerTabState extends State<AfstemningerTab> {
                         p['lukket_at'] != null &&
                         DateTime.parse(p['lukket_at'] as String)
                             .isBefore(DateTime.now());
-                    final aabne = _polls.where((p) => !erLukket(p)).length;
-                    final lukkede = _polls.where(erLukket).length;
+                    final aabne = _visiblePolls.where((p) => !erLukket(p)).length;
+                    final lukkede = _visiblePolls.where(erLukket).length;
                     Widget seg(String label, int i) {
                       final active = _tab == i;
                       return GestureDetector(
@@ -208,7 +314,7 @@ class _AfstemningerTabState extends State<AfstemningerTab> {
                       ]),
                     );
                   }),
-                  ..._polls.where((p) {
+                  ..._visiblePolls.where((p) {
                     final lukket = p['lukket_at'] != null &&
                         DateTime.parse(p['lukket_at'] as String)
                             .isBefore(DateTime.now());

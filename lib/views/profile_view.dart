@@ -41,9 +41,13 @@ class _ProfileTabState extends State<ProfileTab> {
       if (myGroups.isNotEmpty) {
         final gmRows = await supabase
             .from('group_members')
-            .select('user_id')
+            .select('user_id, is_trainer')
             .inFilter('group_id', myGroups);
+        // Trænere for holdet er ikke spillere og kan derfor ikke vælges som
+        // makker. Er personen træner på ét af mine hold, men spiller på et
+        // andet, tæller spiller-medlemskabet.
         final ids = List<Map<String, dynamic>>.from(gmRows as List)
+            .where((r) => r['is_trainer'] != true)
             .map((r) => r['user_id'] as String)
             .where((id) => id != userId)
             .toSet()

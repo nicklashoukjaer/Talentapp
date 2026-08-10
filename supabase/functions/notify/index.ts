@@ -18,9 +18,52 @@
 const ONESIGNAL_APP_ID = Deno.env.get("ONESIGNAL_APP_ID") ?? "";
 const ONESIGNAL_REST_API_KEY = Deno.env.get("ONESIGNAL_REST_API_KEY") ?? "";
 const WEBHOOK_SECRET = Deno.env.get("NOTIFY_WEBHOOK_SECRET") ?? "";
+// Automatisk til rådighed i Supabase Edge Functions — ingen ekstra secrets.
+const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
+const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 
 const ONESIGNAL_URL = "https://api.onesignal.com/notifications";
 const APP_URL = "https://de-talentlose.vercel.app";
+
+// Holdene en begivenhed/afstemning gælder. Samme regel som i appen:
+// group_ids (flere hold) med fallback til group_id. Tom = klub-bred.
+function groupIdsOf(rec: Record<string, unknown>): string[] {
+  const arr = rec.group_ids;
+  if (Array.isArray(arr) && arr.length > 0) return arr.map(String);
+  const single = rec.group_id;
+  return single ? [String(single)] : [];
+}
+
+async function restGet(path: string): Promise<Record<string, unknown>[]> {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
+    headers: {
+      "apikey": SERVICE_ROLE_KEY,
+      "Authorization": `Bearer ${SERVICE_ROLE_KEY}`,
+    },
+  });
+  if (!res.ok) {
+    console.error("Supabase-opslag fejlede", res.status, await res.text());
+    return [];
+  }
+  return await res.json();
+}
+
+/// Hvem skal have besked om noget der hører til [groupIds]?
+/// Medlemmerne af de hold (trænere inkluderet — de er på holdet) plus alle
+/// admins, som følger hele klubben. Tom liste = ingen at sende til.
+async function recipientsForGroups(groupIds: string[]): Promise<string[]> {
+  const inList = encodeURIComponent(
+    `(${groupIds.map((g) => `"${g}"`).join(",")})`,
+  );
+  const [members, admins] = await Promise.all([
+    restGet(`group_members?group_id=in.${inList}&select=user_id`),
+    restGet(`profiles?rolle=eq.admin&select=id`),
+  ]);
+  const ids = new Set<string>();
+  for (const m of members) if (m.user_id) ids.add(String(m.user_id));
+  for (const a of admins) if (a.id) ids.add(String(a.id));
+  return [...ids];
+}
 
 // Pænt dansk dato/tid i Europe/Copenhagen, fx "tor. 25. jun. 18:30".
 function daDateTime(iso: string): string {
@@ -36,6 +79,21 @@ function daDateTime(iso: string): string {
   } catch {
     return "";
   }
+}
+
+/// Modtager-feltet til OneSignal for en begivenhed/afstemning.
+/// Uden hold: hele klubben (som hidtil). Med hold: kun holdets medlemmer plus
+/// admins. null = ingen at sende til, så vi springer kaldet over.
+async function audienceFor(
+  rec: Record<string, unknown>,
+): Promise<Record<string, unknown> | null> {
+  const groupIds = groupIdsOf(rec);
+  if (groupIds.length === 0) {
+    return { included_segments: ["Total Subscriptions"] };
+  }
+  const ids = await recipientsForGroups(groupIds);
+  if (ids.length === 0) return null;
+  return { include_aliases: { external_id: ids } };
 }
 
 async function sendPush(extra: Record<string, unknown>) {
@@ -78,8 +136,10 @@ Deno.serve(async (req) => {
     case "trainings": {
       const titel = (rec.titel as string) ?? "Ny begivenhed";
       const when = rec.start_tid ? ` — ${daDateTime(rec.start_tid as string)}` : "";
+      const target = await audienceFor(rec);
+      if (!target) return new Response("no recipients", { status: 200 });
       result = await sendPush({
-        included_segments: ["Total Subscriptions"],
+        ...target,
         headings: { en: "Ny begivenhed 🎾", da: "Ny begivenhed 🎾" },
         contents: { en: `${titel}${when}`, da: `${titel}${when}` },
       });
@@ -87,8 +147,10 @@ Deno.serve(async (req) => {
     }
     case "polls": {
       const titel = (rec.titel as string) ?? "Ny afstemning";
+      const target = await audienceFor(rec);
+      if (!target) return new Response("no recipients", { status: 200 });
       result = await sendPush({
-        included_segments: ["Total Subscriptions"],
+        ...target,
         headings: { en: "Ny afstemning 🗳️", da: "Ny afstemning 🗳️" },
         contents: { en: titel, da: titel },
       });

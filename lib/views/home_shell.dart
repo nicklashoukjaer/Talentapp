@@ -327,7 +327,8 @@ class _HomeShellState extends State<HomeShell> {
     ];
 
     final pages = <Widget>[
-      OversigtTab(key: _oversigtKey, isAdmin: _isStaff),
+      OversigtTab(
+          key: _oversigtKey, isAdmin: _isStaff, isFullAdmin: _isAdmin),
       BodekasseTab(
         key: _bodekasseKey,
         isAdmin: _isAdmin,
@@ -354,16 +355,20 @@ class _HomeShellState extends State<HomeShell> {
           ),
         ),
         actions: [
-          // Tragt = hold-filter (som prototypens header) på Oversigt + Bøder.
+          // Tragt = hold-filter (som prototypens header) på Oversigt, Bøder
+          // og Afstemninger.
           if (_selectedIndex.clamp(0, pages.length - 1) == _tabOversigt ||
-              _selectedIndex.clamp(0, pages.length - 1) == _tabBoede)
+              _selectedIndex.clamp(0, pages.length - 1) == _tabBoede ||
+              _selectedIndex.clamp(0, pages.length - 1) == _tabAfstemning)
             IconButton(
               onPressed: () {
                 final idx = _selectedIndex.clamp(0, pages.length - 1);
                 if (idx == _tabOversigt) {
                   _oversigtKey.currentState?.showHoldFilterSheet();
-                } else {
+                } else if (idx == _tabBoede) {
                   _bodekasseKey.currentState?.showHoldFilterSheet();
+                } else {
+                  _afstemningerKey.currentState?.showHoldFilterSheet();
                 }
               },
               icon: const Icon(Icons.filter_list, color: _textPrimary),

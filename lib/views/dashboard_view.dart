@@ -952,6 +952,7 @@ class _MembersAdminViewState extends State<_MembersAdminView> {
   List<Map<String, dynamic>> _members = const [];
   Map<String, Set<String>> _membership = {}; // uid → gruppe-id'er
   Map<String, Set<String>> _captains = {};   // uid → gruppe-id'er (kaptajn)
+  Map<String, Set<String>> _trainers = {};   // uid → gruppe-id'er (træner)
   Map<String, int> _skyldigt = {};           // uid → ubetalt øre
   bool _loading = true;
   String _tab = 'medlemmer';
@@ -970,17 +971,20 @@ class _MembersAdminViewState extends State<_MembersAdminView> {
       final res = await Future.wait([
         supabase.from('groups').select('id, navn, type, farve, sort').order('sort'),
         supabase.from('profiles').select('id, navn, rolle, email').order('navn'),
-        supabase.from('group_members').select('group_id, user_id, is_captain'),
+        supabase.from('group_members')
+            .select('group_id, user_id, is_captain, is_trainer'),
         supabase.from('fine_leaderboard').select('id, skyldigt_oere'),
       ]);
       final gm = List<Map<String, dynamic>>.from(res[2] as List);
       final map = <String, Set<String>>{};
       final caps = <String, Set<String>>{};
+      final trainers = <String, Set<String>>{};
       for (final r in gm) {
         final uid = r['user_id'] as String;
         final gid = r['group_id'] as String;
         (map[uid] ??= {}).add(gid);
         if (r['is_captain'] == true) (caps[uid] ??= {}).add(gid);
+        if (r['is_trainer'] == true) (trainers[uid] ??= {}).add(gid);
       }
       final skyldigt = <String, int>{};
       for (final r in List<Map<String, dynamic>>.from(res[3] as List)) {
@@ -992,6 +996,7 @@ class _MembersAdminViewState extends State<_MembersAdminView> {
         _members = List<Map<String, dynamic>>.from(res[1] as List);
         _membership = map;
         _captains = caps;
+        _trainers = trainers;
         _skyldigt = skyldigt;
         _loading = false;
       });
@@ -1003,6 +1008,29 @@ class _MembersAdminViewState extends State<_MembersAdminView> {
   String _groupName(String gid) {
     final g = _groups.where((g) => g['id'] == gid);
     return g.isEmpty ? '' : g.first['navn'] as String;
+  }
+
+  bool _isMemberOf(Map<String, dynamic> m, String gid) =>
+      (_membership[m['id']] ?? const {}).contains(gid);
+  bool _isTrainerOf(Map<String, dynamic> m, String gid) =>
+      (_trainers[m['id']] ?? const {}).contains(gid);
+
+  /// Spillere på et hold = medlemmer der IKKE er træner for netop dét hold.
+  /// En træner for Talentløse 1 kan altså godt tælle som spiller på Damer.
+  List<Map<String, dynamic>> _playersOf(String gid) => _members
+      .where((m) => _isMemberOf(m, gid) && !_isTrainerOf(m, gid))
+      .toList();
+
+  List<Map<String, dynamic>> _trainersOf(String gid) =>
+      _members.where((m) => _isTrainerOf(m, gid)).toList();
+
+  /// "7 spillere" — med "· 1 træner" som tilføjelse når holdet har trænere.
+  String _teamCountLabel(String gid) {
+    final players = _playersOf(gid).length;
+    final trainers = _trainersOf(gid).length;
+    final base = '$players spiller${players == 1 ? '' : 'e'}';
+    if (trainers == 0) return base;
+    return '$base · $trainers træner${trainers == 1 ? '' : 'e'}';
   }
 
   // Rolle-badge (label + farve) — kaptajn vises hvis medlemmet er kaptajn nogen steder.
@@ -1027,6 +1055,7 @@ class _MembersAdminViewState extends State<_MembersAdminView> {
         groups: _groups,
         memberGids: {...(_membership[id] ?? const {})},
         captainGids: {...(_captains[id] ?? const {})},
+        trainerGids: {...(_trainers[id] ?? const {})},
         skyldigtOere: _skyldigt[id] ?? 0,
         onChangeRole: widget.onChangeRole,
       ),
@@ -1239,6 +1268,78 @@ class _MembersAdminViewState extends State<_MembersAdminView> {
     );
   }
 
+  Widget _sectionLabel(String text) => Padding(
+        padding: const EdgeInsets.only(bottom: 8),
+        child: Text(text,
+            style: _body(
+                size: 12,
+                weight: FontWeight.w700,
+                color: _textSecondary,
+                spacing: 1)),
+      );
+
+  /// "+ Tilføj til holdet" — så man kan sætte folk (fx en træner) på et hold
+  /// fra holdet selv, og ikke kun via den enkelte persons medlems-sheet.
+  Widget _addToTeamButton(String gid) {
+    return InkWell(
+      onTap: () => _addMembersToTeam(gid),
+      borderRadius: BorderRadius.circular(13),
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 13),
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(13),
+          border: Border.all(color: _neon.withValues(alpha: 0.5)),
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          const Icon(Icons.person_add_alt, size: 16, color: _neon),
+          const SizedBox(width: 8),
+          Text('Tilføj til holdet',
+              style: _body(size: 13.5, weight: FontWeight.w700, color: _neon)),
+        ]),
+      ),
+    );
+  }
+
+  Future<void> _addMembersToTeam(String gid) async {
+    final candidates =
+        _members.where((m) => !_isMemberOf(m, gid)).toList(growable: false);
+    if (candidates.isEmpty) {
+      _snack(context, 'Alle medlemmer er allerede på holdet', _textSecondary);
+      return;
+    }
+    final picked = await showModalBottomSheet<List<({String id, bool trainer})>>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _AddToTeamSheet(
+        holdNavn: _groupName(gid),
+        candidates: candidates,
+        roleBadge: _roleBadge,
+      ),
+    );
+    if (picked == null || picked.isEmpty) return;
+    try {
+      await supabase.from('group_members').insert([
+        for (final p in picked)
+          {
+            'group_id': gid,
+            'user_id': p.id,
+            'is_captain': false,
+            'is_trainer': p.trainer,
+          }
+      ]);
+      if (mounted) {
+        _snack(context, picked.length == 1
+            ? 'Tilføjet til holdet'
+            : '${picked.length} tilføjet til holdet', _success);
+      }
+      _load();
+    } on PostgrestException catch (e) {
+      if (mounted) _snack(context, e.message, _danger);
+    }
+  }
+
   Widget _goldCard(int count) {
     if (count == 0) return const SizedBox.shrink();
     return Padding(
@@ -1303,12 +1404,12 @@ class _MembersAdminViewState extends State<_MembersAdminView> {
           ? null
           : _groups.firstWhere((g) => g['id'] == _teamOpen,
               orElse: () => const {});
-      final teamMembers = isNone
-          ? noTeam
-          : _members
-              .where((m) => (_membership[m['id']] ?? const {})
-                  .contains(_teamOpen))
-              .toList();
+      // Spillere og trænere vises hver for sig; trænere tæller ikke med i
+      // "X spillere".
+      final teamPlayers = isNone ? noTeam : _playersOf(_teamOpen!);
+      final teamTrainers = isNone
+          ? const <Map<String, dynamic>>[]
+          : _trainersOf(_teamOpen!);
       final dotColor =
           isNone ? _gold : _groupHex(g?['farve'] as String?);
       final name = isNone ? 'Uden hold' : (g?['navn'] as String? ?? '');
@@ -1334,7 +1435,7 @@ class _MembersAdminViewState extends State<_MembersAdminView> {
               child: Text(name.toUpperCase(),
                   style: _cond(size: 17, weight: FontWeight.w800)),
             ),
-            Text('${teamMembers.length} spillere',
+            Text('${teamPlayers.length} spillere',
                 style: _body(size: 12, color: _textSecondary)),
             if (!isNone && widget.isAdmin && g != null) ...[
               IconButton(
@@ -1352,7 +1453,17 @@ class _MembersAdminViewState extends State<_MembersAdminView> {
             ],
           ]),
           const SizedBox(height: 14),
-          _listCard(teamMembers),
+          if (teamTrainers.isNotEmpty) ...[
+            _sectionLabel('TRÆNERE'),
+            _listCard(teamTrainers),
+            const SizedBox(height: 14),
+            _sectionLabel('SPILLERE'),
+          ],
+          _listCard(teamPlayers),
+          if (!isNone) ...[
+            const SizedBox(height: 12),
+            _addToTeamButton(_teamOpen!),
+          ],
         ],
       );
     }
@@ -1432,7 +1543,7 @@ class _MembersAdminViewState extends State<_MembersAdminView> {
                         Text(g['navn'] as String,
                             style: _body(size: 14.5, weight: FontWeight.w700)),
                         Text(
-                            '${_members.where((m) => (_membership[m['id']] ?? const {}).contains(g['id'])).length} spillere',
+                            _teamCountLabel(g['id'] as String),
                             style: _body(size: 11.5, color: _textSecondary)),
                       ],
                     ),
@@ -1471,6 +1582,233 @@ class _MembersAdminViewState extends State<_MembersAdminView> {
   }
 }
 
+/// Vælg medlemmer der skal tilføjes et hold — med søgning, rolle-badge og et
+/// træner-flueben pr. person, så en træner kan sættes på holdet med det samme.
+class _AddToTeamSheet extends StatefulWidget {
+  final String holdNavn;
+  final List<Map<String, dynamic>> candidates;
+  final (String, Color) Function(Map<String, dynamic>) roleBadge;
+  const _AddToTeamSheet({
+    required this.holdNavn,
+    required this.candidates,
+    required this.roleBadge,
+  });
+  @override
+  State<_AddToTeamSheet> createState() => _AddToTeamSheetState();
+}
+
+class _AddToTeamSheetState extends State<_AddToTeamSheet> {
+  final Set<String> _picked = {};
+  final Set<String> _asTrainer = {};
+  String _search = '';
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final q = _search.trim().toLowerCase();
+    final list = q.isEmpty
+        ? widget.candidates
+        : widget.candidates
+            .where((m) =>
+                (m['navn'] as String? ?? '').toLowerCase().contains(q))
+            .toList();
+
+    return Padding(
+      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      child: Container(
+        constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(context).size.height * 0.9),
+        decoration: const BoxDecoration(
+          color: _surfaceDark,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          border: Border(top: BorderSide(color: _borderSubtle)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 40, height: 4,
+              margin: const EdgeInsets.only(top: 10, bottom: 6),
+              decoration: BoxDecoration(
+                  color: _borderSubtle, borderRadius: BorderRadius.circular(999)),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 4, 10, 6),
+              child: Row(children: [
+                Expanded(
+                  child: Text('TILFØJ TIL ${widget.holdNavn.toUpperCase()}',
+                      style: theme.textTheme.titleLarge),
+                ),
+                IconButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  icon: const Icon(Icons.close),
+                  color: _textSecondary,
+                ),
+              ]),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 10),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 2),
+                decoration: BoxDecoration(
+                  color: _surfaceElevated,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: _borderSubtle),
+                ),
+                child: Row(children: [
+                  const Icon(Icons.search, size: 16, color: _textMuted),
+                  const SizedBox(width: 9),
+                  Expanded(
+                    child: TextField(
+                      onChanged: (v) => setState(() => _search = v),
+                      style: _body(size: 14),
+                      decoration: InputDecoration(
+                        isDense: true,
+                        border: InputBorder.none,
+                        hintText: 'Søg medlem…',
+                        hintStyle: _body(size: 14, color: _textMuted),
+                      ),
+                    ),
+                  ),
+                ]),
+              ),
+            ),
+            Flexible(
+              child: list.isEmpty
+                  ? Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Text('Ingen medlemmer at tilføje',
+                          style: _body(size: 13, color: _textMuted)),
+                    )
+                  : ListView.builder(
+                      padding: const EdgeInsets.symmetric(horizontal: 20),
+                      itemCount: list.length,
+                      itemBuilder: (_, i) {
+                        final m = list[i];
+                        final id = m['id'] as String;
+                        final navn = m['navn'] as String? ?? '?';
+                        final on = _picked.contains(id);
+                        final (badge, badgeColor) = widget.roleBadge(m);
+                        return Container(
+                          margin: const EdgeInsets.only(bottom: 8),
+                          decoration: BoxDecoration(
+                            color: on
+                                ? _neon.withValues(alpha: 0.10)
+                                : _surfaceElevated,
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                                color: on ? _neon : _borderSubtle),
+                          ),
+                          child: Column(children: [
+                            InkWell(
+                              onTap: () => setState(() {
+                                if (on) {
+                                  _picked.remove(id);
+                                  _asTrainer.remove(id);
+                                } else {
+                                  _picked.add(id);
+                                }
+                              }),
+                              borderRadius: BorderRadius.circular(12),
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 12, vertical: 10),
+                                child: Row(children: [
+                                  Container(
+                                    width: 32, height: 32,
+                                    alignment: Alignment.center,
+                                    decoration: BoxDecoration(
+                                        color: _avatarColorFor(navn),
+                                        shape: BoxShape.circle),
+                                    child: Text(
+                                        navn.isEmpty
+                                            ? '?'
+                                            : navn[0].toUpperCase(),
+                                        style: _body(
+                                            size: 12.5,
+                                            weight: FontWeight.w700,
+                                            color: Colors.white)),
+                                  ),
+                                  const SizedBox(width: 11),
+                                  Expanded(
+                                    child: Text(navn,
+                                        style: _body(
+                                            size: 14, weight: FontWeight.w600),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis),
+                                  ),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 9, vertical: 3),
+                                    decoration: BoxDecoration(
+                                      color: badgeColor.withValues(alpha: 0.16),
+                                      borderRadius: BorderRadius.circular(999),
+                                    ),
+                                    child: Text(badge,
+                                        style: _body(
+                                            size: 10,
+                                            weight: FontWeight.w700,
+                                            color: badgeColor)),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Icon(
+                                      on
+                                          ? Icons.check_circle
+                                          : Icons.radio_button_unchecked,
+                                      size: 20,
+                                      color: on ? _neon : _textMuted),
+                                ]),
+                              ),
+                            ),
+                            if (on)
+                              Padding(
+                                padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
+                                child: Row(children: [
+                                  const Icon(Icons.sports,
+                                      size: 15, color: _info),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text('Træner for holdet',
+                                        style: _body(
+                                            size: 12.5, color: _textSecondary)),
+                                  ),
+                                  Switch(
+                                    value: _asTrainer.contains(id),
+                                    onChanged: (v) => setState(() => v
+                                        ? _asTrainer.add(id)
+                                        : _asTrainer.remove(id)),
+                                  ),
+                                ]),
+                              ),
+                          ]),
+                        );
+                      },
+                    ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 10, 20, 20),
+              child: SizedBox(
+                width: double.infinity,
+                child: FilledButton(
+                  onPressed: _picked.isEmpty
+                      ? null
+                      : () => Navigator.of(context).pop([
+                            for (final id in _picked)
+                              (id: id, trainer: _asTrainer.contains(id))
+                          ]),
+                  child: Text(_picked.isEmpty
+                      ? 'Vælg medlemmer'
+                      : 'Tilføj ${_picked.length}'),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 /// Medlems-sheet — navn, rolle, hold (+ kaptajn), nulstil kodeord, slet.
 class _MemberSheet extends StatefulWidget {
   final Map<String, dynamic> profile;
@@ -1479,6 +1817,7 @@ class _MemberSheet extends StatefulWidget {
   final List<Map<String, dynamic>> groups;
   final Set<String> memberGids;
   final Set<String> captainGids;
+  final Set<String> trainerGids;
   final int skyldigtOere;
   final Future<void> Function(String userId, String newRole) onChangeRole;
   const _MemberSheet({
@@ -1488,6 +1827,7 @@ class _MemberSheet extends StatefulWidget {
     required this.groups,
     required this.memberGids,
     required this.captainGids,
+    required this.trainerGids,
     required this.skyldigtOere,
     required this.onChangeRole,
   });
@@ -1501,6 +1841,7 @@ class _MemberSheetState extends State<_MemberSheet> {
   late String _rolle = widget.profile['rolle'] as String? ?? 'medlem';
   late final Set<String> _teams = {...widget.memberGids};
   late final Set<String> _caps = {...widget.captainGids};
+  late final Set<String> _trainerOf = {...widget.trainerGids};
   bool _saving = false;
   bool _sendingReset = false;
 
@@ -1557,6 +1898,7 @@ class _MemberSheetState extends State<_MemberSheet> {
           'group_id': gid,
           'user_id': _id,
           'is_captain': _caps.contains(gid),
+          'is_trainer': _trainerOf.contains(gid),
         });
       }
       for (final gid in removed) {
@@ -1566,13 +1908,19 @@ class _MemberSheetState extends State<_MemberSheet> {
             .eq('group_id', gid)
             .eq('user_id', _id);
       }
-      // Kaptajn-diffs på hold der bevares
+      // Kaptajn-/træner-diffs på hold der bevares
       for (final gid in _teams.intersection(widget.memberGids)) {
-        final want = _caps.contains(gid);
-        if (want != widget.captainGids.contains(gid)) {
+        final wantCap = _caps.contains(gid);
+        final wantTrainer = _trainerOf.contains(gid);
+        final patch = <String, dynamic>{
+          if (wantCap != widget.captainGids.contains(gid)) 'is_captain': wantCap,
+          if (wantTrainer != widget.trainerGids.contains(gid))
+            'is_trainer': wantTrainer,
+        };
+        if (patch.isNotEmpty) {
           await supabase
               .from('group_members')
-              .update({'is_captain': want})
+              .update(patch)
               .eq('group_id', gid)
               .eq('user_id', _id);
         }
@@ -1650,6 +1998,7 @@ class _MemberSheetState extends State<_MemberSheet> {
     final gid = g['id'] as String;
     final on = _teams.contains(gid);
     final cap = _caps.contains(gid);
+    final trainer = _trainerOf.contains(gid);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(children: [
@@ -1666,7 +2015,18 @@ class _MemberSheetState extends State<_MemberSheet> {
                   weight: FontWeight.w600,
                   color: on ? _textPrimary : _textSecondary)),
         ),
-        // Kaptajn-stjerne (kun når medlemmet er på holdet)
+        // Træner-fløjte + kaptajn-stjerne (kun når medlemmet er på holdet)
+        if (on)
+          IconButton(
+            onPressed: () => setState(
+                () => trainer ? _trainerOf.remove(gid) : _trainerOf.add(gid)),
+            icon: Icon(trainer ? Icons.sports : Icons.sports_outlined,
+                size: 20, color: trainer ? _info : _textMuted),
+            visualDensity: VisualDensity.compact,
+            tooltip: trainer
+                ? 'Træner for holdet — tæller ikke som spiller'
+                : 'Gør til træner for holdet',
+          ),
         if (on)
           IconButton(
             onPressed: () => setState(
@@ -1684,6 +2044,7 @@ class _MemberSheetState extends State<_MemberSheet> {
             } else {
               _teams.remove(gid);
               _caps.remove(gid);
+              _trainerOf.remove(gid);
             }
           }),
         ),
@@ -1802,8 +2163,9 @@ class _MemberSheetState extends State<_MemberSheet> {
                             size: 12, weight: FontWeight.w700,
                             color: _textSecondary, spacing: 1)),
                     const SizedBox(height: 4),
-                    Text('Tænd for de hold personen er på. Stjernen gør '
-                        'medlemmet til kaptajn for holdet.',
+                    Text('Tænd for de hold personen er på. Fløjten gør dem til '
+                        'træner for holdet (tæller ikke som spiller, får ingen '
+                        'rykkere). Stjernen gør dem til kaptajn.',
                         style: _body(size: 11.5, color: _textMuted)),
                     const SizedBox(height: 8),
                     if (widget.groups.isEmpty)
@@ -3404,6 +3766,7 @@ class _CreateTrainingDialogState extends State<CreateTrainingDialog> {
     );
   }
   bool _recurring = false;
+  int _interval = 1; // uger mellem hver begivenhed i serien
   bool _saving = false;
   String? _seriesId; // sættes ved gem hvis serien har flere begivenheder
   List<Map<String, dynamic>> _groups = const [];
@@ -3524,6 +3887,15 @@ class _CreateTrainingDialogState extends State<CreateTrainingDialog> {
     return n.clamp(1, 52);
   }
 
+  /// Uger mellem hver begivenhed i serien. 1 = hver uge (som hidtil).
+  /// Skiftende tider (fx 17-19 den ene uge, 19-21 den næste) laves som to
+  /// serier med interval 2, forskudt en uge.
+  int get _intervalWeeks => _recurring ? _interval : 1;
+
+  /// Sidste dato i serien — bruges i forhåndsvisningen.
+  DateTime? get _seriesEnd => _dato?.add(
+      Duration(days: 7 * _intervalWeeks * (_plannedWeeks - 1)));
+
   @override
   void dispose() {
     _titel.dispose();
@@ -3588,7 +3960,7 @@ class _CreateTrainingDialogState extends State<CreateTrainingDialog> {
     _seriesId = weeks > 1 ? genUuidV4() : null;
 
     final rows = List<Map<String, dynamic>>.generate(weeks, (i) {
-      final delta = Duration(days: 7 * i);
+      final delta = Duration(days: 7 * _intervalWeeks * i);
       final evStart = start.add(delta);
       // Fristen er relativ til HVER begivenheds dato: X dage før start.
       // null = ingen frist → åben til begivenheden begynder (= start).
@@ -3616,7 +3988,7 @@ class _CreateTrainingDialogState extends State<CreateTrainingDialog> {
       await supabase.from('trainings').insert(rows);
       if (!mounted) return;
       if (weeks > 1) {
-        _snack(context, '$weeks ugentlige begivenheder oprettet', Colors.green);
+        _snack(context, '$weeks begivenheder oprettet', Colors.green);
       }
       Navigator.of(context).pop(true);
     } on PostgrestException catch (e) {
@@ -3818,8 +4190,9 @@ class _CreateTrainingDialogState extends State<CreateTrainingDialog> {
                         value: _recurring,
                         onChanged: (v) => setState(() => _recurring = v),
                         secondary: const Icon(Icons.event_repeat),
-                        title: const Text('Gentag ugentligt'),
-                        subtitle: const Text('Opretter en serie af begivenheder på samme ugedag'),
+                        title: const Text('Gentag'),
+                        subtitle: const Text(
+                            'Opretter en serie af begivenheder på samme ugedag'),
                       ),
                       if (_recurring) ...[
                         Padding(
@@ -3829,7 +4202,7 @@ class _CreateTrainingDialogState extends State<CreateTrainingDialog> {
                             textInputAction: TextInputAction.done,
                             onFieldSubmitted: (_) => _save(),
                             decoration: const InputDecoration(
-                              labelText: 'Antal uger frem',
+                              labelText: 'Antal gange',
                               hintText: '8',
                               prefixIcon: Icon(Icons.repeat),
                             ),
@@ -3837,6 +4210,62 @@ class _CreateTrainingDialogState extends State<CreateTrainingDialog> {
                             inputFormatters: [
                               FilteringTextInputFormatter.digitsOnly,
                               LengthLimitingTextInputFormatter(2),
+                            ],
+                          ),
+                        ),
+                        // Interval — 1 uge er standard og opfører sig præcis
+                        // som før. Højere interval bruges fx til at lave to
+                        // forskudte serier med hver sin tid.
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('INTERVAL',
+                                  style: _body(
+                                      size: 12,
+                                      weight: FontWeight.w700,
+                                      color: _textSecondary,
+                                      spacing: 1)),
+                              const SizedBox(height: 8),
+                              Wrap(
+                                spacing: 8,
+                                runSpacing: 8,
+                                children: [
+                                  for (final o in const [
+                                    (1, 'Hver uge'),
+                                    (2, 'Hver 2. uge'),
+                                    (3, 'Hver 3. uge'),
+                                    (4, 'Hver 4. uge'),
+                                  ])
+                                    GestureDetector(
+                                      onTap: () =>
+                                          setState(() => _interval = o.$1),
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 14, vertical: 9),
+                                        decoration: BoxDecoration(
+                                          color: _interval == o.$1
+                                              ? _neon
+                                              : _surfaceElevated,
+                                          borderRadius:
+                                              BorderRadius.circular(999),
+                                          border: Border.all(
+                                              color: _interval == o.$1
+                                                  ? _neon
+                                                  : _borderSubtle),
+                                        ),
+                                        child: Text(o.$2,
+                                            style: _body(
+                                                size: 13,
+                                                weight: FontWeight.w600,
+                                                color: _interval == o.$1
+                                                    ? Colors.white
+                                                    : _textSecondary)),
+                                      ),
+                                    ),
+                                ],
+                              ),
                             ],
                           ),
                         ),
@@ -3853,7 +4282,7 @@ class _CreateTrainingDialogState extends State<CreateTrainingDialog> {
                                       ? 'Vælg dato for at se serie'
                                       : 'Opretter $_plannedWeeks begivenheder — '
                                         'fra ${_fmtDate(_dato!)} til '
-                                        '${_fmtDate(_dato!.add(Duration(days: 7 * (_plannedWeeks - 1))))}',
+                                        '${_fmtDate(_seriesEnd!)}',
                                   style: theme.textTheme.bodySmall?.copyWith(
                                       color: theme.colorScheme.primary,
                                       fontWeight: FontWeight.w600),

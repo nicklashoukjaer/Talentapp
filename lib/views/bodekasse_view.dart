@@ -14,6 +14,9 @@ class BodekasseTabState extends State<BodekasseTab> {
   List<Map<String, dynamic>> _rows = const [];
   List<Map<String, dynamic>> _groups = const [];
   Map<String, Set<String>> _memberIdsByGroup = {}; // group_id → medlemmers user_id
+  // Folk der KUN er tilknyttet hold som træner. De hører ikke hjemme i
+  // bødekassen — medmindre de rent faktisk har fået en bøde.
+  Set<String> _trainerOnlyIds = {};
   Set<String> _myGroupIds = {};
   Set<String> _myCaptainGroupIds = {}; // hold hvor jeg er kaptajn (styrer bøder)
   // Valgte hold i filteret (tom = alle tilladte). Admin kan vælge flere.
@@ -57,7 +60,8 @@ class BodekasseTabState extends State<BodekasseTab> {
       final results = await Future.wait([
         supabase.from('fine_leaderboard').select().order('total_oere', ascending: false),
         supabase.from('groups').select('id, navn, farve, sort, hold_group_id').order('sort'),
-        supabase.from('group_members').select('group_id, user_id, is_captain'),
+        supabase.from('group_members')
+            .select('group_id, user_id, is_captain, is_trainer'),
         supabase.from('hold_groups').select('id, navn').order('created_at'),
       ]);
       final list = List<Map<String, dynamic>>.from(results[0] as List);
@@ -91,16 +95,38 @@ class BodekasseTabState extends State<BodekasseTab> {
       final byGroup = <String, Set<String>>{};
       final mine = <String>{};
       final myCap = <String>{};
+      // Trænere tælles ikke som spillere i fællesskabets bødekasse, men de
+      // beholder adgang til at SE (og filtrere på) deres eget holds kasse.
+      final trainerAnywhere = <String>{};
+      final playerAnywhere = <String>{};
+      final trainerLinks = <({String key, String uid})>[];
       for (final r in gm) {
         final gid = r['group_id'] as String;
         final uid = r['user_id'] as String;
         final key = communityKeyOf[gid];
         if (key == null) continue;
-        (byGroup[key] ??= <String>{}).add(uid);
+        if (r['is_trainer'] == true) {
+          trainerAnywhere.add(uid);
+          trainerLinks.add((key: key, uid: uid));
+        } else {
+          playerAnywhere.add(uid);
+          (byGroup[key] ??= <String>{}).add(uid);
+        }
         if (uid == widget.currentUserId) {
           mine.add(key);
           if (r['is_captain'] == true) myCap.add(key);
         }
+      }
+      final trainerOnly = trainerAnywhere.difference(playerAnywhere);
+      // Har en træner fået en bøde, hører de alligevel til i det fællesskabs
+      // kasse — ellers ville de forsvinde igen så snart man filtrerede på
+      // holdet.
+      final fined = {
+        for (final r in list)
+          if (((r['total_oere'] as num?) ?? 0) > 0) r['id'] as String
+      };
+      for (final l in trainerLinks) {
+        if (fined.contains(l.uid)) (byGroup[l.key] ??= <String>{}).add(l.uid);
       }
       CacheService.put('leaderboard', list);
       if (!mounted) return;
@@ -108,6 +134,7 @@ class BodekasseTabState extends State<BodekasseTab> {
         _rows = list;
         _groups = communities;
         _memberIdsByGroup = byGroup;
+        _trainerOnlyIds = trainerOnly;
         _myGroupIds = mine;
         _myCaptainGroupIds = myCap;
         _filterInit = true;
@@ -281,15 +308,22 @@ class BodekasseTabState extends State<BodekasseTab> {
 
     // Grundmængden en bruger overhovedet kan se: admin ser alle; øvrige kun
     // personer på deres egne hold. (Hold-filteret sidder i app-headerens tragt.)
+    // Rene trænere holdes ude af ranglisten indtil de faktisk har fået en bøde
+    // — så dukker de op på lige fod med alle andre.
+    bool visible(Map<String, dynamic> r) =>
+        !_trainerOnlyIds.contains(r['id'] as String) ||
+        ((r['total_oere'] as num?) ?? 0) > 0;
+
     Iterable<Map<String, dynamic>> base;
     if (widget.isAdmin) {
-      base = _rows;
+      base = _rows.where(visible);
     } else {
       final allowed = <String>{};
       for (final g in _myGroupIds) {
         allowed.addAll(_memberIdsByGroup[g] ?? const <String>{});
       }
-      base = _rows.where((r) => allowed.contains(r['id'] as String));
+      base = _rows.where(
+          (r) => visible(r) && allowed.contains(r['id'] as String));
     }
 
     // Valgte hold indsnævrer yderligere (tom = hele grundmængden).

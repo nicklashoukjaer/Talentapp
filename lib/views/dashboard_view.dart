@@ -2015,27 +2015,40 @@ class _MemberSheetState extends State<_MemberSheet> {
                   weight: FontWeight.w600,
                   color: on ? _textPrimary : _textSecondary)),
         ),
-        // Træner-fløjte + kaptajn-stjerne (kun når medlemmet er på holdet)
-        if (on)
-          IconButton(
-            onPressed: () => setState(
-                () => trainer ? _trainerOf.remove(gid) : _trainerOf.add(gid)),
-            icon: Icon(trainer ? Icons.sports : Icons.sports_outlined,
-                size: 20, color: trainer ? _info : _textMuted),
-            visualDensity: VisualDensity.compact,
-            tooltip: trainer
-                ? 'Træner for holdet — tæller ikke som spiller'
-                : 'Gør til træner for holdet',
-          ),
-        if (on)
-          IconButton(
-            onPressed: () => setState(
-                () => cap ? _caps.remove(gid) : _caps.add(gid)),
-            icon: Icon(cap ? Icons.star : Icons.star_border,
-                size: 20, color: cap ? _gold : _textMuted),
-            visualDensity: VisualDensity.compact,
-            tooltip: cap ? 'Kaptajn' : 'Gør til kaptajn',
-          ),
+        // Træner-fløjte + kaptajn-stjerne. De vises ALTID — trykker man på
+        // dem for et hold personen ikke er på, sættes de på holdet i samme
+        // greb. Ellers skal man først gætte at kontakten skal tændes før
+        // ikonerne dukker op.
+        IconButton(
+          onPressed: () => setState(() {
+            if (trainer) {
+              _trainerOf.remove(gid);
+            } else {
+              _teams.add(gid);
+              _trainerOf.add(gid);
+            }
+          }),
+          icon: Icon(trainer ? Icons.sports : Icons.sports_outlined,
+              size: 20, color: trainer ? _info : _textMuted),
+          visualDensity: VisualDensity.compact,
+          tooltip: trainer
+              ? 'Træner for holdet — tæller ikke som spiller'
+              : 'Gør til træner for holdet',
+        ),
+        IconButton(
+          onPressed: () => setState(() {
+            if (cap) {
+              _caps.remove(gid);
+            } else {
+              _teams.add(gid);
+              _caps.add(gid);
+            }
+          }),
+          icon: Icon(cap ? Icons.star : Icons.star_border,
+              size: 20, color: cap ? _gold : _textMuted),
+          visualDensity: VisualDensity.compact,
+          tooltip: cap ? 'Kaptajn' : 'Gør til kaptajn',
+        ),
         Switch(
           value: on,
           onChanged: (v) => setState(() {
@@ -2163,10 +2176,27 @@ class _MemberSheetState extends State<_MemberSheet> {
                             size: 12, weight: FontWeight.w700,
                             color: _textSecondary, spacing: 1)),
                     const SizedBox(height: 4),
-                    Text('Tænd for de hold personen er på. Fløjten gør dem til '
-                        'træner for holdet (tæller ikke som spiller, får ingen '
-                        'rykkere). Stjernen gør dem til kaptajn.',
-                        style: _body(size: 11.5, color: _textMuted)),
+                    Row(children: [
+                      const Icon(Icons.sports, size: 14, color: _info),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                            'Fløjten = træner for holdet: tæller ikke som '
+                            'spiller, optager ingen plads og får ingen rykkere.',
+                            style: _body(size: 11.5, color: _textMuted)),
+                      ),
+                    ]),
+                    const SizedBox(height: 4),
+                    Row(children: [
+                      const Icon(Icons.star, size: 14, color: _gold),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                            'Stjernen = kaptajn. Begge sætter personen på '
+                            'holdet med det samme.',
+                            style: _body(size: 11.5, color: _textMuted)),
+                      ),
+                    ]),
                     const SizedBox(height: 8),
                     if (widget.groups.isEmpty)
                       Text('Ingen hold oprettet endnu',

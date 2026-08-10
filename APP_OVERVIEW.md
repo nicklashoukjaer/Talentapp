@@ -185,7 +185,16 @@ Alle tabeller har Row-Level Security. Læsning er typisk åben for indloggede;
 skrivning er gated på rolle-helpers (`is_admin()`, `is_staff()`, `is_captain()`,
 `is_fine_admin()`, `can_admin_fine()`, `can_manage_event()`).
 
-- **profiles** — id, navn, email, rolle (admin/træner/medlem), makker_prio_1/2.
+- **profiles** — id, navn, email, rolle (admin/træner/medlem), makker_prio_1/2,
+  **kalender_alle_hold** (se nedenfor).
+
+> **kalender_alle_hold** er en undtagelse der kun gælder `.ics`-feedet: personen
+> får hele klubbens program i sin kalender i stedet for kun sine egne holds.
+> Den giver INGEN adgang i appen — ikke afstemninger, bødekasse, notifikationer
+> eller holdtilknytning — og uudgivne begivenheder er stadig skjult for
+> ikke-staff. Der er bevidst ingen knap til den; den sættes direkte i databasen:
+> `update profiles set kalender_alle_hold = true where id = '<uuid>';`
+> Bruges til pårørende der deler kalender med et medlem.
 - **groups** — hold/grupper: id, navn, type (hold/kamp-trup/anden), farve, sort,
   mobilepay_box_id.
 - **group_members** — group_id, user_id, **is_captain**, **is_trainer**,

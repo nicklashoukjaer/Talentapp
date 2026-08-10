@@ -8,8 +8,9 @@
 // Feedet er PERSONLIGT: det indeholder kun begivenheder brugeren faktisk må se.
 //   • Hold: kun brugerens egne hold + klub-brede begivenheder uden hold.
 //     Samme regel som Oversigten (group_ids med fallback til group_id).
-//     Undtagelse: profiles.kalender_alle_hold = true → hele klubbens program.
-//     Flaget gælder KUN her; det giver ingen adgang til noget i appen.
+//     Undtagelse: profiles.kalender_alle_hold = true → hele klubbens program,
+//     hele sæsonen (også endnu ikke udgivne). Flaget gælder KUN her; det giver
+//     ingen adgang til noget i appen.
 //   • Synlighed: begivenheder med synlig_fra i fremtiden udelades — undtagen
 //     for staff (admin/træner), der også ser dem i appen.
 //
@@ -94,11 +95,13 @@ Deno.serve(async (req) => {
 
   const now = Date.now();
   const mine = (trainings ?? []).filter((t: Record<string, unknown>) => {
+    // Undtagelsen: hele klubbens program, hele sæsonen — uanset hold og uanset
+    // om begivenheden er udgivet endnu. Bruges til at følge planlægningen i en
+    // ekstern kalender.
+    if (allTeams) return true;
     // Endnu ikke udgivet → kun staff ser den, præcis som i appen.
     const sf = t.synlig_fra as string | null;
     if (!isStaff && sf && new Date(sf).getTime() > now) return false;
-    // Undtagelsen: hele klubbens program, uanset hold.
-    if (allTeams) return true;
     // Klub-bred (uden hold) er for alle; ellers skal mindst ét hold være mit.
     const gids = groupIdsOf(t);
     if (gids.length === 0) return true;

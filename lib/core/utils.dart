@@ -25,6 +25,14 @@ String _fmtDateTime(DateTime d) {
   return '${two(l.day)}.${two(l.month)}.${l.year} ${two(l.hour)}:${two(l.minute)}';
 }
 
+/// Formatering af en afstemnings-mulighed. Heldags-muligheder har ikke noget
+/// meningsfuldt klokkeslæt (gemt som 00:00), så der vises kun datoen.
+String _fmtOption(DateTime d, {required bool heldags}) =>
+    heldags ? _fmtDate(d) : _fmtDateTime(d);
+
+/// Læser heldags-flaget af en poll_options-række (mangler på gamle rækker).
+bool _optionHeldags(Map<String, dynamic> o) => o['heldags'] == true;
+
 String _fmtTime(DateTime d) {
   final l = d.toLocal();
   String two(int n) => n.toString().padLeft(2, '0');

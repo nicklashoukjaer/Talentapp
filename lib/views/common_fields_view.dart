@@ -34,7 +34,6 @@ class _QuickDateTimeField extends StatefulWidget {
   final DateTime? fallbackDate;
   final ValueChanged<DateTime?> onChanged;
   const _QuickDateTimeField({
-    super.key,
     required this.label,
     required this.value,
     required this.onChanged,

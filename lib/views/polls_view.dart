@@ -2,10 +2,105 @@
 // ignore_for_file: deprecated_member_use, avoid_web_libraries_in_flutter
 part of '../main.dart';
 
+/// En dato-mulighed under oprettelse. Datoen er påkrævet; tiden er valgfri —
+/// uden tid bliver muligheden heldags og vises uden klokkeslæt.
 class _PollDateRow {
   final String id;
-  DateTime? value;
-  _PollDateRow(this.id, this.value);
+  DateTime? dato;
+  TimeOfDay? tid;
+  _PollDateRow(this.id, DateTime? value)
+      : dato = value == null
+            ? null
+            : DateTime(value.year, value.month, value.day),
+        tid = value == null
+            ? null
+            : TimeOfDay(hour: value.hour, minute: value.minute);
+
+  bool get udfyldt => dato != null;
+  bool get heldags => tid == null;
+
+  /// Tidsstemplet der gemmes. Heldags → kl. 00:00.
+  DateTime get value => DateTime(
+      dato!.year, dato!.month, dato!.day, tid?.hour ?? 0, tid?.minute ?? 0);
+}
+
+/// Dato + valgfri tid. Egen widget, så begivenheders _QuickDateTimeField —
+/// hvor tid ER påkrævet — beholder sin opførsel uændret.
+class _PollDateField extends StatelessWidget {
+  final _PollDateRow row;
+  final VoidCallback onChanged;
+  const _PollDateField({super.key, required this.row, required this.onChanged});
+
+  static String _two(int n) => n.toString().padLeft(2, '0');
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(children: [
+      Expanded(
+        flex: 3,
+        child: InkWell(
+          onTap: () async {
+            final picked = await _showQuickDatePicker(
+                context, row.dato ?? DateTime.now());
+            if (picked == null) return;
+            row.dato = picked;
+            onChanged();
+          },
+          borderRadius: BorderRadius.circular(8),
+          child: InputDecorator(
+            decoration: const InputDecoration(
+              labelText: 'Dato',
+              prefixIcon: Icon(Icons.event),
+            ),
+            child: Text(row.dato == null ? 'Vælg dato' : _fmtDate(row.dato!),
+                style: TextStyle(color: row.dato == null ? _textMuted : null)),
+          ),
+        ),
+      ),
+      const SizedBox(width: 12),
+      Expanded(
+        flex: 2,
+        child: InkWell(
+          onTap: () async {
+            final picked = await _showQuickTimePicker(context, row.tid);
+            if (picked == null) return;
+            row.tid = picked;
+            onChanged();
+          },
+          borderRadius: BorderRadius.circular(8),
+          child: InputDecorator(
+            decoration: InputDecoration(
+              labelText: 'Tid',
+              prefixIcon: const Icon(Icons.schedule, size: 18),
+              // Ryd tiden igen → muligheden bliver heldags.
+              suffixIcon: row.tid == null
+                  ? null
+                  : IconButton(
+                      icon: const Icon(Icons.close, size: 16),
+                      color: _textMuted,
+                      visualDensity: VisualDensity.compact,
+                      tooltip: 'Fjern tid',
+                      onPressed: () {
+                        row.tid = null;
+                        onChanged();
+                      },
+                    ),
+            ),
+            child: Text(
+              row.tid == null
+                  ? 'Valgfri'
+                  : '${_two(row.tid!.hour)}:${_two(row.tid!.minute)}',
+              style: TextStyle(
+                  color: row.tid == null ? _textMuted : _neon,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: row.tid == null ? 0 : 1.2),
+              textAlign: TextAlign.center,
+            ),
+          ),
+        ),
+      ),
+    ]);
+  }
 }
 
 class _TextOptionField {
@@ -165,14 +260,18 @@ class _CreatePollDialogState extends State<CreatePollDialog> {
       }
       optionRows = texts.map((t) => {'beskrivelse': t}).toList();
     } else {
-      final validDates =
-          _dates.where((d) => d.value != null).map((d) => d.value!).toList();
-      if (validDates.isEmpty) {
-        _snack(context, 'Tilføj mindst én dato/tid', Colors.orange);
+      final valid = _dates.where((d) => d.udfyldt).toList();
+      if (valid.isEmpty) {
+        _snack(context, 'Tilføj mindst én dato', Colors.orange);
         return;
       }
-      optionRows = validDates
-          .map((d) => {'option_tid': d.toUtc().toIso8601String()})
+      // Uden tid → heldags. Tidsstemplet gemmes som 00:00, så sortering og
+      // eksisterende opslag virker uændret.
+      optionRows = valid
+          .map((d) => {
+                'option_tid': d.value.toUtc().toIso8601String(),
+                'heldags': d.heldags,
+              })
           .toList();
     }
 
@@ -331,7 +430,7 @@ class _CreatePollDialogState extends State<CreatePollDialog> {
                     Text('Dato-muligheder',
                         style: theme.textTheme.titleMedium),
                     const Spacer(),
-                    Text('${_dates.where((d) => d.value != null).length} valgt',
+                    Text('${_dates.where((d) => d.udfyldt).length} valgt',
                         style: theme.textTheme.bodySmall?.copyWith(
                             color: theme.colorScheme.onSurfaceVariant)),
                   ],
@@ -343,11 +442,10 @@ class _CreatePollDialogState extends State<CreatePollDialog> {
                   child: Row(
                     children: [
                       Expanded(
-                        child: _QuickDateTimeField(
+                        child: _PollDateField(
                           key: ValueKey('field_${d.id}'),
-                          label: 'Dato/tid',
-                          value: d.value,
-                          onChanged: (v) => setState(() => d.value = v),
+                          row: d,
+                          onChanged: () => setState(() {}),
                         ),
                       ),
                       const SizedBox(width: 4),
@@ -513,7 +611,7 @@ class _FavoritePairsScreenState extends State<FavoritePairsScreen> {
       final uid = supabase.auth.currentUser!.id;
       final options = await supabase
           .from('poll_options')
-          .select('id, option_tid, beskrivelse')
+          .select('id, option_tid, beskrivelse, heldags')
           .eq('poll_id', widget.poll['id'])
           .order('option_tid');
       final optList = List<Map<String, dynamic>>.from(options as List);
@@ -741,7 +839,7 @@ class _FavoritePairsScreenState extends State<FavoritePairsScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text(_fmtDateTime(tid),
+                    Text(_fmtOption(tid, heldags: _optionHeldags(r.option)),
                         style: _cond(size: 17, weight: FontWeight.w800)),
                     Text('${r.can} kan spille',
                         style: _body(size: 12, color: _textSecondary)),
@@ -852,11 +950,13 @@ class _SynergyOption {
   final int yesCount;
   final int pairCount;
   final int totalScore;
+  final bool heldags;
   final List<_SynergyPair> pairs;
   _SynergyOption({
     required this.id, required this.tid, required this.label,
     required this.yesCount, required this.pairCount,
     required this.totalScore, required this.pairs,
+    this.heldags = false,
   });
 }
 
@@ -890,6 +990,19 @@ class _SynergyReportScreenState extends State<SynergyReportScreen> {
       final rows = await supabase.rpc('get_poll_synergy_report',
           params: {'p_poll_id': widget.poll['id']});
 
+      // RPC'en returnerer ikke heldags-flaget, så det hentes ved siden af —
+      // billigere end at ændre databasefunktionen.
+      final heldagsOf = <String, bool>{};
+      try {
+        final opts = await supabase
+            .from('poll_options')
+            .select('id, heldags')
+            .eq('poll_id', widget.poll['id']);
+        for (final o in List<Map<String, dynamic>>.from(opts as List)) {
+          heldagsOf[o['id'] as String] = o['heldags'] == true;
+        }
+      } catch (_) {}
+
       final list = (rows as List).map((r) {
         final m = r as Map<String, dynamic>;
         final rawPairs = (m['pairs'] as List?) ?? const [];
@@ -905,6 +1018,7 @@ class _SynergyReportScreenState extends State<SynergyReportScreen> {
         return _SynergyOption(
           id:         m['option_id']    as String,
           tid:        DateTime.parse(m['option_tid'] as String),
+          heldags:    heldagsOf[m['option_id'] as String] ?? false,
           label:      m['option_label'] as String?,
           yesCount:   m['yes_count']    as int,
           pairCount:  m['pair_count']   as int,
@@ -1015,7 +1129,8 @@ class _SynergyCard extends StatelessWidget {
                   fontSize: 18,
                   fontWeight: FontWeight.bold)),
         ),
-        title: Text(_fmtDateTime(option.tid.toLocal()),
+        title: Text(
+            _fmtOption(option.tid.toLocal(), heldags: option.heldags),
             style: theme.textTheme.titleMedium),
         subtitle: Padding(
           padding: const EdgeInsets.only(top: 6),

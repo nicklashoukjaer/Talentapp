@@ -163,7 +163,7 @@ class _OversigtTabState extends State<OversigtTab> {
       final optionsFuture = pollIds.isEmpty
           ? Future.value(const <Map<String, dynamic>>[])
           : supabase.from('poll_options')
-              .select('id, poll_id, option_tid, beskrivelse')
+              .select('id, poll_id, option_tid, beskrivelse, heldags')
               .inFilter('poll_id', pollIds).order('option_tid');
 
       final dataResults = await Future.wait([tpFuture, optionsFuture]);
@@ -1510,7 +1510,9 @@ class _FeedPollCardState extends State<_FeedPollCard> {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                Text(_fmtDateTime(tid),
+                                Text(
+                                    _fmtOption(tid,
+                                        heldags: _optionHeldags(o)),
                                     style: theme.textTheme.bodyLarge?.copyWith(
                                         fontWeight: FontWeight.w600)),
                                 if (lbl != null && lbl.isNotEmpty)
@@ -1571,7 +1573,8 @@ class _FeedPollCardState extends State<_FeedPollCard> {
                     final id  = o['id'] as String;
                     final tidStr = o['option_tid'] as String?;
                     final lbl = tidStr != null
-                        ? _fmtDateTime(DateTime.parse(tidStr).toLocal())
+                        ? _fmtOption(DateTime.parse(tidStr).toLocal(),
+                            heldags: _optionHeldags(o))
                         : (o['beskrivelse'] as String? ?? '');
                     final voters = item.votersByOption[id] ??
                         const _OptionVoters(yes: [], no: []);

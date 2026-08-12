@@ -208,7 +208,9 @@ skrivning er gated på rolle-helpers (`is_admin()`, `is_staff()`, `is_captain()`
 - **training_comments** — training_id, user_id, body, created_at.
 - **training_guests** — training_id, navn, added_by (afløsere uden konto).
 - **polls** — titel, beskrivelse, lukket_at (stemmefrist), **group_id**, created_by.
-- **poll_options** — poll_id, option_tid, beskrivelse.
+- **poll_options** — poll_id, option_tid, beskrivelse, **heldags** (tid er
+  valgfri på dato-muligheder; uden tid gemmes option_tid som 00:00 og
+  klokkeslættet vises ikke).
 - **poll_responses** — poll_option_id, user_id, svar (kan/kan ikke).
 - **fines** — user_id, given_by, fine_type_id, titel, belob_oere, begrundelse,
   status (ubetalt/godkendt_betalt), approved_by, paid_at. (titel/beløb udfyldes

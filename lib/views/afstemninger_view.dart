@@ -761,7 +761,7 @@ class _PollDetailScreenState extends State<PollDetailScreen> {
       final userId = supabase.auth.currentUser!.id;
       final options = await supabase
           .from('poll_options')
-          .select('id, option_tid, beskrivelse')
+          .select('id, option_tid, beskrivelse, heldags')
           .eq('poll_id', widget.poll['id'])
           .order('option_tid');
 
@@ -940,6 +940,7 @@ class _PollDetailScreenState extends State<PollDetailScreen> {
                                         _PollCheckRow(
                                           tid: DateTime.parse(
                                               o['option_tid'] as String).toLocal(),
+                                          heldags: _optionHeldags(o),
                                           label: o['beskrivelse'] as String?,
                                           checked:
                                               _myVotes[o['id'] as String] == true,
@@ -984,6 +985,7 @@ class _PollDetailScreenState extends State<PollDetailScreen> {
 /// Checkbox-række med resultat-bjælke — "kan du denne dato?"
 class _PollCheckRow extends StatelessWidget {
   final DateTime tid;
+  final bool heldags; // hele dagen → vis kun datoen
   final String? label;
   final bool checked;
   final int yesCount;
@@ -993,6 +995,7 @@ class _PollCheckRow extends StatelessWidget {
 
   const _PollCheckRow({
     required this.tid,
+    this.heldags = false,
     required this.label,
     required this.checked,
     required this.yesCount,
@@ -1036,7 +1039,7 @@ class _PollCheckRow extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(_fmtDateTime(tid),
+                      Text(_fmtOption(tid, heldags: heldags),
                           style: theme.textTheme.bodyLarge
                               ?.copyWith(fontWeight: FontWeight.w600)),
                       if (label != null && label!.isNotEmpty)

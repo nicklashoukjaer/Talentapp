@@ -742,8 +742,29 @@ class _PollDetailScreenState extends State<PollDetailScreen> {
   bool _loading = true;
   String? _error;
 
+  // ── Stemme-overblik (kun staff/opretter/kaptajn) ──────────────────────────
+  /// Alle der forventes at stemme: holdets medlemmer uden trænerne.
+  List<Map<String, dynamic>> _eligible = const [];
+  /// user_id → de muligheder personen har sagt ja til.
+  Map<String, Set<String>> _yesByUser = {};
+  /// Alle der har afgivet mindst ét svar — også dem der kun har svaret nej.
+  Set<String> _responded = {};
+  final Set<String> _remindSkip = {}; // fravalgt inden rykker sendes
+  bool _canManage = false;
+  bool _busy = false;
+
   bool get _isText => widget.poll['type'] == 'tekst';
   bool get _allowMultiple => widget.poll['allow_multiple'] != false;
+
+  /// Læsbar tekst for en mulighed — dato (evt. uden klokkeslæt) eller fritekst.
+  String _optionLabel(Map<String, dynamic> o) {
+    final tid = o['option_tid'] as String?;
+    if (tid != null) {
+      return _fmtOption(DateTime.parse(tid).toLocal(),
+          heldags: _optionHeldags(o));
+    }
+    return o['beskrivelse'] as String? ?? '';
+  }
 
   bool get _lukket =>
       widget.poll['lukket_at'] != null &&
@@ -779,26 +800,255 @@ class _PollDetailScreenState extends State<PollDetailScreen> {
       final votes = <String, bool>{};
       final counts = <String, int>{ for (final id in optIds) id: 0 };
       final voters = <String>{};
+      final yesByUser = <String, Set<String>>{};
+      final responded = <String>{};
       for (final r in allResponses) {
         final oid  = r['poll_option_id'] as String;
+        final uid  = r['user_id'] as String;
         final svar = r['svar'] as bool;
+        responded.add(uid);
         if (svar) {
           counts[oid] = (counts[oid] ?? 0) + 1;
-          voters.add(r['user_id'] as String);
+          voters.add(uid);
+          (yesByUser[uid] ??= <String>{}).add(oid);
         }
-        if (r['user_id'] == userId) votes[oid] = svar;
+        if (uid == userId) votes[oid] = svar;
       }
+
+      // Stemme-overblik: hvem må se det, og hvem forventes at stemme?
+      final gids = _pollGroupIds(widget.poll);
+      final res = await Future.wait([
+        supabase.from('profiles').select('id, navn, rolle').order('navn'),
+        supabase.from('group_members')
+            .select('group_id, user_id, is_captain, is_trainer'),
+      ]);
+      final profiles = List<Map<String, dynamic>>.from(res[0] as List);
+      final gm = List<Map<String, dynamic>>.from(res[1] as List);
+
+      final me = profiles.firstWhere((p) => p['id'] == userId,
+          orElse: () => const <String, dynamic>{});
+      final isStaff = me['rolle'] == 'admin' || me['rolle'] == 'træner';
+      final erKaptajn = gm.any((r) =>
+          r['user_id'] == userId &&
+          r['is_captain'] == true &&
+          gids.contains(r['group_id']));
+      final canManage = isStaff ||
+          widget.poll['created_by'] == userId ||
+          erKaptajn;
+
+      // Stemme-pligtige: holdets medlemmer der ikke er trænere dér. Uden hold
+      // (klub-bred) forventes alle. Den der har stemt tælles altid med.
+      final playerIds = <String>{};
+      for (final r in gm) {
+        if (r['is_trainer'] == true) continue;
+        if (gids.contains(r['group_id'])) playerIds.add(r['user_id'] as String);
+      }
+      final eligible = profiles
+          .where((p) => gids.isEmpty
+              ? true
+              : playerIds.contains(p['id']) || responded.contains(p['id']))
+          .toList();
 
       setState(() {
         _options     = optList;
         _myVotes     = votes;
         _yesCounts   = counts;
         _totalVoters = voters.length;
+        _yesByUser   = yesByUser;
+        _responded   = responded;
+        _eligible    = eligible;
+        _canManage   = canManage;
         _loading     = false;
       });
     } catch (e) {
       setState(() { _loading = false; _error = e.toString(); });
     }
+  }
+
+  List<Map<String, dynamic>> get _harStemt =>
+      _eligible.where((p) => _responded.contains(p['id'])).toList();
+  List<Map<String, dynamic>> get _manglerAtStemme =>
+      _eligible.where((p) => !_responded.contains(p['id'])).toList();
+
+  Future<void> _sendRykker() async {
+    final modtagere = _manglerAtStemme
+        .where((p) => !_remindSkip.contains(p['id']))
+        .length;
+    if (modtagere == 0) return;
+    setState(() => _busy = true);
+    try {
+      final n = await supabase.rpc('send_poll_reminders', params: {
+        'p_poll_id': widget.poll['id'],
+        'p_exclude': _remindSkip.toList(),
+      });
+      if (!mounted) return;
+      _snack(context,
+          n == 0 ? 'Ingen at påminde' : 'Rykker sendt til $n', _success);
+    } on PostgrestException catch (e) {
+      if (mounted) _snack(context, e.message, _danger);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  /// Hvem har stemt, hvad stemte de, og hvem mangler. Kun for staff, opretter
+  /// og kaptajn — spillerne ser kun de anonyme resultat-bjælker.
+  Widget _stemmeOverblik(ThemeData theme) {
+    if (!_canManage || _eligible.isEmpty) return const SizedBox.shrink();
+    final stemt = _harStemt;
+    final mangler = _manglerAtStemme;
+    final skalPaamindes =
+        mangler.where((p) => !_remindSkip.contains(p['id'])).length;
+
+    Widget person(Map<String, dynamic> p, {required bool harStemt}) {
+      final navn = p['navn'] as String? ?? '(ukendt)';
+      final id = p['id'] as String;
+      final ja = _yesByUser[id] ?? const <String>{};
+      final valgte = _options.where((o) => ja.contains(o['id'] as String));
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _InitialAvatar(navn: navn, size: 32),
+            const SizedBox(width: 11),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(navn,
+                      style: _body(size: 14, weight: FontWeight.w600),
+                      maxLines: 1, overflow: TextOverflow.ellipsis),
+                  if (harStemt) ...[
+                    const SizedBox(height: 4),
+                    if (valgte.isEmpty)
+                      Text('Kan ingen af mulighederne',
+                          style: _body(size: 12, color: _danger))
+                    else
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 6,
+                        children: [
+                          for (final o in valgte)
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 8, vertical: 3),
+                              decoration: BoxDecoration(
+                                color: _success.withValues(alpha: 0.14),
+                                borderRadius: BorderRadius.circular(999),
+                                border: Border.all(
+                                    color: _success.withValues(alpha: 0.35)),
+                              ),
+                              child: Text(_optionLabel(o),
+                                  style: _body(
+                                      size: 11.5,
+                                      weight: FontWeight.w600,
+                                      color: _success)),
+                            ),
+                        ],
+                      ),
+                  ],
+                ],
+              ),
+            ),
+            if (!harStemt)
+              IconButton(
+                onPressed: () => setState(() => _remindSkip.contains(id)
+                    ? _remindSkip.remove(id)
+                    : _remindSkip.add(id)),
+                icon: Icon(
+                    _remindSkip.contains(id)
+                        ? Icons.notifications_off_outlined
+                        : Icons.notifications_active_outlined,
+                    size: 18,
+                    color: _remindSkip.contains(id) ? _textMuted : _neon),
+                visualDensity: VisualDensity.compact,
+                tooltip: _remindSkip.contains(id)
+                    ? 'Påmindes ikke'
+                    : 'Får en rykker',
+              ),
+          ],
+        ),
+      );
+    }
+
+    Widget header(String tekst, int antal, Color farve) => Padding(
+          padding: const EdgeInsets.only(top: 14, bottom: 2),
+          child: Row(children: [
+            Text(tekst,
+                style: _body(
+                    size: 12,
+                    weight: FontWeight.w700,
+                    color: _textSecondary,
+                    spacing: 1)),
+            const SizedBox(width: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+              decoration: BoxDecoration(
+                  color: farve.withValues(alpha: 0.16),
+                  borderRadius: BorderRadius.circular(999)),
+              child: Text('$antal',
+                  style: _body(
+                      size: 11, weight: FontWeight.w700, color: farve)),
+            ),
+          ]),
+        );
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 6, 14, 14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            header('HAR STEMT', stemt.length, _success),
+            if (stemt.isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Text('Ingen har svaret endnu',
+                    style: _body(size: 13, color: _textMuted)),
+              )
+            else
+              for (final p in stemt) person(p, harStemt: true),
+            header('MANGLER AT STEMME', mangler.length, _gold),
+            if (mangler.isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Text('Alle har svaret 🎉',
+                    style: _body(size: 13, color: _success)),
+              )
+            else ...[
+              for (final p in mangler) person(p, harStemt: false),
+              const SizedBox(height: 10),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  onPressed:
+                      (_busy || skalPaamindes == 0 || _lukket) ? null : _sendRykker,
+                  icon: _busy
+                      ? const SizedBox(
+                          width: 16, height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Icon(Icons.notifications_active, size: 18),
+                  label: Text(_lukket
+                      ? 'Afstemningen er lukket'
+                      : skalPaamindes == 0
+                          ? 'Ingen valgt'
+                          : 'Påmind $skalPaamindes der mangler'),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Text(
+                    'Rykkeren lander i deres notifikations-klokke. Tryk på '
+                    'klokken ud for en person for at springe dem over.',
+                    style: _body(size: 11.5, color: _textMuted)),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
   }
 
   Future<void> _vote(String optionId, bool svar) async {
@@ -961,7 +1211,9 @@ class _PollDetailScreenState extends State<PollDetailScreen> {
                               ),
                             ),
                             const SizedBox(height: 12),
-                            if (!_isText)
+                            _stemmeOverblik(theme),
+                            if (!_isText) ...[
+                              const SizedBox(height: 12),
                               OutlinedButton.icon(
                                 onPressed: () => Navigator.of(context).push(
                                   MaterialPageRoute(
@@ -972,6 +1224,7 @@ class _PollDetailScreenState extends State<PollDetailScreen> {
                                 icon: const Icon(Icons.favorite_border, size: 18),
                                 label: const Text('Favorit-par pr. dato'),
                               ),
+                            ],
                           ],
                         ),
                       ),

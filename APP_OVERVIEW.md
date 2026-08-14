@@ -120,7 +120,11 @@ Bund-navigation (mobil) / sidebar (bred skærm), 4–5 faner afhængigt af rolle
 - **Afstemnings-detalje:** dato-muligheder m. checkboxes (multi-valg),
   resultat-barer, "Favorit-par pr. dato" (synergi-overblik ud fra profilernes
   faste makkere; gensidige vs. én-vejs, kun staff ser én-vejs).
-- Opret via FAB. **Redigering findes ikke pt.** (kun opret + slet).
+- **Stemme-overblik** (staff/opretter/kaptajn): hvem har stemt og hvad de
+  stemte, hvem mangler, og "Påmind X der mangler" — med mulighed for at
+  fravælge enkeltpersoner. Trænere for holdet tælles ikke som manglende.
+- Opret via FAB. Titel, beskrivelse, frist og hold kan redigeres;
+  **datoerne kan ikke ændres** efter oprettelse.
 
 ### Tab 3 · Min profil
 - Profil-kort (avatar, navn, e-mail, rolle-badge).
@@ -219,12 +223,15 @@ skrivning er gated på rolle-helpers (`is_admin()`, `is_staff()`, `is_captain()`
 - **fine_leaderboard** (view) — aggregeret highscore + skyldigt pr. spiller.
 - **club_config** (én række) — mobilepay_box_id (fælles), noshow_fine_type_id,
   noshow_auto_enabled.
-- **notifications** — recipient_id, kind, titel, body, data, created_at.
+- **notifications** — recipient_id, kind, titel, body, data, created_at,
+  **laest_at** (null = ulæst; klokkens tælling og "markér som læst").
 
 **RPC'er / automatik:**
 - `register_for_training` — tilmeld m. venteliste-logik.
 - `late_cancel_training` — afbud efter frist + evt. automatisk udeblivelses-bøde.
 - `send_training_reminders` — manuel "påmind alle der mangler" (hold-bevidst).
+- `send_poll_reminders` — samme for afstemninger; staff/opretter/kaptajn, og
+  trænere for holdet springes over.
 - `send_due_reminders` — **pg_cron hvert 15. min**: auto-rykker 48t + 24t før frist
   til hold-medlemmer der mangler svar.
 - `admin_delete_member` — hard-delete af medlem (cascade).
@@ -252,7 +259,6 @@ skrivning er gated på rolle-helpers (`is_admin()`, `is_staff()`, `is_captain()`
 
 - **iOS web-push er upålideligt** → notifikationer leveres primært i in-app
   klokken, ikke som ægte push. Ægte push kræver App Store/Play-app.
-- **Afstemninger kan ikke redigeres** (kun opret/slet) — planlagt.
 - **Bødetyper er klub-brede** i dag (ikke pr. hold) — planlagt ændret.
 - **Swipe-tilbage på iOS** kan give hvid skærm i undermenuer (kendt, ikke løst).
 - Design-referencer for tidligere runder ligger i `design_handoff_*`-pakker

@@ -659,7 +659,6 @@ class _NotificationsBell extends StatefulWidget {
 }
 
 class _NotificationsBellState extends State<_NotificationsBell> {
-  static const _prefKey = 'notif_last_seen';
   List<Map<String, dynamic>> _items = const [];
   int _unread = 0;
 
@@ -669,27 +668,49 @@ class _NotificationsBellState extends State<_NotificationsBell> {
     _load();
   }
 
+  /// Læst-status ligger på rækken (`laest_at`), ikke i browserens localStorage
+  /// som før — så den er ens på alle enheder og overlever at lagringen ryddes.
   Future<void> _load() async {
     try {
       final uid = supabase.auth.currentUser?.id;
       if (uid == null) return;
       final rows = await supabase
           .from('notifications')
-          .select('id, kind, titel, body, created_at')
+          .select('id, kind, titel, body, created_at, laest_at')
           .eq('recipient_id', uid)
           .order('created_at', ascending: false)
           .limit(50);
       final list = List<Map<String, dynamic>>.from(rows as List);
-      final seenRaw = platformStorageGet(_prefKey);
-      final seen = seenRaw == null ? null : DateTime.tryParse(seenRaw);
-      var unread = 0;
-      for (final r in list) {
-        final ts = DateTime.tryParse(r['created_at'] as String? ?? '');
-        if (ts != null && (seen == null || ts.isAfter(seen))) unread++;
-      }
+      final unread = list.where((r) => r['laest_at'] == null).length;
       if (mounted) setState(() { _items = list; _unread = unread; });
     } catch (_) {
       // Ingen adgang/tom — klokken viser bare 0.
+    }
+  }
+
+  bool _erUlaest(Map<String, dynamic> n) => n['laest_at'] == null;
+
+  Future<void> _markerLaest(List<String> ids, void Function() refreshSheet) async {
+    if (ids.isEmpty) return;
+    final nu = DateTime.now().toUtc().toIso8601String();
+    // Opdatér med det samme; serveren er alligevel autoritativ ved næste load.
+    setState(() {
+      _items = [
+        for (final n in _items)
+          ids.contains(n['id']) && n['laest_at'] == null
+              ? {...n, 'laest_at': nu}
+              : n
+      ];
+      _unread = _items.where(_erUlaest).length;
+    });
+    refreshSheet();
+    try {
+      await supabase
+          .from('notifications')
+          .update({'laest_at': nu})
+          .inFilter('id', ids);
+    } catch (_) {
+      // Slår det fejl, kommer den rigtige tilstand tilbage ved næste _load().
     }
   }
 
@@ -697,20 +718,23 @@ class _NotificationsBellState extends State<_NotificationsBell> {
     switch (kind) {
       case 'training_oprettet': return Icons.event;
       case 'training_afmeldt': return Icons.person_off_outlined;
+      case 'training_rykker':  return Icons.alarm;
       case 'poll_oprettet':    return Icons.how_to_vote;
+      case 'poll_rykker':      return Icons.how_to_vote_outlined;
       case 'boede':            return Icons.gavel;
       default:                 return Icons.notifications_outlined;
     }
   }
 
   Future<void> _open() async {
-    platformStorageSet(_prefKey, DateTime.now().toUtc().toIso8601String());
-    setState(() => _unread = 0);
+    // Åbner man panelet, nulstilles tælleren IKKE længere automatisk — så kan
+    // man nå at se hvad der er nyt. Man markerer selv, enkeltvis eller samlet.
     await showModalBottomSheet<void>(
       context: context,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
-      builder: (_) => Padding(
+      builder: (_) => StatefulBuilder(builder: (ctx, setSheet) {
+      return Padding(
         padding: EdgeInsets.only(top: MediaQuery.of(context).padding.top + 40),
         child: Container(
           decoration: const BoxDecoration(
@@ -728,10 +752,23 @@ class _NotificationsBellState extends State<_NotificationsBell> {
                     color: _borderSubtle, borderRadius: BorderRadius.circular(999)),
               ),
               Padding(
-                padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
+                padding: const EdgeInsets.fromLTRB(20, 4, 12, 8),
                 child: Row(children: [
                   Text('NOTIFIKATIONER',
                       style: _cond(size: 20, weight: FontWeight.w800)),
+                  const Spacer(),
+                  if (_unread > 0)
+                    TextButton.icon(
+                      onPressed: () => _markerLaest(
+                          [for (final n in _items) if (_erUlaest(n)) n['id'] as String],
+                          () => setSheet(() {})),
+                      icon: const Icon(Icons.done_all, size: 17),
+                      label: const Text('Markér alle som læst'),
+                      style: TextButton.styleFrom(
+                        foregroundColor: _neon,
+                        textStyle: _body(size: 12.5, weight: FontWeight.w600),
+                      ),
+                    ),
                 ]),
               ),
               const Divider(height: 1, color: _borderSubtle),
@@ -752,7 +789,16 @@ class _NotificationsBellState extends State<_NotificationsBell> {
                     itemBuilder: (_, i) {
                       final n = _items[i];
                       final ts = DateTime.tryParse(n['created_at'] as String? ?? '');
+                      final ulaest = _erUlaest(n);
                       return ListTile(
+                        // Ulæste står fremhævet med accent-baggrund og prik.
+                        tileColor: ulaest
+                            ? _neon.withValues(alpha: 0.07)
+                            : Colors.transparent,
+                        onTap: ulaest
+                            ? () => _markerLaest(
+                                [n['id'] as String], () => setSheet(() {}))
+                            : null,
                         leading: Container(
                           width: 40, height: 40,
                           alignment: Alignment.center,
@@ -763,22 +809,45 @@ class _NotificationsBellState extends State<_NotificationsBell> {
                               size: 20, color: _neon),
                         ),
                         title: Text(n['titel'] as String? ?? '',
-                            style: _body(size: 14, weight: FontWeight.w700)),
+                            style: _body(
+                                size: 14,
+                                weight:
+                                    ulaest ? FontWeight.w700 : FontWeight.w500,
+                                color: ulaest ? _textPrimary : _textSecondary)),
                         subtitle: Text(n['body'] as String? ?? '',
                             style: _body(size: 12, color: _textSecondary)),
-                        trailing: ts == null
-                            ? null
-                            : Text(_fmtRelative(ts).replaceFirst('· ', ''),
-                                style: _body(size: 11, color: _textMuted)),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (ts != null)
+                              Text(_fmtRelative(ts).replaceFirst('· ', ''),
+                                  style: _body(size: 11, color: _textMuted)),
+                            if (ulaest) ...[
+                              const SizedBox(width: 8),
+                              Container(
+                                width: 8, height: 8,
+                                decoration: const BoxDecoration(
+                                    color: _neon, shape: BoxShape.circle),
+                              ),
+                            ],
+                          ],
+                        ),
                       );
                     },
                   ),
+                ),
+              if (_unread > 0)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 6, 20, 0),
+                  child: Text('Tryk på en besked for at markere den som læst.',
+                      style: _body(size: 11.5, color: _textMuted)),
                 ),
               const SafeArea(top: false, child: SizedBox(height: 8)),
             ],
           ),
         ),
-      ),
+      );
+      }),
     );
     _load();
   }

@@ -745,9 +745,8 @@ class _PollDetailScreenState extends State<PollDetailScreen> {
   // ── Stemme-overblik (kun staff/opretter/kaptajn) ──────────────────────────
   /// Alle der forventes at stemme: holdets medlemmer uden trænerne.
   List<Map<String, dynamic>> _eligible = const [];
-  /// option_id → navnene på dem der kan / ikke kan den dato.
+  /// option_id → navnene på dem der kan den dato.
   Map<String, List<String>> _jaNavne = {};
-  Map<String, List<String>> _nejNavne = {};
   /// Muligheder foldet ud med navne (staff).
   final Set<String> _udvidede = {};
   /// Alle der har afgivet mindst ét svar — også dem der kun har svaret nej.
@@ -822,13 +821,12 @@ class _PollDetailScreenState extends State<PollDetailScreen> {
         for (final p in profiles) p['id'] as String: p['navn'] as String? ?? '?'
       };
       final jaNavne = <String, List<String>>{ for (final id in optIds) id: [] };
-      final nejNavne = <String, List<String>>{ for (final id in optIds) id: [] };
       for (final r in allResponses) {
+        if (r['svar'] != true) continue;
         final oid = r['poll_option_id'] as String;
-        final navn = navnById[r['user_id'] as String] ?? '(ukendt)';
-        ((r['svar'] as bool) ? jaNavne[oid] : nejNavne[oid])?.add(navn);
+        jaNavne[oid]?.add(navnById[r['user_id'] as String] ?? '(ukendt)');
       }
-      for (final l in [...jaNavne.values, ...nejNavne.values]) {
+      for (final l in jaNavne.values) {
         l.sort();
       }
 
@@ -862,7 +860,6 @@ class _PollDetailScreenState extends State<PollDetailScreen> {
         _yesCounts   = counts;
         _totalVoters = voters.length;
         _jaNavne     = jaNavne;
-        _nejNavne    = nejNavne;
         _responded   = responded;
         _eligible    = eligible;
         _canManage   = canManage;
@@ -1181,9 +1178,6 @@ class _PollDetailScreenState extends State<PollDetailScreen> {
                                           jaNavne:
                                               _jaNavne[o['id'] as String] ??
                                                   const [],
-                                          nejNavne:
-                                              _nejNavne[o['id'] as String] ??
-                                                  const [],
                                           udvidet: _udvidede
                                               .contains(o['id'] as String),
                                           onUdvid: !_canManage
@@ -1266,9 +1260,8 @@ class _PollCheckRow extends StatelessWidget {
   final int maxYes;
   final bool locked;
   final VoidCallback onToggle;
-  // Hvem kan/kan ikke denne dato. Kun udfyldt for staff/opretter/kaptajn.
+  // Hvem kan denne dato. Kun udfyldt for staff/opretter/kaptajn.
   final List<String> jaNavne;
-  final List<String> nejNavne;
   final bool udvidet;
   final VoidCallback? onUdvid;
 
@@ -1282,7 +1275,6 @@ class _PollCheckRow extends StatelessWidget {
     required this.locked,
     required this.onToggle,
     this.jaNavne = const [],
-    this.nejNavne = const [],
     this.udvidet = false,
     this.onUdvid,
   });
@@ -1373,14 +1365,6 @@ class _PollCheckRow extends StatelessWidget {
                   farve: _success,
                   tekst: 'Kan',
                   navne: jaNavne),
-              if (nejNavne.isNotEmpty) ...[
-                const SizedBox(height: 6),
-                _NavneLinje(
-                    ikon: Icons.cancel,
-                    farve: _danger,
-                    tekst: 'Kan ikke',
-                    navne: nejNavne),
-              ],
             ],
           ],
         ),

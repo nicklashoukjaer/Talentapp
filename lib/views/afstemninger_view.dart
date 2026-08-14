@@ -745,8 +745,11 @@ class _PollDetailScreenState extends State<PollDetailScreen> {
   // ── Stemme-overblik (kun staff/opretter/kaptajn) ──────────────────────────
   /// Alle der forventes at stemme: holdets medlemmer uden trænerne.
   List<Map<String, dynamic>> _eligible = const [];
-  /// user_id → de muligheder personen har sagt ja til.
-  Map<String, Set<String>> _yesByUser = {};
+  /// option_id → navnene på dem der kan / ikke kan den dato.
+  Map<String, List<String>> _jaNavne = {};
+  Map<String, List<String>> _nejNavne = {};
+  /// Muligheder foldet ud med navne (staff).
+  final Set<String> _udvidede = {};
   /// Alle der har afgivet mindst ét svar — også dem der kun har svaret nej.
   Set<String> _responded = {};
   final Set<String> _remindSkip = {}; // fravalgt inden rykker sendes
@@ -756,15 +759,6 @@ class _PollDetailScreenState extends State<PollDetailScreen> {
   bool get _isText => widget.poll['type'] == 'tekst';
   bool get _allowMultiple => widget.poll['allow_multiple'] != false;
 
-  /// Læsbar tekst for en mulighed — dato (evt. uden klokkeslæt) eller fritekst.
-  String _optionLabel(Map<String, dynamic> o) {
-    final tid = o['option_tid'] as String?;
-    if (tid != null) {
-      return _fmtOption(DateTime.parse(tid).toLocal(),
-          heldags: _optionHeldags(o));
-    }
-    return o['beskrivelse'] as String? ?? '';
-  }
 
   bool get _lukket =>
       widget.poll['lukket_at'] != null &&
@@ -800,7 +794,6 @@ class _PollDetailScreenState extends State<PollDetailScreen> {
       final votes = <String, bool>{};
       final counts = <String, int>{ for (final id in optIds) id: 0 };
       final voters = <String>{};
-      final yesByUser = <String, Set<String>>{};
       final responded = <String>{};
       for (final r in allResponses) {
         final oid  = r['poll_option_id'] as String;
@@ -810,7 +803,6 @@ class _PollDetailScreenState extends State<PollDetailScreen> {
         if (svar) {
           counts[oid] = (counts[oid] ?? 0) + 1;
           voters.add(uid);
-          (yesByUser[uid] ??= <String>{}).add(oid);
         }
         if (uid == userId) votes[oid] = svar;
       }
@@ -824,6 +816,21 @@ class _PollDetailScreenState extends State<PollDetailScreen> {
       ]);
       final profiles = List<Map<String, dynamic>>.from(res[0] as List);
       final gm = List<Map<String, dynamic>>.from(res[1] as List);
+
+      // Navne pr. dato — sorteret, så listen står ens hver gang.
+      final navnById = {
+        for (final p in profiles) p['id'] as String: p['navn'] as String? ?? '?'
+      };
+      final jaNavne = <String, List<String>>{ for (final id in optIds) id: [] };
+      final nejNavne = <String, List<String>>{ for (final id in optIds) id: [] };
+      for (final r in allResponses) {
+        final oid = r['poll_option_id'] as String;
+        final navn = navnById[r['user_id'] as String] ?? '(ukendt)';
+        ((r['svar'] as bool) ? jaNavne[oid] : nejNavne[oid])?.add(navn);
+      }
+      for (final l in [...jaNavne.values, ...nejNavne.values]) {
+        l.sort();
+      }
 
       final me = profiles.firstWhere((p) => p['id'] == userId,
           orElse: () => const <String, dynamic>{});
@@ -854,7 +861,8 @@ class _PollDetailScreenState extends State<PollDetailScreen> {
         _myVotes     = votes;
         _yesCounts   = counts;
         _totalVoters = voters.length;
-        _yesByUser   = yesByUser;
+        _jaNavne     = jaNavne;
+        _nejNavne    = nejNavne;
         _responded   = responded;
         _eligible    = eligible;
         _canManage   = canManage;
@@ -903,55 +911,19 @@ class _PollDetailScreenState extends State<PollDetailScreen> {
     Widget person(Map<String, dynamic> p, {required bool harStemt}) {
       final navn = p['navn'] as String? ?? '(ukendt)';
       final id = p['id'] as String;
-      final ja = _yesByUser[id] ?? const <String>{};
-      final valgte = _options.where((o) => ja.contains(o['id'] as String));
       return Padding(
-        padding: const EdgeInsets.symmetric(vertical: 6),
+        padding: const EdgeInsets.symmetric(vertical: 5),
         child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             _InitialAvatar(navn: navn, size: 32),
             const SizedBox(width: 11),
             Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(navn,
-                      style: _body(size: 14, weight: FontWeight.w600),
-                      maxLines: 1, overflow: TextOverflow.ellipsis),
-                  if (harStemt) ...[
-                    const SizedBox(height: 4),
-                    if (valgte.isEmpty)
-                      Text('Kan ingen af mulighederne',
-                          style: _body(size: 12, color: _danger))
-                    else
-                      Wrap(
-                        spacing: 6,
-                        runSpacing: 6,
-                        children: [
-                          for (final o in valgte)
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 8, vertical: 3),
-                              decoration: BoxDecoration(
-                                color: _success.withValues(alpha: 0.14),
-                                borderRadius: BorderRadius.circular(999),
-                                border: Border.all(
-                                    color: _success.withValues(alpha: 0.35)),
-                              ),
-                              child: Text(_optionLabel(o),
-                                  style: _body(
-                                      size: 11.5,
-                                      weight: FontWeight.w600,
-                                      color: _success)),
-                            ),
-                        ],
-                      ),
-                  ],
-                ],
-              ),
+              child: Text(navn,
+                  style: _body(size: 14, weight: FontWeight.w600),
+                  maxLines: 1, overflow: TextOverflow.ellipsis),
             ),
+            if (harStemt)
+              const Icon(Icons.check_circle, size: 18, color: _success),
             if (!harStemt)
               IconButton(
                 onPressed: () => setState(() => _remindSkip.contains(id)
@@ -1205,6 +1177,24 @@ class _PollDetailScreenState extends State<PollDetailScreen> {
                                               o['id'] as String,
                                               !(_myVotes[o['id'] as String] ==
                                                   true)),
+                                          // Kun staff kan folde navnene ud.
+                                          jaNavne:
+                                              _jaNavne[o['id'] as String] ??
+                                                  const [],
+                                          nejNavne:
+                                              _nejNavne[o['id'] as String] ??
+                                                  const [],
+                                          udvidet: _udvidede
+                                              .contains(o['id'] as String),
+                                          onUdvid: !_canManage
+                                              ? null
+                                              : () => setState(() {
+                                                    final id =
+                                                        o['id'] as String;
+                                                    _udvidede.contains(id)
+                                                        ? _udvidede.remove(id)
+                                                        : _udvidede.add(id);
+                                                  }),
                                         ),
                                   ],
                                 ),
@@ -1235,6 +1225,37 @@ class _PollDetailScreenState extends State<PollDetailScreen> {
   }
 }
 
+/// Én linje navne bag et ikon — "Kan: Anders, Bo, Carl".
+class _NavneLinje extends StatelessWidget {
+  final IconData ikon;
+  final Color farve;
+  final String tekst;
+  final List<String> navne;
+  const _NavneLinje({
+    required this.ikon,
+    required this.farve,
+    required this.tekst,
+    required this.navne,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Icon(ikon, size: 15, color: farve),
+      const SizedBox(width: 7),
+      Text('$tekst:',
+          style: _body(size: 12.5, weight: FontWeight.w700, color: farve)),
+      const SizedBox(width: 6),
+      Expanded(
+        child: Text(navne.isEmpty ? 'ingen' : navne.join(', '),
+            style: _body(
+                size: 12.5,
+                color: navne.isEmpty ? _textMuted : _textPrimary)),
+      ),
+    ]);
+  }
+}
+
 /// Checkbox-række med resultat-bjælke — "kan du denne dato?"
 class _PollCheckRow extends StatelessWidget {
   final DateTime tid;
@@ -1245,6 +1266,11 @@ class _PollCheckRow extends StatelessWidget {
   final int maxYes;
   final bool locked;
   final VoidCallback onToggle;
+  // Hvem kan/kan ikke denne dato. Kun udfyldt for staff/opretter/kaptajn.
+  final List<String> jaNavne;
+  final List<String> nejNavne;
+  final bool udvidet;
+  final VoidCallback? onUdvid;
 
   const _PollCheckRow({
     required this.tid,
@@ -1255,6 +1281,10 @@ class _PollCheckRow extends StatelessWidget {
     required this.maxYes,
     required this.locked,
     required this.onToggle,
+    this.jaNavne = const [],
+    this.nejNavne = const [],
+    this.udvidet = false,
+    this.onUdvid,
   });
 
   @override
@@ -1301,9 +1331,29 @@ class _PollCheckRow extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: 8),
-                Text('$yesCount',
-                    style: _cond(size: 18, weight: FontWeight.w800,
-                        color: checked ? _success : _textSecondary)),
+                // Tallet er sin egen knap for staff: fold ud og se navnene.
+                // Selve rækken bliver ved med at afgive din egen stemme.
+                if (onUdvid == null)
+                  Text('$yesCount',
+                      style: _cond(size: 18, weight: FontWeight.w800,
+                          color: checked ? _success : _textSecondary))
+                else
+                  InkWell(
+                    onTap: onUdvid,
+                    borderRadius: BorderRadius.circular(999),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 4),
+                      child: Row(mainAxisSize: MainAxisSize.min, children: [
+                        Text('$yesCount',
+                            style: _cond(size: 18, weight: FontWeight.w800,
+                                color: checked ? _success : _textSecondary)),
+                        const SizedBox(width: 4),
+                        Icon(udvidet ? Icons.expand_less : Icons.expand_more,
+                            size: 18, color: _textMuted),
+                      ]),
+                    ),
+                  ),
               ],
             ),
             const SizedBox(height: 8),
@@ -1316,6 +1366,22 @@ class _PollCheckRow extends StatelessWidget {
                 valueColor: AlwaysStoppedAnimation(barColor),
               ),
             ),
+            if (udvidet) ...[
+              const SizedBox(height: 10),
+              _NavneLinje(
+                  ikon: Icons.check_circle,
+                  farve: _success,
+                  tekst: 'Kan',
+                  navne: jaNavne),
+              if (nejNavne.isNotEmpty) ...[
+                const SizedBox(height: 6),
+                _NavneLinje(
+                    ikon: Icons.cancel,
+                    farve: _danger,
+                    tekst: 'Kan ikke',
+                    navne: nejNavne),
+              ],
+            ],
           ],
         ),
       ),

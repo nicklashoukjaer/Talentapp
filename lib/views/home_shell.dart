@@ -757,15 +757,23 @@ class _NotificationsBellState extends State<_NotificationsBell> {
                   Text('NOTIFIKATIONER',
                       style: _cond(size: 20, weight: FontWeight.w800)),
                   const Spacer(),
-                  if (_unread > 0)
+                  // Vises altid når der er beskeder — også når alt er læst.
+                  // Ellers ligner det at funktionen ikke findes.
+                  if (_items.isNotEmpty)
                     TextButton.icon(
-                      onPressed: () => _markerLaest(
-                          [for (final n in _items) if (_erUlaest(n)) n['id'] as String],
-                          () => setSheet(() {})),
+                      onPressed: _unread == 0
+                          ? null
+                          : () => _markerLaest(
+                              [for (final n in _items)
+                                if (_erUlaest(n)) n['id'] as String],
+                              () => setSheet(() {})),
                       icon: const Icon(Icons.done_all, size: 17),
-                      label: const Text('Markér alle som læst'),
+                      label: Text(_unread == 0
+                          ? 'Alt er læst'
+                          : 'Markér alle som læst ($_unread)'),
                       style: TextButton.styleFrom(
                         foregroundColor: _neon,
+                        disabledForegroundColor: _textMuted,
                         textStyle: _body(size: 12.5, weight: FontWeight.w600),
                       ),
                     ),

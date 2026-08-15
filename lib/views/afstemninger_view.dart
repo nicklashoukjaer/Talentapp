@@ -769,8 +769,11 @@ class _PollDetailScreenState extends State<PollDetailScreen> {
     _load();
   }
 
-  Future<void> _load() async {
-    setState(() { _loading = true; _error = null; });
+  /// [stille] = genindlæs uden at vise spinneren. Bruges efter en stemme:
+  /// udskiftes indholdet med en loader, mister listen sin scroll-position og
+  /// hopper til toppen — irriterende når man skal sætte flueben ved 26 datoer.
+  Future<void> _load({bool stille = false}) async {
+    if (!stille) setState(() { _loading = true; _error = null; });
     try {
       final userId = supabase.auth.currentUser!.id;
       final options = await supabase
@@ -1029,7 +1032,7 @@ class _PollDetailScreenState extends State<PollDetailScreen> {
         'user_id':        supabase.auth.currentUser!.id,
         'svar':           svar,
       }, onConflict: 'poll_option_id,user_id');
-      await _load(); // opdatér resultat-bjælker
+      await _load(stille: true); // opdatér tal uden at nulstille scroll
     } on PostgrestException catch (e) {
       setState(() {
         final map = {..._myVotes};
@@ -1062,7 +1065,7 @@ class _PollDetailScreenState extends State<PollDetailScreen> {
       await supabase
           .from('poll_responses')
           .upsert(rows, onConflict: 'poll_option_id,user_id');
-      await _load();
+      await _load(stille: true);
     } on PostgrestException catch (e) {
       setState(() => _myVotes = prev);
       if (mounted) _snack(context, e.message, Colors.red);

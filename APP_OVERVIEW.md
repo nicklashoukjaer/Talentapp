@@ -110,6 +110,10 @@ Bund-navigation (mobil) / sidebar (bred skærm), 4–5 faner afhængigt af rolle
 - **Hold-filter:** spiller/træner ser eget hold; admin multi-vælger; bøde-admin
   sit hold.
 - **"Du skylder"-callout** m. "Betal via MobilePay".
+- **Takstblad** (øverst): kort der åbner listen over aktive bødetyper med
+  beløb — fælles takster + dem der gælder ens eget fællesskab. Den
+  automatiske udeblivelses-bøde er markeret. "Foreslå en bødetype" ligger
+  også her.
 - **Bøde-historik** (tryk på et navn): navn + hold-badge + sæson, "Skyldig nu" /
   "Betalt i alt", bøder grupperet i Ubetalt / Betalt (hvem uddelte, dato,
   begrundelse), markér betalt / slet (admin/bøde-admin).

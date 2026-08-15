@@ -17,6 +17,10 @@ class BodekasseTabState extends State<BodekasseTab> {
   // Folk der KUN er tilknyttet hold som træner. De hører ikke hjemme i
   // bødekassen — medmindre de rent faktisk har fået en bøde.
   Set<String> _trainerOnlyIds = {};
+  // Takstbladet: aktive bødetyper + hvilken der udløses automatisk.
+  List<Map<String, dynamic>> _fineTypes = const [];
+  String? _noShowTypeId;
+  bool _noShowAuto = false;
   Set<String> _myGroupIds = {};
   Set<String> _myCaptainGroupIds = {}; // hold hvor jeg er kaptajn (styrer bøder)
   // Valgte hold i filteret (tom = alle tilladte). Admin kan vælge flere.
@@ -63,11 +67,27 @@ class BodekasseTabState extends State<BodekasseTab> {
         supabase.from('group_members')
             .select('group_id, user_id, is_captain, is_trainer'),
         supabase.from('hold_groups').select('id, navn').order('created_at'),
+        // Takstblad — kun aktive typer; aktiv=false er forslag der afventer
+        // admin og er altså ikke en gældende takst endnu.
+        supabase.from('fine_types')
+            .select('id, titel, belob_oere, hold_group_id, group_id')
+            .eq('aktiv', true)
+            .order('belob_oere', ascending: false),
       ]);
       final list = List<Map<String, dynamic>>.from(results[0] as List);
       final groups = List<Map<String, dynamic>>.from(results[1] as List);
       final gm = List<Map<String, dynamic>>.from(results[2] as List);
       final holdGroups = List<Map<String, dynamic>>.from(results[3] as List);
+      final fineTypes = List<Map<String, dynamic>>.from(results[4] as List);
+
+      // Udeblivelses-bøden rammer automatisk, så den markeres i takstbladet.
+      String? noShowId;
+      bool noShowAuto = false;
+      try {
+        final cfg = await ClubConfig.fetchNoShowConfig();
+        noShowId = cfg.fineTypeId;
+        noShowAuto = cfg.autoEnabled;
+      } catch (_) {}
 
       // Fællesskab pr. hold: holdgruppe ('hg:<id>') eller selvstændigt ('solo:<id>').
       // Hold i samme holdgruppe deler bødekasse.
@@ -135,6 +155,9 @@ class BodekasseTabState extends State<BodekasseTab> {
         _groups = communities;
         _memberIdsByGroup = byGroup;
         _trainerOnlyIds = trainerOnly;
+        _fineTypes = fineTypes;
+        _noShowTypeId = noShowId;
+        _noShowAuto = noShowAuto;
         _myGroupIds = mine;
         _myCaptainGroupIds = myCap;
         _filterInit = true;
@@ -189,6 +212,152 @@ class BodekasseTabState extends State<BodekasseTab> {
       return (g['navn'] as String?) ?? 'Hold';
     }
     return '${_selectedGroupIds.length} hold';
+  }
+
+  /// Takstbladet — hvad kan man få en bøde for, og hvad koster det.
+  /// Viser klub-brede takster plus dem der gælder ens eget fællesskab.
+  Future<void> _visTakstblad() async {
+    final mine = _typesForCommunities(_fineTypes, _myGroupIds);
+    // Gruppér: fælles først, derefter pr. fællesskab.
+    final faelles = mine
+        .where((t) => t['hold_group_id'] == null && t['group_id'] == null)
+        .toList();
+    final prGruppe = <String, List<Map<String, dynamic>>>{};
+    for (final t in mine) {
+      if (t['hold_group_id'] == null && t['group_id'] == null) continue;
+      final key = t['hold_group_id'] != null
+          ? 'hg:${t['hold_group_id']}'
+          : 'solo:${t['group_id']}';
+      (prGruppe[key] ??= []).add(t);
+    }
+    String navnFor(String key) {
+      final g = _groups.firstWhere((g) => g['id'] == key,
+          orElse: () => const <String, dynamic>{});
+      return (g['navn'] as String?) ?? 'Dit hold';
+    }
+
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (ctx) {
+        Widget takst(Map<String, dynamic> t) {
+          final erAuto = _noShowAuto && t['id'] == _noShowTypeId;
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: 9),
+            child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(t['titel'] as String? ?? '',
+                        style: _body(size: 14, weight: FontWeight.w600)),
+                    if (erAuto) ...[
+                      const SizedBox(height: 3),
+                      Row(children: [
+                        const Icon(Icons.bolt, size: 13, color: _gold),
+                        const SizedBox(width: 4),
+                        Text('Opkræves automatisk',
+                            style: _body(
+                                size: 11,
+                                weight: FontWeight.w600,
+                                color: _gold)),
+                      ]),
+                    ],
+                  ],
+                ),
+              ),
+              const SizedBox(width: 12),
+              Text(_fmtKr((t['belob_oere'] as num).toInt()),
+                  style: _cond(size: 17, weight: FontWeight.w800)),
+            ]),
+          );
+        }
+
+        return SafeArea(
+          top: false,
+          child: Container(
+            margin: const EdgeInsets.all(12),
+            constraints:
+                BoxConstraints(maxHeight: MediaQuery.of(ctx).size.height * 0.85),
+            decoration: BoxDecoration(
+              color: _surfaceDark,
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: _borderSubtle),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(18, 16, 10, 4),
+                  child: Row(children: [
+                    const Icon(Icons.receipt_long, color: _gold, size: 20),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text('TAKSTBLAD',
+                          style: _cond(size: 20, weight: FontWeight.w800)),
+                    ),
+                    IconButton(
+                      onPressed: () => Navigator.of(ctx).pop(),
+                      icon: const Icon(Icons.close),
+                      color: _textSecondary,
+                    ),
+                  ]),
+                ),
+                Flexible(
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.fromLTRB(18, 0, 18, 8),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        if (prGruppe.isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 6),
+                            child: Text('FÆLLES FOR KLUBBEN',
+                                style: _body(
+                                    size: 11.5,
+                                    weight: FontWeight.w700,
+                                    color: _textMuted,
+                                    spacing: 1)),
+                          ),
+                        for (final t in faelles) takst(t),
+                        for (final e in prGruppe.entries) ...[
+                          const SizedBox(height: 8),
+                          Text(navnFor(e.key).toUpperCase(),
+                              style: _body(
+                                  size: 11.5,
+                                  weight: FontWeight.w700,
+                                  color: _textMuted,
+                                  spacing: 1)),
+                          for (final t in e.value) takst(t),
+                        ],
+                        const Divider(height: 26, color: _borderSubtle),
+                        Center(
+                          child: TextButton.icon(
+                            onPressed: () {
+                              Navigator.of(ctx).pop();
+                              showDialog<bool>(
+                                context: context,
+                                builder: (_) => const SuggestFineTypeDialog(),
+                              );
+                            },
+                            icon: const Icon(Icons.lightbulb_outline, size: 16),
+                            label: const Text('Foreslå en bødetype'),
+                            style: TextButton.styleFrom(
+                                foregroundColor: _textSecondary),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 
   /// Hold-filter som bundsheet — kaldes af tragt-ikonet i app-headeren.
@@ -362,6 +531,54 @@ class BodekasseTabState extends State<BodekasseTab> {
                       ],
                     ]),
                   ),
+                  // Takstblad — øverst, så man kan nå det INDEN man dummer sig,
+                  // og ikke først efter at have scrollet forbi hele ranglisten.
+                  if (_fineTypes.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 18),
+                      child: InkWell(
+                        onTap: _visTakstblad,
+                        borderRadius: BorderRadius.circular(14),
+                        child: Container(
+                          padding: const EdgeInsets.all(14),
+                          decoration: BoxDecoration(
+                            color: _surfaceDark,
+                            borderRadius: BorderRadius.circular(14),
+                            border: Border.all(color: _borderSubtle),
+                          ),
+                          child: Row(children: [
+                            Container(
+                              width: 38, height: 38,
+                              alignment: Alignment.center,
+                              decoration: BoxDecoration(
+                                color: _gold.withValues(alpha: 0.16),
+                                borderRadius: BorderRadius.circular(11),
+                              ),
+                              child: const Icon(Icons.receipt_long,
+                                  color: _gold, size: 19),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text('Takstblad',
+                                      style: _body(
+                                          size: 14.5, weight: FontWeight.w700)),
+                                  Text(
+                                      'Se hvad der giver bøder — og hvad det koster',
+                                      style: _body(
+                                          size: 11.5, color: _textSecondary)),
+                                ],
+                              ),
+                            ),
+                            const Icon(Icons.chevron_right,
+                                size: 16, color: _textMuted),
+                          ]),
+                        ),
+                      ),
+                    ),
                   if (filtered.isEmpty)
                     const _EmptyState(
                       icon: Icons.emoji_events_outlined,
@@ -396,6 +613,9 @@ class BodekasseTabState extends State<BodekasseTab> {
                           onTap: () => _open(e.value),
                         )),
                     const SizedBox(height: 10),
+                    // "Foreslå en bødetype" er flyttet ned i takstbladet, hvor
+                    // den står sammen med de takster den handler om. Ligger
+                    // her stadig for dem der ikke har åbnet takstbladet.
                     Center(
                       child: TextButton.icon(
                         onPressed: () => showDialog<bool>(

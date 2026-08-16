@@ -22,6 +22,32 @@ class ClubConfig {
   /// Sidst kendte Box-ID/-link (fra cache/DB) — null hvis ikke hentet endnu.
   static String? get cachedBox => _cachedBox;
 
+  static List<({String navn, String box})>? _cachedTeamBoxes;
+
+  /// Brugerens holds MobilePay-bokse, hvis de er hentet. null = ikke hentet.
+  static List<({String navn, String box})>? get cachedTeamBoxes =>
+      _cachedTeamBoxes;
+
+  /// Henter boks-opsætningen på forhånd, så betalings-knappen kan åbne
+  /// MobilePay UDEN at vente på netværket først.
+  ///
+  /// Det er ikke en optimering, men en forudsætning: åbnes et nyt vindue
+  /// efter et `await`, har browseren mistet "user activation" og blokerer
+  /// det uden fejlbesked. På iOS Safari sker det hver gang — knappen ser
+  /// bare død ud. Derfor skal boksen være kendt før trykket.
+  static Future<void> warmPaymentCache(String userId) async {
+    try {
+      _cachedTeamBoxes = await teamBoxesForUser(userId);
+    } catch (_) {
+      _cachedTeamBoxes ??= const [];
+    }
+    if (_cachedBox == null) {
+      try {
+        await fetchMobilePayBox();
+      } catch (_) {}
+    }
+  }
+
   /// Henter det gemte MobilePay Box-ID/-link fra Supabase (cache-fallback).
   static Future<String?> fetchMobilePayBox() async {
     final cached = CacheService.getMap('club_config');

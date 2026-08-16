@@ -80,6 +80,9 @@ class BodekasseTabState extends State<BodekasseTab> {
       final holdGroups = List<Map<String, dynamic>>.from(results[3] as List);
       final fineTypes = List<Map<String, dynamic>>.from(results[4] as List);
 
+      // Forvarm MobilePay-boksen, så betal-knappen kan åbne linket synkront.
+      await ClubConfig.warmPaymentCache(widget.currentUserId);
+
       // Udeblivelses-bøden rammer automatisk, så den markeres i takstbladet.
       String? noShowId;
       bool noShowAuto = false;
@@ -188,15 +191,9 @@ class BodekasseTabState extends State<BodekasseTab> {
   }
 
   /// Åbner MobilePay med det skyldige beløb forudfyldt — til spillerens holds boks.
-  Future<void> _payWithMobilePay(int oere) async {
-    final box = await _resolveMobilePayBox(context);
-    if (box == null) return; // resolver har allerede vist besked / bruger fortrød
-    final uri = Uri.parse(mobilePayLinkFor(box, oere));
-    final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
-    if (!ok && mounted) {
-      _snack(context, 'Kunne ikke åbne MobilePay', _danger);
-    }
-  }
+  // Synkron: boksen er forvarmet i _load(), så linket kan åbnes direkte i
+  // trykket. Se _betalMedMobilePay for hvorfor det er nødvendigt.
+  void _payWithMobilePay(int oere) => _betalMedMobilePay(context, oere);
 
   static Color _commHex(Object? farve) {
     final h = farve as String?;
@@ -948,6 +945,10 @@ class _FineHistoryScreenState extends State<FineHistoryScreen> {
   Future<void> _load() async {
     setState(() { _loading = true; _error = null; });
     try {
+      // Forvarm MobilePay-boksen, så betal-knappen kan åbne linket synkront.
+      final me = supabase.auth.currentUser?.id;
+      if (me != null) await ClubConfig.warmPaymentCache(me);
+
       final rows = await supabase
           .from('fines')
           .select('id, titel, belob_oere, begrundelse, status, created_at, paid_at, given_by')
@@ -1053,15 +1054,7 @@ class _FineHistoryScreenState extends State<FineHistoryScreen> {
   }
 
   /// Åbner MobilePay med det skyldige beløb forudfyldt — til spillerens holds boks.
-  Future<void> _payWithMobilePay(int oere) async {
-    final box = await _resolveMobilePayBox(context);
-    if (box == null) return; // resolver har allerede vist besked / bruger fortrød
-    final uri = Uri.parse(mobilePayLinkFor(box, oere));
-    final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
-    if (!ok && mounted) {
-      _snack(context, 'Kunne ikke åbne MobilePay', Colors.red);
-    }
-  }
+  void _payWithMobilePay(int oere) => _betalMedMobilePay(context, oere);
 
   @override
   Widget build(BuildContext context) {
@@ -1418,35 +1411,45 @@ class _FineHistoryRow extends StatelessWidget {
 ///  • ingen hold-boks → klubbens fælles boks (club_config)
 /// Returnerer null hvis der ikke er sat en boks op, eller brugeren fortryder
 /// (i så fald har funktionen selv vist en besked).
-Future<String?> _resolveMobilePayBox(BuildContext context) async {
-  final userId = supabase.auth.currentUser?.id;
-  String? box;
-  if (userId != null) {
-    final teams = await ClubConfig.teamBoxesForUser(userId);
-    if (teams.length == 1) {
-      box = teams.first.box;
-    } else if (teams.length > 1) {
-      if (!context.mounted) return null;
-      final chosen = await showModalBottomSheet<({String navn, String box})>(
-        context: context,
-        backgroundColor: Colors.transparent,
-        builder: (_) => _TeamBoxChooser(teams: teams),
-      );
-      if (chosen == null) return null; // fortrudt
-      box = chosen.box;
+/// Åbner MobilePay. SKAL kaldes uden forudgående `await` — ellers har
+/// browseren mistet "user activation" og blokerer vinduet uden fejlbesked.
+/// På iOS Safari sker det hver gang, og knappen ser bare død ud.
+void _openMobilePay(BuildContext context, String box, int oere) {
+  final uri = Uri.parse(mobilePayLinkFor(box, oere));
+  launchUrl(uri, mode: LaunchMode.externalApplication).then((ok) {
+    if (!ok && context.mounted) {
+      _snack(context, 'Kunne ikke åbne MobilePay', _danger);
     }
+  });
+}
+
+/// Betal-knappen. Synkron hele vejen til `launchUrl` når boksen er kendt.
+/// Er der flere holds-bokse at vælge imellem, åbnes vælgeren — og dér er
+/// brugerens tryk på en række en ny aktivering, så linket må åbnes derfra.
+void _betalMedMobilePay(BuildContext context, int oere) {
+  final teams = ClubConfig.cachedTeamBoxes ?? const [];
+  if (teams.length > 1) {
+    showModalBottomSheet<({String navn, String box})>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _TeamBoxChooser(teams: teams),
+    ).then((chosen) {
+      if (chosen != null && context.mounted) {
+        _openMobilePay(context, chosen.box, oere);
+      }
+    });
+    return;
   }
-  // Ingen hold-boks → fælles boks.
-  box ??= ClubConfig.cachedBox ?? await ClubConfig.fetchMobilePayBox();
+  final box = teams.isNotEmpty ? teams.first.box : ClubConfig.cachedBox;
   if (box == null || box.trim().isEmpty || box.trim() == 'VORES_BOX_NUMMER') {
-    if (context.mounted) {
-      _snack(context,
-          'MobilePay er ikke sat op endnu — en admin kan indtaste Box-ID under Admin → Betaling.',
-          _gold);
-    }
-    return null;
+    _snack(
+        context,
+        'MobilePay er ikke sat op endnu — en admin kan indtaste Box-ID under '
+        'Admin → Betaling.',
+        _gold);
+    return;
   }
-  return box;
+  _openMobilePay(context, box, oere);
 }
 
 /// Bottom sheet: vælg hvilket holds MobilePay-boks der betales til.

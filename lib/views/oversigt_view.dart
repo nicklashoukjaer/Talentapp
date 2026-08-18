@@ -164,7 +164,9 @@ class _OversigtTabState extends State<OversigtTab> {
           ? Future.value(const <Map<String, dynamic>>[])
           : supabase.from('poll_options')
               .select('id, poll_id, option_tid, beskrivelse, heldags')
-              .inFilter('poll_id', pollIds).order('option_tid');
+              .inFilter('poll_id', pollIds)
+              // Ældste dato først (klienten sorterer faldende som standard).
+              .order('option_tid', ascending: true);
 
       final dataResults = await Future.wait([tpFuture, optionsFuture]);
       final allTp      = List<Map<String, dynamic>>.from(dataResults[0] as List);

@@ -613,7 +613,8 @@ class _FavoritePairsScreenState extends State<FavoritePairsScreen> {
           .from('poll_options')
           .select('id, option_tid, beskrivelse, heldags')
           .eq('poll_id', widget.poll['id'])
-          .order('option_tid');
+          // Ældste dato først. Uden ascending sorterer klienten faldende.
+          .order('option_tid', ascending: true);
       final optList = List<Map<String, dynamic>>.from(options as List);
       final optIds = optList.map((o) => o['id'] as String).toList();
 

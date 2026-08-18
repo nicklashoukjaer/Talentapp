@@ -88,7 +88,7 @@ class _OversigtTabState extends State<OversigtTab> {
         // Træninger 90 dage tilbage og frem
         supabase.from('trainings')
             .select('id, titel, beskrivelse, max_deltagere, start_tid, slut_tid, adresse, tilmeldings_deadline, group_id, group_ids, synlig_fra, created_by, series_id')
-            .gte('start_tid', sinceIso).order('start_tid'),
+            .gte('start_tid', sinceIso).order('start_tid', ascending: true),
         // Polls (alle — lukkede filtreres client-side)
         supabase.from('polls')
             .select('id, titel, beskrivelse, lukket_at, created_at, group_id, group_ids, created_by')
@@ -96,7 +96,7 @@ class _OversigtTabState extends State<OversigtTab> {
         // Profiles for count
         supabase.from('profiles').select('id'),
         // Grupper + mit medlemskab (til hold-filtrering)
-        supabase.from('groups').select('id, navn, type, farve, sort').order('sort'),
+        supabase.from('groups').select('id, navn, type, farve, sort').order('sort', ascending: true),
         supabase.from('group_members').select('group_id, is_captain').eq('user_id', userId),
         // Alle medlemskaber (uden trænere) → bruges til "X af Y har svaret"
         // på afstemninger. Trænere tæller ikke med som svar-pligtige.
@@ -158,7 +158,7 @@ class _OversigtTabState extends State<OversigtTab> {
               .select('training_id, user_id, status, updated_at, '
                       'profiles!training_participants_user_id_fkey(navn, rolle)')
               .inFilter('training_id', trainingIds)
-              .order('updated_at');
+              .order('updated_at', ascending: true);
 
       final optionsFuture = pollIds.isEmpty
           ? Future.value(const <Map<String, dynamic>>[])
@@ -2414,7 +2414,7 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
             .select('user_id, status, updated_at, '
                 'profiles!training_participants_user_id_fkey(navn)')
             .eq('training_id', tid),
-        supabase.from('profiles').select('id, navn').order('navn'),
+        supabase.from('profiles').select('id, navn').order('navn', ascending: true),
       ]);
       final parts = List<Map<String, dynamic>>.from(results[0] as List);
       var profiles = List<Map<String, dynamic>>.from(results[1] as List);
@@ -2484,7 +2484,7 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
           supabase.from('training_comments').select('id').eq('training_id', tid),
           supabase.from('training_guests')
               .select('id, navn, added_by, profiles(navn)')
-              .eq('training_id', tid).order('created_at'),
+              .eq('training_id', tid).order('created_at', ascending: true),
         ]);
         commentCount = (res[0] as List).length;
         guests = List<Map<String, dynamic>>.from(res[1] as List);
@@ -3355,7 +3355,7 @@ class _EventCommentsState extends State<_EventComments> {
           .from('training_comments')
           .select('id, user_id, body, created_at, profiles(navn, rolle)')
           .eq('training_id', widget.trainingId)
-          .order('created_at');
+          .order('created_at', ascending: true);
       if (!mounted) return;
       final list = List<Map<String, dynamic>>.from(rows as List);
       setState(() {

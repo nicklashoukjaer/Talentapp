@@ -157,7 +157,7 @@ class _CreatePollDialogState extends State<CreatePollDialog> {
     try {
       final userId = supabase.auth.currentUser!.id;
       final results = await Future.wait([
-        supabase.from('groups').select('id, navn, type, farve, sort').order('sort'),
+        supabase.from('groups').select('id, navn, type, farve, sort').order('sort', ascending: true),
         supabase.from('group_members').select('group_id').eq('user_id', userId),
       ]);
       if (!mounted) return;

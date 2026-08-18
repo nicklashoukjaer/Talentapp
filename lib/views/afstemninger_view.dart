@@ -47,7 +47,7 @@ class _AfstemningerTabState extends State<AfstemningerTab> {
             .select('id, titel, beskrivelse, lukket_at, created_at, group_id, group_ids, created_by, type')
             .order('created_at', ascending: false),
         supabase.from('group_members').select('group_id, is_captain').eq('user_id', userId),
-        supabase.from('groups').select('id, navn, farve, sort').order('sort'),
+        supabase.from('groups').select('id, navn, farve, sort').order('sort', ascending: true),
       ]);
       final allPolls = List<Map<String, dynamic>>.from(results[0] as List);
       final myGm = List<Map<String, dynamic>>.from(results[1] as List);
@@ -546,7 +546,7 @@ class _EditPollSheetState extends State<_EditPollSheet> {
       final rows = await supabase
           .from('groups')
           .select('id, navn, farve, sort')
-          .order('sort');
+          .order('sort', ascending: true);
       if (mounted) {
         setState(() => _groups = List<Map<String, dynamic>>.from(rows as List));
       }
@@ -778,7 +778,7 @@ class _PollDetailScreenState extends State<PollDetailScreen> {
       final userId = supabase.auth.currentUser!.id;
       final options = await supabase
           .from('poll_options')
-          .select('id, option_tid, beskrivelse, heldags')
+          .select('id, option_tid, beskrivelse, heldags, booket')
           .eq('poll_id', widget.poll['id'])
           // Ældste dato først. Uden ascending sorterer klienten faldende.
           .order('option_tid', ascending: true);
@@ -813,7 +813,7 @@ class _PollDetailScreenState extends State<PollDetailScreen> {
       // Stemme-overblik: hvem må se det, og hvem forventes at stemme?
       final gids = _pollGroupIds(widget.poll);
       final res = await Future.wait([
-        supabase.from('profiles').select('id, navn, rolle').order('navn'),
+        supabase.from('profiles').select('id, navn, rolle').order('navn', ascending: true),
         supabase.from('group_members')
             .select('group_id, user_id, is_captain, is_trainer'),
       ]);
@@ -878,6 +878,31 @@ class _PollDetailScreenState extends State<PollDetailScreen> {
       _eligible.where((p) => _responded.contains(p['id'])).toList();
   List<Map<String, dynamic>> get _manglerAtStemme =>
       _eligible.where((p) => !_responded.contains(p['id'])).toList();
+
+  /// Slå "booket kamp" til/fra på en dato. Kun staff/opretter/kaptajn —
+  /// håndhæves også af RLS, så knappen ikke er den eneste spærring.
+  Future<void> _toggleBooket(String optionId, bool nu) async {
+    setState(() {
+      _options = [
+        for (final o in _options)
+          o['id'] == optionId ? {...o, 'booket': !nu} : o
+      ];
+    });
+    try {
+      await supabase
+          .from('poll_options')
+          .update({'booket': !nu})
+          .eq('id', optionId);
+    } on PostgrestException catch (e) {
+      setState(() {
+        _options = [
+          for (final o in _options)
+            o['id'] == optionId ? {...o, 'booket': nu} : o
+        ];
+      });
+      if (mounted) _snack(context, e.message, _danger);
+    }
+  }
 
   Future<void> _sendRykker() async {
     final modtagere = _manglerAtStemme
@@ -1182,6 +1207,12 @@ class _PollDetailScreenState extends State<PollDetailScreen> {
                                           jaNavne:
                                               _jaNavne[o['id'] as String] ??
                                                   const [],
+                                          booket: o['booket'] == true,
+                                          onBooket: !_canManage
+                                              ? null
+                                              : () => _toggleBooket(
+                                                  o['id'] as String,
+                                                  o['booket'] == true),
                                           udvidet: _udvidede
                                               .contains(o['id'] as String),
                                           onUdvid: !_canManage
@@ -1266,6 +1297,8 @@ class _PollCheckRow extends StatelessWidget {
   final VoidCallback onToggle;
   // Hvem kan denne dato. Kun udfyldt for staff/opretter/kaptajn.
   final List<String> jaNavne;
+  final bool booket;          // der er booket kamp denne dato
+  final VoidCallback? onBooket; // null = må ikke ændre markeringen
   final bool udvidet;
   final VoidCallback? onUdvid;
 
@@ -1279,6 +1312,8 @@ class _PollCheckRow extends StatelessWidget {
     required this.locked,
     required this.onToggle,
     this.jaNavne = const [],
+    this.booket = false,
+    this.onBooket,
     this.udvidet = false,
     this.onUdvid,
   });
@@ -1318,9 +1353,35 @@ class _PollCheckRow extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(_fmtOption(tid, heldags: heldags),
-                          style: theme.textTheme.bodyLarge
-                              ?.copyWith(fontWeight: FontWeight.w600)),
+                      Row(children: [
+                        Flexible(
+                          child: Text(_fmtOption(tid, heldags: heldags),
+                              style: theme.textTheme.bodyLarge
+                                  ?.copyWith(fontWeight: FontWeight.w600)),
+                        ),
+                        if (booket) ...[
+                          const SizedBox(width: 8),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: _neon.withValues(alpha: 0.18),
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                            child: Row(mainAxisSize: MainAxisSize.min, children: [
+                              const Icon(Icons.event_available,
+                                  size: 12, color: _neon),
+                              const SizedBox(width: 4),
+                              Text('BOOKET',
+                                  style: _body(
+                                      size: 10,
+                                      weight: FontWeight.w700,
+                                      spacing: 0.6,
+                                      color: _neon)),
+                            ]),
+                          ),
+                        ],
+                      ]),
                       if (label != null && label!.isNotEmpty)
                         Text(label!, style: theme.textTheme.bodySmall),
                     ],
@@ -1369,6 +1430,28 @@ class _PollCheckRow extends StatelessWidget {
                   farve: _success,
                   tekst: 'Kan',
                   navne: jaNavne),
+              if (onBooket != null) ...[
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton.icon(
+                    onPressed: onBooket,
+                    icon: Icon(
+                        booket
+                            ? Icons.event_busy_outlined
+                            : Icons.event_available_outlined,
+                        size: 17),
+                    label: Text(booket
+                        ? 'Fjern booket-markering'
+                        : 'Markér som booket kamp'),
+                    style: TextButton.styleFrom(
+                      foregroundColor: booket ? _textSecondary : _neon,
+                      visualDensity: VisualDensity.compact,
+                      textStyle: _body(size: 12.5, weight: FontWeight.w600),
+                    ),
+                  ),
+                ),
+              ],
             ],
           ],
         ),

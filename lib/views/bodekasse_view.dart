@@ -63,10 +63,10 @@ class BodekasseTabState extends State<BodekasseTab> {
       // med, så listen kan filtreres pr. hold.
       final results = await Future.wait([
         supabase.from('fine_leaderboard').select().order('total_oere', ascending: false),
-        supabase.from('groups').select('id, navn, farve, sort, hold_group_id').order('sort'),
+        supabase.from('groups').select('id, navn, farve, sort, hold_group_id').order('sort', ascending: true),
         supabase.from('group_members')
             .select('group_id, user_id, is_captain, is_trainer'),
-        supabase.from('hold_groups').select('id, navn').order('created_at'),
+        supabase.from('hold_groups').select('id, navn').order('created_at', ascending: true),
         // Takstblad — kun aktive typer; aktiv=false er forslag der afventer
         // admin og er altså ikke en gældende takst endnu.
         supabase.from('fine_types')

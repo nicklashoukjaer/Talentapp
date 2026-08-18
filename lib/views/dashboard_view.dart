@@ -33,7 +33,7 @@ class DashboardTabState extends State<DashboardTab> {
     setState(() { _loadingFines = true; _finesError = null; });
     try {
       final results = await Future.wait([
-        supabase.from('fine_types').select('id, titel, belob_oere, aktiv, hold_group_id, group_id').order('titel'),
+        supabase.from('fine_types').select('id, titel, belob_oere, aktiv, hold_group_id, group_id').order('titel', ascending: true),
         // VIGTIGT: profiles har 3 FK'er fra fines (user_id, given_by, approved_by)
         // — disambigueres med fines_user_id_fkey
         supabase.from('fines')
@@ -353,8 +353,8 @@ class _HoldGroupsScreenState extends State<HoldGroupsScreen> {
   Future<void> _load() async {
     try {
       final res = await Future.wait([
-        supabase.from('hold_groups').select('id, navn, mobilepay_box_id').order('created_at'),
-        supabase.from('groups').select('id, navn, farve, hold_group_id').order('sort'),
+        supabase.from('hold_groups').select('id, navn, mobilepay_box_id').order('created_at', ascending: true),
+        supabase.from('groups').select('id, navn, farve, hold_group_id').order('sort', ascending: true),
       ]);
       if (!mounted) return;
       setState(() {
@@ -969,8 +969,8 @@ class _MembersAdminViewState extends State<_MembersAdminView> {
     setState(() => _loading = true);
     try {
       final res = await Future.wait([
-        supabase.from('groups').select('id, navn, type, farve, sort').order('sort'),
-        supabase.from('profiles').select('id, navn, rolle, email').order('navn'),
+        supabase.from('groups').select('id, navn, type, farve, sort').order('sort', ascending: true),
+        supabase.from('profiles').select('id, navn, rolle, email').order('navn', ascending: true),
         supabase.from('group_members')
             .select('group_id, user_id, is_captain, is_trainer'),
         supabase.from('fine_leaderboard').select('id, skyldigt_oere'),
@@ -2300,8 +2300,8 @@ class _MobilePayConfigCardState extends State<_MobilePayConfigCard> {
     try {
       _clubBox = await ClubConfig.fetchMobilePayBox();
       final res = await Future.wait([
-        supabase.from('hold_groups').select('id, navn, mobilepay_box_id').order('created_at'),
-        supabase.from('groups').select('id, navn, hold_group_id, mobilepay_box_id').order('sort'),
+        supabase.from('hold_groups').select('id, navn, mobilepay_box_id').order('created_at', ascending: true),
+        supabase.from('groups').select('id, navn, hold_group_id, mobilepay_box_id').order('sort', ascending: true),
       ]);
       _holdGroups = List<Map<String, dynamic>>.from(res[0] as List);
       _soloHolds = List<Map<String, dynamic>>.from(res[1] as List)
@@ -2869,8 +2869,8 @@ class _CreateFineTypeCardState extends State<_CreateFineTypeCard> {
   Future<void> _loadScopes() async {
     try {
       final res = await Future.wait([
-        supabase.from('hold_groups').select('id, navn').order('created_at'),
-        supabase.from('groups').select('id, navn, hold_group_id').order('sort'),
+        supabase.from('hold_groups').select('id, navn').order('created_at', ascending: true),
+        supabase.from('groups').select('id, navn, hold_group_id').order('sort', ascending: true),
       ]);
       if (!mounted) return;
       setState(() {
@@ -3276,11 +3276,11 @@ class _GiveFineDialogState extends State<GiveFineDialog> {
   Future<void> _load() async {
     try {
       final results = await Future.wait([
-        supabase.from('profiles').select('id, navn').order('navn'),
+        supabase.from('profiles').select('id, navn').order('navn', ascending: true),
         supabase.from('fine_types')
             .select('id, titel, belob_oere, hold_group_id, group_id')
             .eq('aktiv', true)
-            .order('titel'),
+            .order('titel', ascending: true),
       ]);
       _communities = await _loadPlayerCommunities();
       var profiles = List<Map<String, dynamic>>.from(results[0] as List);
@@ -3816,7 +3816,7 @@ class _CreateTrainingDialogState extends State<CreateTrainingDialog> {
     try {
       final userId = supabase.auth.currentUser!.id;
       final results = await Future.wait([
-        supabase.from('groups').select('id, navn, type, farve, sort').order('sort'),
+        supabase.from('groups').select('id, navn, type, farve, sort').order('sort', ascending: true),
         supabase.from('group_members').select('group_id').eq('user_id', userId),
       ]);
       if (!mounted) return;

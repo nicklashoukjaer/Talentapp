@@ -57,7 +57,7 @@ class _ProfileTabState extends State<ProfileTab> {
               .from('profiles')
               .select('id, navn')
               .inFilter('id', ids)
-              .order('navn');
+              .order('navn', ascending: true);
           members = List<Map<String, dynamic>>.from(profRows as List);
         }
       }

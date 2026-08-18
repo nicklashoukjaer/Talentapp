@@ -13,6 +13,9 @@
 //     ingen adgang til noget i appen.
 //   • Synlighed: begivenheder med synlig_fra i fremtiden udelades — undtagen
 //     for staff (admin/træner), der også ser dem i appen.
+//   • Afbud: har man meldt fra, forsvinder begivenheden fra ens kalender. Det
+//     er et personligt feed, så det skal ikke stå "træning" i ens private
+//     kalender på en dag man har meldt afbud til.
 //
 // Funktionen kører med service_role og omgår dermed RLS, så filtreringen SKAL
 // ske her. Bliver den lempet, lækker hele klubbens kalender til alle.
@@ -84,6 +87,16 @@ Deno.serve(async (req) => {
     (memberships ?? []).map((m: Record<string, unknown>) => String(m.group_id)),
   );
 
+  // Begivenheder brugeren har meldt afbud til — de skal ikke i kalenderen.
+  const { data: afbudRows } = await sb
+    .from("training_participants")
+    .select("training_id")
+    .eq("user_id", profile.id)
+    .eq("status", "afmeldt");
+  const afbud = new Set(
+    (afbudRows ?? []).map((r: Record<string, unknown>) => String(r.training_id)),
+  );
+
   const since = new Date(Date.now() - 30 * 86400000).toISOString();
   const { data: trainings } = await sb
     .from("trainings")
@@ -95,6 +108,9 @@ Deno.serve(async (req) => {
 
   const now = Date.now();
   const mine = (trainings ?? []).filter((t: Record<string, unknown>) => {
+    // Meldt afbud → ud af kalenderen. Gælder også dem med kalender_alle_hold,
+    // så ens eget afbud altid slår igennem.
+    if (afbud.has(String(t.id))) return false;
     // Undtagelsen: hele klubbens program, hele sæsonen — uanset hold og uanset
     // om begivenheden er udgivet endnu. Bruges til at følge planlægningen i en
     // ekstern kalender.

@@ -30,7 +30,7 @@ class _TraeningerTabState extends State<TraeningerTab> {
           .from('trainings')
           .select('id, titel, beskrivelse, max_deltagere, start_tid, slut_tid, adresse, tilmeldings_deadline')
           .gte('start_tid', DateTime.now().toUtc().toIso8601String())
-          .order('start_tid');
+          .order('start_tid', ascending: true);
 
       final tList = List<Map<String, dynamic>>.from(trainings as List);
       final ids   = tList.map((t) => t['id'] as String).toList();

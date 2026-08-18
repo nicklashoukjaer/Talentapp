@@ -31,6 +31,7 @@ Damer") + evt. grupper på tværs (kamp-trup). Næsten alt indhold kan knyttes t
 - **Backend:** Supabase (Postgres + Auth + RLS + edge functions + pg_cron).
 - **Push:** OneSignal (native) + web-push via `web/index.html`. iOS web-push er
   upålideligt → in-app notifikations-klokke er den pålidelige kanal.
+  Kalender-feedet udelader begivenheder man har meldt afbud til.
   Edge-funktionen `notify` er **hold-bevidst**: en begivenhed/afstemning knyttet
   til hold rammer kun de holds medlemmer + alle admins; klub-brede (uden hold)
   rammer alle. Bøder rammer kun modtageren.
@@ -124,6 +125,9 @@ Bund-navigation (mobil) / sidebar (bred skærm), 4–5 faner afhængigt af rolle
 - **Afstemnings-detalje:** dato-muligheder m. checkboxes (multi-valg),
   resultat-barer, "Favorit-par pr. dato" (synergi-overblik ud fra profilernes
   faste makkere; gensidige vs. én-vejs, kun staff ser én-vejs).
+- **Bookede kampdatoer**: staff/opretter/kaptajn kan markere en dato som
+  booket kamp (`poll_options.booket`). Mærkatet vises for alle, så holdet
+  kan se hvad der er på plads.
 - **Stemme-overblik** (staff/opretter/kaptajn): hvem har stemt og hvad de
   stemte, hvem mangler, og "Påmind X der mangler" — med mulighed for at
   fravælge enkeltpersoner. Trænere for holdet tælles ikke som manglende.
@@ -216,7 +220,7 @@ skrivning er gated på rolle-helpers (`is_admin()`, `is_staff()`, `is_captain()`
 - **training_comments** — training_id, user_id, body, created_at.
 - **training_guests** — training_id, navn, added_by (afløsere uden konto).
 - **polls** — titel, beskrivelse, lukket_at (stemmefrist), **group_id**, created_by.
-- **poll_options** — poll_id, option_tid, beskrivelse, **heldags** (tid er
+- **poll_options** — poll_id, option_tid, beskrivelse, **booket**, **heldags** (tid er
   valgfri på dato-muligheder; uden tid gemmes option_tid som 00:00 og
   klokkeslættet vises ikke).
 - **poll_responses** — poll_option_id, user_id, svar (kan/kan ikke).

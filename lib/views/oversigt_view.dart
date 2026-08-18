@@ -1090,6 +1090,7 @@ class _FeedTrainingCardState extends State<_FeedTrainingCard> {
     final canDecline =
         canSignUp || status == 'tilmeldt' || status == 'venteliste';
     final isSignedUp = status == 'tilmeldt' || status == 'venteliste';
+    final hasDeclined = status == 'afmeldt';
     final synligFraStr = t['synlig_fra'] as String?;
     final hiddenUntil = synligFraStr == null
         ? null : DateTime.parse(synligFraStr).toLocal();
@@ -1199,6 +1200,35 @@ class _FeedTrainingCardState extends State<_FeedTrainingCard> {
                               textStyle: _body(size: 13, weight: FontWeight.w700),
                             ),
                             child: const Text('Meld afbud'),
+                          ),
+                        ])
+                      : hasDeclined
+                      // Meldt afbud skal se anderledes ud end "ikke svaret
+                      // endnu" — ellers kan man ikke se om man har svaret.
+                      ? Row(children: [
+                          Expanded(
+                            child: Row(children: [
+                              const Icon(Icons.close,
+                                  size: 15, color: _danger),
+                              const SizedBox(width: 6),
+                              Text('Meldt afbud',
+                                  style: _body(
+                                      size: 13,
+                                      weight: FontWeight.w700,
+                                      color: _danger)),
+                            ]),
+                          ),
+                          OutlinedButton(
+                            onPressed: canSignUp ? widget.onSignUp : null,
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: _success,
+                              side: BorderSide(
+                                  color: _success.withValues(alpha: 0.5)),
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 14, vertical: 9),
+                              textStyle: _body(size: 13, weight: FontWeight.w700),
+                            ),
+                            child: const Text('Tilmeld alligevel'),
                           ),
                         ])
                       : Row(children: [
@@ -1834,6 +1864,7 @@ class _NextUpHero extends StatelessWidget {
     final deadlinePassed = DateTime.now().isAfter(deadline);
     final canSignUp = !deadlinePassed || isAdmin;
     final isSignedUp = status == 'tilmeldt' || status == 'venteliste';
+    final hasDeclined = status == 'afmeldt';
     final canDecline = canSignUp || isSignedUp;
     final subtitle = hasAddr
         ? '${_fmtTime(start)}–${_fmtTime(slut)} · $adresse'
@@ -1953,6 +1984,43 @@ class _NextUpHero extends StatelessWidget {
                   textStyle: _body(size: 13.5, weight: FontWeight.w700),
                 ),
                 child: const Text('Meld afbud'),
+              ),
+            ])
+          else if (hasDeclined)
+            // Samme behandling som "Tilmeldt", bare i rødt — så man kan se at
+            // man HAR svaret, og ikke bare mangler at gøre det.
+            Row(children: [
+              Expanded(
+                child: Container(
+                  alignment: Alignment.center,
+                  padding: const EdgeInsets.symmetric(vertical: 11),
+                  decoration: BoxDecoration(
+                    color: _danger.withValues(alpha: 0.16),
+                    borderRadius: BorderRadius.circular(11),
+                    border: Border.all(color: _danger.withValues(alpha: 0.5)),
+                  ),
+                  child: Row(mainAxisSize: MainAxisSize.min, children: [
+                    const Icon(Icons.close, size: 16, color: _danger),
+                    const SizedBox(width: 7),
+                    Text('Meldt afbud',
+                        style: _body(
+                            size: 13.5,
+                            weight: FontWeight.w700,
+                            color: _danger)),
+                  ]),
+                ),
+              ),
+              const SizedBox(width: 8),
+              OutlinedButton(
+                onPressed: canSignUp ? onSignUp : null,
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: _success,
+                  side: BorderSide(color: _success.withValues(alpha: 0.5)),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  textStyle: _body(size: 13.5, weight: FontWeight.w700),
+                ),
+                child: const Text('Tilmeld alligevel'),
               ),
             ])
           else

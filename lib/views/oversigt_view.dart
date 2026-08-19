@@ -1083,6 +1083,8 @@ class _FeedTrainingCardState extends State<_FeedTrainingCard> {
     final deadline = DateTime.parse(t['tilmeldings_deadline'] as String).toLocal();
     final adresse  = t['adresse'] as String;
     final titel    = t['titel'] as String;
+    final max      = t['max_deltagere'] as int?;
+    final cnt      = item.signedUpCount;
     final status   = item.myStatus;
     final hasAddr  = adresse.isNotEmpty && adresse != _addressUnspecified;
     final deadlinePassed = DateTime.now().isAfter(deadline);
@@ -1135,6 +1137,27 @@ class _FeedTrainingCardState extends State<_FeedTrainingCard> {
                     Text(subtitle,
                         style: _body(size: 12, color: _textSecondary),
                         maxLines: 1, overflow: TextOverflow.ellipsis),
+                    // Fremmøde — samme ordlyd som heroet, så tallet betyder
+                    // det samme uanset hvor i feedet man kigger.
+                    const SizedBox(height: 3),
+                    Row(mainAxisSize: MainAxisSize.min, children: [
+                      const Icon(Icons.people_outline,
+                          size: 13, color: _success),
+                      const SizedBox(width: 5),
+                      Text.rich(TextSpan(children: [
+                        TextSpan(
+                            text: '$cnt',
+                            style: _body(
+                                size: 12,
+                                weight: FontWeight.w700,
+                                color: _success)),
+                        TextSpan(
+                            text: max == null
+                                ? ' tilmeldt'
+                                : ' af $max kommer',
+                            style: _body(size: 12, color: _textSecondary)),
+                      ])),
+                    ]),
                   ],
                 ),
               ),

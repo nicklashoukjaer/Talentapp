@@ -122,6 +122,18 @@
 
   <!-- Auto-opdatering: viser et banner når en ny version er deployet -->
   <style>
+    /* iOS Safari zoomer automatisk ind når man sætter fokus i et inputfelt
+       med skriftstørrelse under 16px — og ignorerer bevidst user-scalable=no.
+       Resultatet var at halvdelen af skærmen forsvandt når man skulle skrive
+       en titel.
+
+       Flutter tegner selv teksten på canvas; det her <input> er usynligt og
+       bruges kun til tastatur og markør. Vi kan derfor tvinge 16px uden at
+       ændre noget i appens design — Safari holder op med at zoome. */
+    input, textarea, [contenteditable="true"] {
+      font-size: 16px !important;
+    }
+
     #update-banner {
       position: fixed; left: 0; right: 0; bottom: 0; z-index: 2147483647;
       display: flex; align-items: center; gap: 12px;

@@ -99,7 +99,9 @@ Bund-navigation (mobil) / sidebar (bred skærm), 4–5 faner afhængigt af rolle
   - Faner **Deltagere / Kommentarer** (antal-badge).
   - Fremmøde-overblik (13b): Tilmeldt · Mangler svar · Afbud (foldet). Rolige
     rækker m. status-prik; staff/kaptajn kan sætte svar for andre.
-  - **Afløsere/gæster** (staff tilføjer på navn, "Gæst"-badge).
+  - **Afløsere:** staff/kaptajn kan vælge et rigtigt medlem — også fra et
+    andet hold — som så tilmeldes, får besked og ser begivenheden i sin egen
+    app og kalender. Eller skrive et navn på en uden konto ("Gæst"-badge).
   - Staff: udgiv skjult begivenhed, "Påmind alle der mangler", "Hvem mødte ikke
     op?" (→ udeblivelses-bøder), redigér, slet.
   - **Kommentar-tråd** (chat-bobler, træner-mærke).

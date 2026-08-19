@@ -719,6 +719,7 @@ class _NotificationsBellState extends State<_NotificationsBell> {
       case 'training_oprettet': return Icons.event;
       case 'training_afmeldt': return Icons.person_off_outlined;
       case 'training_rykker':  return Icons.alarm;
+      case 'training_tilmeldt_af_anden': return Icons.person_add_alt_1;
       case 'poll_oprettet':    return Icons.how_to_vote;
       case 'poll_rykker':      return Icons.how_to_vote_outlined;
       case 'boede':            return Icons.gavel;

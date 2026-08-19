@@ -63,6 +63,7 @@ class _OversigtTabState extends State<OversigtTab> {
   bool _historyLoaded = false; // lazy: historik (90 dage) hentes først ved behov
   List<Map<String, dynamic>> _groups = const []; // grupper brugeren er på
   Set<String> _myGroupIds = {};   // brugerens gruppe-id'er
+  Set<String> _myStatusIds = {};  // begivenheder jeg selv er sat på
   Set<String> _myCaptainGroupIds = {}; // hold hvor brugeren er kaptajn
   String? _switcherGroupId;       // valgt hold i switcheren (null = alle mine)
   bool _allTeams = false;         // admin: vis hele klubben, ikke kun mine hold
@@ -331,6 +332,7 @@ class _OversigtTabState extends State<OversigtTab> {
         _items = items;
         _groups = groups;
         _myGroupIds = myGroupIds;
+        _myStatusIds = myStatusMap.keys.toSet();
         _myCaptainGroupIds = myCaptainGroupIds;
         _loading = false;
       });
@@ -841,7 +843,12 @@ class _OversigtTabState extends State<OversigtTab> {
         .whereType<_PollFeedItem>()
         .where((p) => visibleGroups(_pollGroupIds(p.poll)))
         .toList();
+    // Er man selv sat på begivenheden — fx som afløser for et andet hold —
+    // skal man kunne se den, også selvom man ikke er på holdet. Et aktivt
+    // hold-filter i tragten går dog stadig forud.
     bool visibleToMe(_TrainingFeedItem t) =>
+        (_switcherGroupId == null &&
+                _myStatusIds.contains(t.training['id'] as String)) ||
         visibleGroups(_trainingGroupIds(t.training));
     final allTrainings =
         _items.whereType<_TrainingFeedItem>().where(visibleToMe).toList();
@@ -2659,19 +2666,61 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
   }
 
   Future<void> _addGuest() async {
-    final navn = await showModalBottomSheet<String>(
+    // Kandidater: alle klubbens medlemmer der ikke allerede er på
+    // begivenheden — også fra andre hold, det er hele pointen med en afløser.
+    final paaEvent = {
+      ..._tilmeldt.map((p) => p.id),
+      ..._afbud.map((p) => p.id),
+      ..._mangler.map((p) => p.id),
+      ..._trainere.map((p) => p.id),
+    };
+    List<Map<String, dynamic>> kandidater = const [];
+    try {
+      final res = await Future.wait([
+        supabase.from('profiles').select('id, navn').order('navn', ascending: true),
+        supabase.from('group_members').select('user_id, groups(navn)'),
+      ]);
+      final holdAf = <String, List<String>>{};
+      for (final r in List<Map<String, dynamic>>.from(res[1] as List)) {
+        final g = r['groups'] as Map<String, dynamic>?;
+        final navn = g?['navn'] as String?;
+        if (navn != null) {
+          (holdAf[r['user_id'] as String] ??= []).add(navn);
+        }
+      }
+      kandidater = [
+        for (final p in List<Map<String, dynamic>>.from(res[0] as List))
+          if (!paaEvent.contains(p['id']))
+            {...p, 'hold': (holdAf[p['id']] ?? const []).join(' · ')}
+      ];
+    } catch (_) {}
+
+    if (!mounted) return;
+    final valg = await showModalBottomSheet<_AfloeserValg>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => const _AddGuestSheet(),
+      builder: (_) => _AddGuestSheet(kandidater: kandidater),
     );
-    if (navn == null || navn.trim().isEmpty) return;
+    if (valg == null) return;
     try {
-      await supabase.from('training_guests').insert({
-        'training_id': widget.training['id'],
-        'navn': navn.trim(),
-        'added_by': _myId,
-      });
+      if (valg.userId != null) {
+        // Rigtigt medlem → tilmeld som deltager, så de selv kan se
+        // begivenheden og få den i kalenderen. Triggeren giver dem besked.
+        await supabase.from('training_participants').upsert({
+          'training_id': widget.training['id'],
+          'user_id': valg.userId,
+          'status': 'tilmeldt',
+        }, onConflict: 'training_id,user_id');
+      } else {
+        final navn = valg.navn?.trim() ?? '';
+        if (navn.isEmpty) return;
+        await supabase.from('training_guests').insert({
+          'training_id': widget.training['id'],
+          'navn': navn,
+          'added_by': _myId,
+        });
+      }
       await _load();
       if (mounted) _snack(context, 'Afløser tilføjet', _success);
     } on PostgrestException catch (e) {
@@ -3628,14 +3677,29 @@ class _EventCommentsState extends State<_EventComments> {
 }
 
 /// Bundsheet: tilføj en afløser/gæst på navn (uden konto).
+/// Resultatet af "+ Afløser": enten et eksisterende medlem eller et løst navn.
+class _AfloeserValg {
+  final String? userId; // medlem i appen
+  final String? navn;   // fritekst — person uden konto
+  const _AfloeserValg.medlem(this.userId) : navn = null;
+  const _AfloeserValg.gaest(this.navn) : userId = null;
+}
+
+/// Tilføj afløser — vælg et medlem fra klubben, eller skriv et navn på en der
+/// ikke er i appen. Medlemmer tilmeldes rigtigt (så de selv kan se
+/// begivenheden); fritekst bliver en gæsterække som hidtil.
 class _AddGuestSheet extends StatefulWidget {
-  const _AddGuestSheet();
+  /// Alle klubbens medlemmer, undtagen dem der allerede er på begivenheden.
+  final List<Map<String, dynamic>> kandidater;
+  const _AddGuestSheet({required this.kandidater});
   @override
   State<_AddGuestSheet> createState() => _AddGuestSheetState();
 }
 
 class _AddGuestSheetState extends State<_AddGuestSheet> {
   final _navn = TextEditingController();
+  String _sog = '';
+  bool _fritekst = false;
 
   @override
   void dispose() {
@@ -3643,24 +3707,33 @@ class _AddGuestSheetState extends State<_AddGuestSheet> {
     super.dispose();
   }
 
-  void _submit() {
+  void _submitNavn() {
     final v = _navn.text.trim();
     if (v.isEmpty) {
       _snack(context, 'Skriv et navn på afløseren', _gold);
       return;
     }
-    Navigator.of(context).pop(v);
+    Navigator.of(context).pop(_AfloeserValg.gaest(v));
   }
 
   @override
   Widget build(BuildContext context) {
+    final q = _sog.trim().toLowerCase();
+    final liste = q.isEmpty
+        ? widget.kandidater
+        : widget.kandidater
+            .where((m) =>
+                (m['navn'] as String? ?? '').toLowerCase().contains(q))
+            .toList();
+
     return Padding(
       padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
       child: SafeArea(
         top: false,
         child: Container(
           margin: const EdgeInsets.all(12),
-          padding: const EdgeInsets.all(18),
+          constraints:
+              BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.85),
           decoration: BoxDecoration(
             color: _surfaceDark,
             borderRadius: BorderRadius.circular(20),
@@ -3670,42 +3743,165 @@ class _AddGuestSheetState extends State<_AddGuestSheet> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text('TILFØJ AFLØSER',
-                  style: _cond(size: 20, weight: FontWeight.w800)),
-              const SizedBox(height: 6),
-              Text('Vises som "Gæst" i tilmeldt-listen og kan få bøde som alle '
-                  'andre. Knyttet til denne ene begivenhed.',
-                  style: _body(size: 12.5, color: _textSecondary)),
-              const SizedBox(height: 16),
-              TextField(
-                controller: _navn,
-                autofocus: true,
-                textCapitalization: TextCapitalization.words,
-                textInputAction: TextInputAction.done,
-                onSubmitted: (_) => _submit(),
-                decoration: const InputDecoration(
-                  labelText: 'Navn på afløseren',
-                  prefixIcon: Icon(Icons.person_outline),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(18, 18, 18, 0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('TILFØJ AFLØSER',
+                        style: _cond(size: 20, weight: FontWeight.w800)),
+                    const SizedBox(height: 6),
+                    Text(
+                        _fritekst
+                            ? 'Til en der ikke er i appen. Vises som "Gæst" og '
+                                'kan få bøde som alle andre.'
+                            : 'Vælg et medlem — også fra et andet hold. De bliver '
+                                'tilmeldt og kan selv se begivenheden.',
+                        style: _body(size: 12.5, color: _textSecondary)),
+                    const SizedBox(height: 14),
+                  ],
                 ),
               ),
-              const SizedBox(height: 18),
-              Row(children: [
-                Expanded(
-                  child: TextButton(
-                    onPressed: () => Navigator.of(context).pop(),
-                    style: TextButton.styleFrom(foregroundColor: _textSecondary),
-                    child: const Text('Annullér'),
+              if (_fritekst) ...[
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(18, 0, 18, 0),
+                  child: TextField(
+                    controller: _navn,
+                    autofocus: true,
+                    textCapitalization: TextCapitalization.words,
+                    textInputAction: TextInputAction.done,
+                    onSubmitted: (_) => _submitNavn(),
+                    decoration: const InputDecoration(
+                      labelText: 'Navn på afløseren',
+                      prefixIcon: Icon(Icons.person_outline),
+                    ),
                   ),
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  flex: 2,
-                  child: FilledButton(
-                    onPressed: _submit,
-                    child: const Text('Tilføj til tilmeldte'),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(18, 16, 18, 18),
+                  child: Row(children: [
+                    Expanded(
+                      child: TextButton(
+                        onPressed: () => setState(() => _fritekst = false),
+                        style:
+                            TextButton.styleFrom(foregroundColor: _textSecondary),
+                        child: const Text('Vælg medlem i stedet'),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      flex: 2,
+                      child: FilledButton(
+                        onPressed: _submitNavn,
+                        child: const Text('Tilføj som gæst'),
+                      ),
+                    ),
+                  ]),
+                ),
+              ] else ...[
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(18, 0, 18, 10),
+                  child: Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 13, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: _surfaceElevated,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: _borderSubtle),
+                    ),
+                    child: Row(children: [
+                      const Icon(Icons.search, size: 16, color: _textMuted),
+                      const SizedBox(width: 9),
+                      Expanded(
+                        child: TextField(
+                          onChanged: (v) => setState(() => _sog = v),
+                          style: _body(size: 14),
+                          decoration: InputDecoration(
+                            isDense: true,
+                            border: InputBorder.none,
+                            hintText: 'Søg medlem…',
+                            hintStyle: _body(size: 14, color: _textMuted),
+                          ),
+                        ),
+                      ),
+                    ]),
                   ),
                 ),
-              ]),
+                Flexible(
+                  child: liste.isEmpty
+                      ? Padding(
+                          padding: const EdgeInsets.all(24),
+                          child: Text('Ingen medlemmer at tilføje',
+                              style: _body(size: 13, color: _textMuted)),
+                        )
+                      : ListView.builder(
+                          shrinkWrap: true,
+                          padding: const EdgeInsets.symmetric(horizontal: 18),
+                          itemCount: liste.length,
+                          itemBuilder: (_, i) {
+                            final m = liste[i];
+                            final navn = m['navn'] as String? ?? '?';
+                            final hold = m['hold'] as String?;
+                            return InkWell(
+                              onTap: () => Navigator.of(context)
+                                  .pop(_AfloeserValg.medlem(m['id'] as String)),
+                              borderRadius: BorderRadius.circular(12),
+                              child: Padding(
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 8),
+                                child: Row(children: [
+                                  _InitialAvatar(navn: navn, size: 34),
+                                  const SizedBox(width: 11),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Text(navn,
+                                            style: _body(
+                                                size: 14,
+                                                weight: FontWeight.w600),
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis),
+                                        if (hold != null && hold.isNotEmpty)
+                                          Text(hold,
+                                              style: _body(
+                                                  size: 11.5,
+                                                  color: _textSecondary),
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis),
+                                      ],
+                                    ),
+                                  ),
+                                  const Icon(Icons.add_circle_outline,
+                                      size: 20, color: _neon),
+                                ]),
+                              ),
+                            );
+                          },
+                        ),
+                ),
+                const Divider(height: 18, color: _borderSubtle),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(18, 0, 18, 16),
+                  child: Row(children: [
+                    Expanded(
+                      child: TextButton.icon(
+                        onPressed: () => setState(() => _fritekst = true),
+                        icon: const Icon(Icons.edit_outlined, size: 17),
+                        label: const Text('Skriv et navn i stedet'),
+                        style: TextButton.styleFrom(foregroundColor: _neon),
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      style: TextButton.styleFrom(foregroundColor: _textSecondary),
+                      child: const Text('Annullér'),
+                    ),
+                  ]),
+                ),
+              ],
             ],
           ),
         ),

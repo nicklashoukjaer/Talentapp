@@ -13,6 +13,8 @@
 //     ingen adgang til noget i appen.
 //   • Synlighed: begivenheder med synlig_fra i fremtiden udelades — undtagen
 //     for staff (admin/træner), der også ser dem i appen.
+//   • Afløser: er man sat på en begivenhed uden at være på holdet, kommer den
+//     alligevel med — man skal jo møde op.
 //   • Afbud: har man meldt fra, forsvinder begivenheden fra ens kalender. Det
 //     er et personligt feed, så det skal ikke stå "træning" i ens private
 //     kalender på en dag man har meldt afbud til.
@@ -88,14 +90,22 @@ Deno.serve(async (req) => {
   );
 
   // Begivenheder brugeren har meldt afbud til — de skal ikke i kalenderen.
-  const { data: afbudRows } = await sb
+  const { data: deltagelse } = await sb
     .from("training_participants")
-    .select("training_id")
-    .eq("user_id", profile.id)
-    .eq("status", "afmeldt");
-  const afbud = new Set(
-    (afbudRows ?? []).map((r: Record<string, unknown>) => String(r.training_id)),
-  );
+    .select("training_id, status")
+    .eq("user_id", profile.id);
+  const afbud = new Set<string>();
+  // Er man sat på en begivenhed — fx som afløser for et andet hold — hører
+  // den til i ens kalender, uanset holdtilknytning.
+  const tilmeldt = new Set<string>();
+  for (const r of deltagelse ?? []) {
+    const id = String((r as Record<string, unknown>).training_id);
+    if ((r as Record<string, unknown>).status === "afmeldt") {
+      afbud.add(id);
+    } else {
+      tilmeldt.add(id);
+    }
+  }
 
   const since = new Date(Date.now() - 30 * 86400000).toISOString();
   const { data: trainings } = await sb
@@ -111,6 +121,8 @@ Deno.serve(async (req) => {
     // Meldt afbud → ud af kalenderen. Gælder også dem med kalender_alle_hold,
     // så ens eget afbud altid slår igennem.
     if (afbud.has(String(t.id))) return false;
+    // Selv sat på (afløser m.m.) → altid med.
+    if (tilmeldt.has(String(t.id))) return true;
     // Undtagelsen: hele klubbens program, hele sæsonen — uanset hold og uanset
     // om begivenheden er udgivet endnu. Bruges til at følge planlægningen i en
     // ekstern kalender.

@@ -3361,6 +3361,56 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
     );
   }
 
+  /// Fordelingen af banehalvdele blandt de tilmeldte — så man kan se om
+  /// holdet hænger sammen uden at tælle mærkater i listen.
+  /// Gæster tælles ikke med: de har ingen profil og dermed ingen side.
+  Widget _sideOptaelling() {
+    if (_tilmeldt.isEmpty) return const SizedBox.shrink();
+    final antal = <String?, int>{};
+    for (final p in _tilmeldt) {
+      final n = p.side;
+      antal[n] = (antal[n] ?? 0) + 1;
+    }
+    // Fast rækkefølge, og kun de kategorier der faktisk optræder.
+    const raekkefoelge = ['venstre', 'hoejre', 'begge', null];
+    final viste = [for (final k in raekkefoelge) if ((antal[k] ?? 0) > 0) k];
+    if (viste.isEmpty) return const SizedBox.shrink();
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          for (final k in viste)
+            Builder(builder: (_) {
+              final info = _sideInfo(k);
+              return Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: info.farve.withValues(alpha: 0.14),
+                  borderRadius: BorderRadius.circular(999),
+                  border:
+                      Border.all(color: info.farve.withValues(alpha: 0.35)),
+                ),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  Text('${antal[k]}',
+                      style: _cond(
+                          size: 15,
+                          weight: FontWeight.w800,
+                          color: info.farve)),
+                  const SizedBox(width: 5),
+                  Text(k == null ? 'mangler side' : info.fuld.toLowerCase(),
+                      style: _body(size: 12, color: _textSecondary)),
+                ]),
+              );
+            }),
+        ],
+      ),
+    );
+  }
+
   Widget _tilmeldtSection() {
     // Tilmeldt-sektionen vises altid for staff (så "+ Afløser" er tilgængelig).
     if (_tilmeldt.isEmpty && _guests.isEmpty && !widget.canManage) {
@@ -3385,6 +3435,7 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                 )
               : null,
         ),
+        _sideOptaelling(),
         for (final p in _tilmeldt) _answeredRow(p, tilmeldt: true),
         for (final g in _guests) _guestRow(g),
         const SizedBox(height: 4),

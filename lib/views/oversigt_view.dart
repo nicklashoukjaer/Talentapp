@@ -2455,8 +2455,19 @@ class _MatrixLegend extends StatelessWidget {
 class _AttPerson {
   final String id, navn;
   final DateTime? svarTid;
-  _AttPerson(this.id, this.navn, this.svarTid);
+  /// Foretrukken banehalvdel: venstre / hoejre / begge. null = ikke angivet.
+  final String? side;
+  _AttPerson(this.id, this.navn, this.svarTid, {this.side});
 }
+
+/// Kort mærkat for banehalvdelen — V / H / B, eller "?" når den mangler.
+({String kort, String fuld, Color farve}) _sideInfo(String? side) =>
+    switch (side) {
+      'venstre' => (kort: 'V', fuld: 'Venstre', farve: _info),
+      'hoejre'  => (kort: 'H', fuld: 'Højre',   farve: _gold),
+      'begge'   => (kort: 'B', fuld: 'Begge',   farve: _success),
+      _         => (kort: '?', fuld: 'Ikke angivet', farve: _textMuted),
+    };
 
 String _fmtSvar(DateTime d) {
   const m = ['jan','feb','mar','apr','maj','jun','jul','aug','sep','okt','nov','dec'];
@@ -2512,7 +2523,9 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
             .select('user_id, status, updated_at, '
                 'profiles!training_participants_user_id_fkey(navn)')
             .eq('training_id', tid),
-        supabase.from('profiles').select('id, navn').order('navn', ascending: true),
+        supabase.from('profiles')
+            .select('id, navn, spiller_side')
+            .order('navn', ascending: true),
       ]);
       final parts = List<Map<String, dynamic>>.from(results[0] as List);
       var profiles = List<Map<String, dynamic>>.from(results[1] as List);
@@ -2555,22 +2568,23 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
       for (final prof in profiles) {
         final id = prof['id'] as String;
         final navn = prof['navn'] as String? ?? '(ukendt)';
+        final side = prof['spiller_side'] as String?;
         final part = byUser[id];
         final isTrainer = trainerIds.contains(id);
         if (part == null) {
           // Trænere rykkes ikke — de skal ikke stå som "mangler svar".
-          if (!isTrainer) mangler.add(_AttPerson(id, navn, null));
+          if (!isTrainer) mangler.add(_AttPerson(id, navn, null, side: side));
         } else {
           final status = part['status'] as String;
           final ts = part['updated_at'] == null
               ? null
               : DateTime.parse(part['updated_at'] as String);
           if (status == 'afmeldt') {
-            afbud.add(_AttPerson(id, navn, ts));
+            afbud.add(_AttPerson(id, navn, ts, side: side));
           } else if (isTrainer) {
-            trainere.add(_AttPerson(id, navn, ts));
+            trainere.add(_AttPerson(id, navn, ts, side: side));
           } else {
-            tilmeldt.add(_AttPerson(id, navn, ts));
+            tilmeldt.add(_AttPerson(id, navn, ts, side: side));
           }
         }
       }
@@ -3135,6 +3149,125 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
 
   /// Én række for en person der HAR svaret — rolig: navn, tidsstempel, status-prik.
   /// For staff kan man trykke på prikken for at ændre svaret.
+  /// Banehalvdel som lille mærkat. Staff/kaptajn kan trykke og sætte den for
+  /// dem der ikke selv har udfyldt den.
+  Widget _sideBadge(_AttPerson p) {
+    final info = _sideInfo(p.side);
+    final badge = Container(
+      margin: const EdgeInsets.only(right: 8),
+      width: 24, height: 24,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: info.farve.withValues(alpha: 0.16),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: info.farve.withValues(alpha: 0.4)),
+      ),
+      child: Text(info.kort,
+          style: _body(size: 12, weight: FontWeight.w800, color: info.farve)),
+    );
+    if (!widget.canManage) {
+      return Tooltip(message: 'Side: ${info.fuld}', child: badge);
+    }
+    return Tooltip(
+      message: 'Side: ${info.fuld} — tryk for at ændre',
+      child: InkWell(
+        onTap: _busy ? null : () => _vaelgSide(p),
+        borderRadius: BorderRadius.circular(8),
+        child: badge,
+      ),
+    );
+  }
+
+  Future<void> _vaelgSide(_AttPerson p) async {
+    final valgt = await showModalBottomSheet<String?>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => SafeArea(
+        top: false,
+        child: Container(
+          margin: const EdgeInsets.all(12),
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+          decoration: BoxDecoration(
+            color: _surfaceDark,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: _borderSubtle),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text('SIDE FOR ${p.navn.toUpperCase()}',
+                  style: _cond(size: 18, weight: FontWeight.w800)),
+              const SizedBox(height: 4),
+              Text('Spilleren kan selv sætte den i Min profil — her kan du '
+                  'udfylde den for dem der ikke har.',
+                  style: _body(size: 12, color: _textSecondary)),
+              const SizedBox(height: 14),
+              for (final v in const ['venstre', 'hoejre', 'begge', null])
+                Builder(builder: (_) {
+                  final info = _sideInfo(v);
+                  final valgt = p.side == v;
+                  return InkWell(
+                    onTap: () => Navigator.of(ctx).pop(v ?? ''),
+                    borderRadius: BorderRadius.circular(12),
+                    child: Container(
+                      margin: const EdgeInsets.only(bottom: 8),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 13),
+                      decoration: BoxDecoration(
+                        color: valgt
+                            ? info.farve.withValues(alpha: 0.14)
+                            : _surfaceElevated,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                            color: valgt ? info.farve : _borderSubtle),
+                      ),
+                      child: Row(children: [
+                        Container(
+                          width: 26, height: 26,
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            color: info.farve.withValues(alpha: 0.18),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(info.kort,
+                              style: _body(
+                                  size: 12.5,
+                                  weight: FontWeight.w800,
+                                  color: info.farve)),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(info.fuld,
+                              style: _body(
+                                  size: 14, weight: FontWeight.w600)),
+                        ),
+                        if (valgt)
+                          Icon(Icons.check, size: 18, color: info.farve),
+                      ]),
+                    ),
+                  );
+                }),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (valgt == null) return; // fortrudt
+    setState(() => _busy = true);
+    try {
+      await supabase
+          .from('profiles')
+          .update({'spiller_side': valgt.isEmpty ? null : valgt})
+          .eq('id', p.id);
+      await _load();
+    } on PostgrestException catch (e) {
+      if (mounted) _snack(context, e.message, _danger);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   Widget _answeredRow(_AttPerson p, {required bool tilmeldt}) {
     final isMe = p.id == _myId;
     final color = tilmeldt ? _success : _danger;
@@ -3157,6 +3290,7 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
               ),
           ]),
         ),
+        _sideBadge(p),
         if (p.svarTid != null)
           Padding(
             padding: const EdgeInsets.only(right: 10),

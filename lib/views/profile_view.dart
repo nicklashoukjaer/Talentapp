@@ -120,6 +120,11 @@ class _ProfileTabState extends State<ProfileTab> {
                     onSave: _saveMakkere,
                   ),
                 const SizedBox(height: 16),
+                _SideCard(
+                  valgt: widget.profile['spiller_side'] as String?,
+                  onGemt: widget.onProfileUpdated,
+                ),
+                const SizedBox(height: 16),
                 const _ChangePasswordCard(),
                 const SizedBox(height: 16),
                 const _NotificationCard(),
@@ -130,6 +135,118 @@ class _ProfileTabState extends State<ProfileTab> {
           ),
         ),
       ],
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Min side på banen — bruges når der stilles hold
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _SideCard extends StatefulWidget {
+  final String? valgt;
+  final Future<void> Function() onGemt;
+  const _SideCard({required this.valgt, required this.onGemt});
+  @override
+  State<_SideCard> createState() => _SideCardState();
+}
+
+class _SideCardState extends State<_SideCard> {
+  late String? _valgt = widget.valgt;
+  bool _gemmer = false;
+
+  Future<void> _saet(String? v) async {
+    if (v == _valgt) return;
+    final foer = _valgt;
+    setState(() { _valgt = v; _gemmer = true; });
+    try {
+      await supabase
+          .from('profiles')
+          .update({'spiller_side': v})
+          .eq('id', supabase.auth.currentUser!.id);
+      await widget.onGemt();
+      if (mounted) _snack(context, 'Side gemt', Colors.green);
+    } on PostgrestException catch (e) {
+      if (mounted) {
+        setState(() => _valgt = foer);
+        _snack(context, e.message, Colors.red);
+      }
+    } finally {
+      if (mounted) setState(() => _gemmer = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(children: [
+              Icon(Icons.swap_horiz, color: theme.colorScheme.primary),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text('Min side på banen',
+                    style: theme.textTheme.titleMedium),
+              ),
+              if (_gemmer)
+                const SizedBox(
+                    width: 16, height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2)),
+            ]),
+            const SizedBox(height: 4),
+            Text('Bruges når der stilles hold. Har du ikke sat den, kan '
+                'træneren udfylde den for dig.',
+                style: theme.textTheme.bodySmall),
+            const SizedBox(height: 14),
+            Row(children: [
+              for (final v in const ['venstre', 'hoejre', 'begge'])
+                Builder(builder: (_) {
+                  final info = _sideInfo(v);
+                  final aktiv = _valgt == v;
+                  return Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: GestureDetector(
+                        onTap: _gemmer ? null : () => _saet(v),
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 160),
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            color: aktiv
+                                ? info.farve.withValues(alpha: 0.18)
+                                : _surfaceElevated,
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                                color: aktiv ? info.farve : _borderSubtle),
+                          ),
+                          child: Text(info.fuld,
+                              style: _body(
+                                  size: 13,
+                                  weight: FontWeight.w700,
+                                  color: aktiv ? info.farve : _textSecondary)),
+                        ),
+                      ),
+                    ),
+                  );
+                }),
+            ]),
+            if (_valgt != null)
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton(
+                  onPressed: _gemmer ? null : () => _saet(null),
+                  style: TextButton.styleFrom(foregroundColor: _textMuted),
+                  child: const Text('Ryd valg'),
+                ),
+              ),
+          ],
+        ),
+      ),
     );
   }
 }

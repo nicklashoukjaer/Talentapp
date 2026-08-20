@@ -69,7 +69,7 @@ class _HomeShellState extends State<HomeShell> {
     try {
       final row = await supabase
           .from('profiles')
-          .select('id, navn, email, rolle, makker_prio_1, makker_prio_2')
+          .select('id, navn, email, rolle, makker_prio_1, makker_prio_2, spiller_side')
           .eq('id', userId)
           .single();
       CacheService.put('profile_$userId', row);

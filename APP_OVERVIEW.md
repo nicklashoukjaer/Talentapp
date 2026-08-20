@@ -99,6 +99,8 @@ Bund-navigation (mobil) / sidebar (bred skærm), 4–5 faner afhængigt af rolle
   - Faner **Deltagere / Kommentarer** (antal-badge).
   - Fremmøde-overblik (13b): Tilmeldt · Mangler svar · Afbud (foldet). Rolige
     rækker m. status-prik; staff/kaptajn kan sætte svar for andre.
+    Hver person har et V/H/B-mærkat for banehalvdel ("?" = ikke angivet);
+    staff/kaptajn kan trykke på det og sætte siden.
   - **Afløsere:** staff/kaptajn kan vælge et rigtigt medlem — også fra et
     andet hold — som så tilmeldes, får besked og ser begivenheden i sin egen
     app og kalender. Eller skrive et navn på en uden konto ("Gæst"-badge).
@@ -139,6 +141,8 @@ Bund-navigation (mobil) / sidebar (bred skærm), 4–5 faner afhængigt af rolle
 ### Tab 3 · Min profil
 - Profil-kort (avatar, navn, e-mail, rolle-badge).
 - **Mine faste makkere** (kun holdkammerater) — bruges af synergi-rapporten.
+- **Min side på banen** — venstre / højre / begge. Vises i begivenhedens
+  fremmøde-liste; staff kan udfylde den for dem der ikke selv har.
 - **Skift adgangskode** (selvbetjening).
 - **Push-notifikationer** (aktivér) + **Kalender-synk** (ICS-feed-URL).
 
@@ -200,6 +204,7 @@ skrivning er gated på rolle-helpers (`is_admin()`, `is_staff()`, `is_captain()`
 `is_fine_admin()`, `can_admin_fine()`, `can_manage_event()`).
 
 - **profiles** — id, navn, email, rolle (admin/træner/medlem), makker_prio_1/2,
+  **spiller_side** (venstre/hoejre/begge, null = ikke angivet),
   **kalender_alle_hold** (se nedenfor).
 
 > **kalender_alle_hold** er en undtagelse der kun gælder `.ics`-feedet: personen

@@ -1268,34 +1268,76 @@ class _PollDetailScreenState extends State<PollDetailScreen> {
   }
 }
 
-/// Én linje navne bag et ikon — "Kan: Anders, Bo, Carl".
-class _NavneLinje extends StatelessWidget {
-  final IconData ikon;
+/// Navnene på dem der har valgt en mulighed — som deltagerlisten på en
+/// begivenhed: én række pr. person med avatar, frem for en kommasepareret
+/// linje man skal læse sig igennem.
+class _StemmeListe extends StatelessWidget {
+  final String overskrift;
   final Color farve;
-  final String tekst;
   final List<String> navne;
-  const _NavneLinje({
-    required this.ikon,
+  const _StemmeListe({
+    required this.overskrift,
     required this.farve,
-    required this.tekst,
     required this.navne,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Icon(ikon, size: 15, color: farve),
-      const SizedBox(width: 7),
-      Text('$tekst:',
-          style: _body(size: 12.5, weight: FontWeight.w700, color: farve)),
-      const SizedBox(width: 6),
-      Expanded(
-        child: Text(navne.isEmpty ? 'ingen' : navne.join(', '),
-            style: _body(
-                size: 12.5,
-                color: navne.isEmpty ? _textMuted : _textPrimary)),
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(top: 4),
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
+      decoration: BoxDecoration(
+        color: _bgBlack.withValues(alpha: 0.35),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: _borderSubtle),
       ),
-    ]);
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            Text(overskrift.toUpperCase(),
+                style: _body(
+                    size: 11,
+                    weight: FontWeight.w700,
+                    color: _textSecondary,
+                    spacing: 0.8)),
+            const SizedBox(width: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+              decoration: BoxDecoration(
+                  color: farve.withValues(alpha: 0.16),
+                  borderRadius: BorderRadius.circular(999)),
+              child: Text('${navne.length}',
+                  style: _body(
+                      size: 11, weight: FontWeight.w700, color: farve)),
+            ),
+          ]),
+          const SizedBox(height: 6),
+          if (navne.isEmpty)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Text('Ingen endnu',
+                  style: _body(size: 12.5, color: _textMuted)),
+            )
+          else
+            for (final navn in navne)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 5),
+                child: Row(children: [
+                  _InitialAvatar(navn: navn, size: 30),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(navn,
+                        style: _body(size: 13.5, weight: FontWeight.w600),
+                        maxLines: 1, overflow: TextOverflow.ellipsis),
+                  ),
+                  Icon(Icons.check_circle, size: 16, color: farve),
+                ]),
+              ),
+        ],
+      ),
+    );
   }
 }
 
@@ -1438,11 +1480,10 @@ class _PollCheckRow extends StatelessWidget {
               ),
             ),
             if (udvidet) ...[
-              const SizedBox(height: 10),
-              _NavneLinje(
-                  ikon: Icons.check_circle,
+              const SizedBox(height: 8),
+              _StemmeListe(
+                  overskrift: 'Kan denne dato',
                   farve: _success,
-                  tekst: 'Kan',
                   navne: jaNavne),
               if (onBooket != null) ...[
                 const SizedBox(height: 8),
@@ -1573,11 +1614,10 @@ class _PollTextRow extends StatelessWidget {
               ),
             ),
             if (udvidet) ...[
-              const SizedBox(height: 10),
-              _NavneLinje(
-                  ikon: Icons.check_circle,
+              const SizedBox(height: 8),
+              _StemmeListe(
+                  overskrift: 'Har valgt dette',
                   farve: _success,
-                  tekst: 'Valgt af',
                   navne: jaNavne),
             ],
           ],

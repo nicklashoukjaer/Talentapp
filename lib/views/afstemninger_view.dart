@@ -1173,6 +1173,20 @@ class _PollDetailScreenState extends State<PollDetailScreen> {
                                           total: _totalVoters,
                                           single: !_allowMultiple,
                                           locked: _lukket,
+                                          jaNavne:
+                                              _jaNavne[o['id'] as String] ??
+                                                  const [],
+                                          udvidet: _udvidede
+                                              .contains(o['id'] as String),
+                                          onUdvid: !_canManage
+                                              ? null
+                                              : () => setState(() {
+                                                    final id =
+                                                        o['id'] as String;
+                                                    _udvidede.contains(id)
+                                                        ? _udvidede.remove(id)
+                                                        : _udvidede.add(id);
+                                                  }),
                                           onTap: () {
                                             final id = o['id'] as String;
                                             final sel =
@@ -1469,6 +1483,10 @@ class _PollTextRow extends StatelessWidget {
   final bool single; // true = radio (ét valg), false = checkbox (flere)
   final bool locked;
   final VoidCallback onTap;
+  // Hvem har valgt dette svar. Kun udfyldt for staff/opretter/kaptajn.
+  final List<String> jaNavne;
+  final bool udvidet;
+  final VoidCallback? onUdvid;
   const _PollTextRow({
     required this.label,
     required this.selected,
@@ -1477,6 +1495,9 @@ class _PollTextRow extends StatelessWidget {
     required this.single,
     required this.locked,
     required this.onTap,
+    this.jaNavne = const [],
+    this.udvidet = false,
+    this.onUdvid,
   });
 
   @override
@@ -1511,11 +1532,34 @@ class _PollTextRow extends StatelessWidget {
                       style: _body(size: 14, weight: FontWeight.w600)),
                 ),
                 const SizedBox(width: 8),
-                Text('${(pct * 100).round()}%',
-                    style: _cond(
-                        size: 16,
-                        weight: FontWeight.w800,
-                        color: selected ? _success : _textSecondary)),
+                // Antal frem for procent — "3 af 12" siger mere end "25%" når
+                // man skal træffe en beslutning ud fra det.
+                if (onUdvid == null)
+                  Text('$count',
+                      style: _cond(
+                          size: 16,
+                          weight: FontWeight.w800,
+                          color: selected ? _success : _textSecondary))
+                else
+                  InkWell(
+                    onTap: onUdvid,
+                    borderRadius: BorderRadius.circular(999),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 4),
+                      child: Row(mainAxisSize: MainAxisSize.min, children: [
+                        Text('$count',
+                            style: _cond(
+                                size: 16,
+                                weight: FontWeight.w800,
+                                color:
+                                    selected ? _success : _textSecondary)),
+                        const SizedBox(width: 4),
+                        Icon(udvidet ? Icons.expand_less : Icons.expand_more,
+                            size: 18, color: _textMuted),
+                      ]),
+                    ),
+                  ),
               ],
             ),
             const SizedBox(height: 8),
@@ -1528,6 +1572,14 @@ class _PollTextRow extends StatelessWidget {
                 valueColor: AlwaysStoppedAnimation(barColor),
               ),
             ),
+            if (udvidet) ...[
+              const SizedBox(height: 10),
+              _NavneLinje(
+                  ikon: Icons.check_circle,
+                  farve: _success,
+                  tekst: 'Valgt af',
+                  navne: jaNavne),
+            ],
           ],
         ),
       ),

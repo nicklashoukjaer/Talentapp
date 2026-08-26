@@ -25,10 +25,24 @@ String _fmtDateTime(DateTime d) {
   return '${two(l.day)}.${two(l.month)}.${l.year} ${two(l.hour)}:${two(l.minute)}';
 }
 
+const _ugedage = [
+  'mandag', 'tirsdag', 'onsdag', 'torsdag', 'fredag', 'lørdag', 'søndag'
+];
+
+/// "onsdag 26.08.2026" — ugedagen er det man planlægger efter, så den står
+/// først. DateTime.weekday er 1..7 med mandag som 1.
+String _fmtDatoMedUgedag(DateTime d) {
+  final l = d.toLocal();
+  return '${_ugedage[l.weekday - 1]} ${_fmtDate(l)}';
+}
+
 /// Formatering af en afstemnings-mulighed. Heldags-muligheder har ikke noget
 /// meningsfuldt klokkeslæt (gemt som 00:00), så der vises kun datoen.
-String _fmtOption(DateTime d, {required bool heldags}) =>
-    heldags ? _fmtDate(d) : _fmtDateTime(d);
+/// Ugedagen skrives altid på: skal man vælge kampdage, er det den man kigger
+/// efter — ikke datotallet.
+String _fmtOption(DateTime d, {required bool heldags}) => heldags
+    ? _fmtDatoMedUgedag(d)
+    : '${_fmtDatoMedUgedag(d)} ${_fmtTime(d)}';
 
 /// Læser heldags-flaget af en poll_options-række (mangler på gamle rækker).
 bool _optionHeldags(Map<String, dynamic> o) => o['heldags'] == true;

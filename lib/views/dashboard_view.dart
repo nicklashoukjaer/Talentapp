@@ -3828,8 +3828,6 @@ class _CreateTrainingDialogState extends State<CreateTrainingDialog> {
         : _afstemteDatoer
             .where((d) => valgteNavne.any((n) => d.hold.contains(n)))
             .toList();
-    if (liste.isEmpty) return const SizedBox.shrink();
-
     return Padding(
       padding: const EdgeInsets.only(bottom: 14),
       child: Column(
@@ -3846,7 +3844,10 @@ class _CreateTrainingDialogState extends State<CreateTrainingDialog> {
                     spacing: 0.8)),
           ]),
           const SizedBox(height: 3),
-          Text('Datoer med mindst $_minStemmer der kan. Tryk for at vælge.',
+          Text(
+              liste.isEmpty
+                  ? 'Ingen datoer med mindst $_minStemmer der kan — endnu.'
+                  : 'Datoer med mindst $_minStemmer der kan. Tryk for at vælge.',
               style: _body(size: 11.5, color: _textMuted)),
           const SizedBox(height: 8),
           Wrap(
@@ -3878,7 +3879,7 @@ class _CreateTrainingDialogState extends State<CreateTrainingDialog> {
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           Row(mainAxisSize: MainAxisSize.min, children: [
-                            Text(_fmtDate(d.dato),
+                            Text(_fmtDatoMedUgedag(d.dato),
                                 style: _body(
                                     size: 13,
                                     weight: FontWeight.w700,

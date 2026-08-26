@@ -52,7 +52,8 @@ class _PollDateField extends StatelessWidget {
               labelText: 'Dato',
               prefixIcon: Icon(Icons.event),
             ),
-            child: Text(row.dato == null ? 'Vælg dato' : _fmtDate(row.dato!),
+            child: Text(
+                row.dato == null ? 'Vælg dato' : _fmtDatoMedUgedag(row.dato!),
                 style: TextStyle(color: row.dato == null ? _textMuted : null)),
           ),
         ),

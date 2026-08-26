@@ -129,9 +129,11 @@ Bund-navigation (mobil) / sidebar (bred skærm), 4–5 faner afhængigt af rolle
 - **Afstemnings-detalje:** dato-muligheder m. checkboxes (multi-valg),
   resultat-barer, "Favorit-par pr. dato" (synergi-overblik ud fra profilernes
   faste makkere; gensidige vs. én-vejs, kun staff ser én-vejs).
-- **Bookede kampdatoer**: staff/opretter/kaptajn kan markere en dato som
-  booket kamp (`poll_options.booket`). Mærkatet vises for alle, så holdet
-  kan se hvad der er på plads.
+- **Bookede kampdatoer** (`poll_options.booket`): markeres **automatisk** når
+  der oprettes en kamp (titel indeholder "kamp") på en dato der findes i en
+  afstemning for et af kampens hold — også selvom afstemningen er lukket.
+  Staff/opretter/kaptajn kan også sætte og fjerne den i hånden; automatikken
+  sætter kun, den fjerner aldrig.
 - **Stemme-overblik** (staff/opretter/kaptajn): hvem har stemt og hvad de
   stemte, hvem mangler, og "Påmind X der mangler" — med mulighed for at
   fravælge enkeltpersoner. Trænere for holdet tælles ikke som manglende.
@@ -247,6 +249,9 @@ skrivning er gated på rolle-helpers (`is_admin()`, `is_staff()`, `is_captain()`
 - `send_training_reminders` — manuel "påmind alle der mangler" (hold-bevidst).
 - `send_poll_reminders` — samme for afstemninger; staff/opretter/kaptajn, og
   trænere for holdet springes over.
+- **Triggere på `trainings`:** `marker_booket_kampdato` (auto-booket) og
+  `notify_training_changed` (klokke-besked når titel, tid, sted, frist,
+  pladser eller hold ændres — ikke ved interne felter som synlig_fra).
 - `send_due_reminders` — **pg_cron hvert 15. min**: auto-rykker 48t + 24t før frist
   til hold-medlemmer der mangler svar.
 - `admin_delete_member` — hard-delete af medlem (cascade).

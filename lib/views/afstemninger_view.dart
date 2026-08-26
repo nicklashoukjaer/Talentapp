@@ -1379,11 +1379,22 @@ class _PollCheckRow extends StatelessWidget {
     final theme = Theme.of(context);
     final frac = maxYes == 0 ? 0.0 : yesCount / maxYes;
     final barColor = checked ? _success : _neon;
-    return InkWell(
-      onTap: locked ? null : onToggle,
-      borderRadius: BorderRadius.circular(10),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+    return Container(
+      // Booket dato: hele rækken markeres, så den kan ses på et blik når man
+      // scroller gennem mange datoer.
+      margin: const EdgeInsets.symmetric(vertical: 2),
+      decoration: booket
+          ? BoxDecoration(
+              color: _neon.withValues(alpha: 0.10),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: _neon.withValues(alpha: 0.45)),
+            )
+          : null,
+      child: InkWell(
+        onTap: locked ? null : onToggle,
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
         child: Column(
           children: [
             Row(
@@ -1509,6 +1520,7 @@ class _PollCheckRow extends StatelessWidget {
               ],
             ],
           ],
+          ),
         ),
       ),
     );

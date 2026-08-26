@@ -3832,80 +3832,73 @@ class _CreateTrainingDialogState extends State<CreateTrainingDialog> {
                           ? 'Ingen datoer med mindst $_minStemmer der kan — endnu.'
                           : 'Ingen datoer med mindst $_minStemmer der kan for '
                               'de valgte hold.')
-                      : 'Datoer med mindst $_minStemmer der kan. Tryk for at '
-                          'vælge.',
+                      : 'Datoer hvor mindst $_minStemmer kan. Vælg en, så '
+                          'udfyldes datoen nedenfor.',
               style: _body(
                   size: 11.5,
                   color: _afstemteFejl != null ? _danger : _textMuted)),
           const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              for (final d in liste)
-                Builder(builder: (_) {
-                  final valgt = _dato != null &&
-                      _dato!.year == d.dato.year &&
-                      _dato!.month == d.dato.month &&
-                      _dato!.day == d.dato.day;
-                  return GestureDetector(
-                    onTap: () => setState(() => _dato =
-                        DateTime(d.dato.year, d.dato.month, d.dato.day)),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 11, vertical: 8),
-                      decoration: BoxDecoration(
-                        color: valgt
-                            ? _neon.withValues(alpha: 0.18)
-                            : _surfaceElevated,
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(
-                            color: valgt ? _neon : _borderSubtle),
+          if (liste.isNotEmpty)
+            DropdownButtonFormField<DateTime>(
+              // Kun en dato fra listen kan være valgt; har man selv rettet
+              // datoen bagefter, står feltet tomt igen.
+              initialValue: liste
+                      .map((d) => DateTime(d.dato.year, d.dato.month, d.dato.day))
+                      .contains(_dato == null
+                          ? null
+                          : DateTime(_dato!.year, _dato!.month, _dato!.day))
+                  ? DateTime(_dato!.year, _dato!.month, _dato!.day)
+                  : null,
+              isExpanded: true,
+              dropdownColor: _surfaceElevated,
+              borderRadius: BorderRadius.circular(12),
+              decoration: const InputDecoration(
+                labelText: 'Vælg en afstemt dato',
+                prefixIcon: Icon(Icons.how_to_vote_outlined),
+              ),
+              hint: Text('${liste.length} datoer at vælge mellem',
+                  style: _body(size: 14, color: _textMuted)),
+              items: [
+                for (final d in liste)
+                  DropdownMenuItem<DateTime>(
+                    value: DateTime(d.dato.year, d.dato.month, d.dato.day),
+                    child: Row(children: [
+                      Expanded(
+                        child: Text(
+                          '${_fmtDatoMedUgedag(d.dato)}'
+                          '${d.hold.isEmpty ? '' : ' · ${d.hold}'}',
+                          style: _body(size: 13.5, weight: FontWeight.w600),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
                       ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Row(mainAxisSize: MainAxisSize.min, children: [
-                            Text(_fmtDatoMedUgedag(d.dato),
-                                style: _body(
-                                    size: 13,
-                                    weight: FontWeight.w700,
-                                    color: valgt ? _neon : _textPrimary)),
-                            const SizedBox(width: 7),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 6, vertical: 1),
-                              decoration: BoxDecoration(
-                                color: _success.withValues(alpha: 0.16),
-                                borderRadius: BorderRadius.circular(999),
-                              ),
-                              child: Text('${d.stemmer}',
-                                  style: _body(
-                                      size: 10.5,
-                                      weight: FontWeight.w800,
-                                      color: _success)),
-                            ),
-                            if (d.booket) ...[
-                              const SizedBox(width: 5),
-                              const Icon(Icons.event_available,
-                                  size: 12, color: _gold),
-                            ],
-                          ]),
-                          if (d.hold.isNotEmpty)
-                            Padding(
-                              padding: const EdgeInsets.only(top: 2),
-                              child: Text(d.hold,
-                                  style: _body(
-                                      size: 10.5, color: _textSecondary)),
-                            ),
-                        ],
+                      const SizedBox(width: 8),
+                      if (d.booket)
+                        const Padding(
+                          padding: EdgeInsets.only(right: 6),
+                          child: Icon(Icons.event_available,
+                              size: 14, color: _gold),
+                        ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 7, vertical: 1),
+                        decoration: BoxDecoration(
+                          color: _success.withValues(alpha: 0.16),
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: Text('${d.stemmer}',
+                            style: _body(
+                                size: 11,
+                                weight: FontWeight.w800,
+                                color: _success)),
                       ),
-                    ),
-                  );
-                }),
-            ],
-          ),
+                    ]),
+                  ),
+              ],
+              onChanged: (v) {
+                if (v != null) setState(() => _dato = v);
+              },
+            ),
         ],
       ),
     );

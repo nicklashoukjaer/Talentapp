@@ -86,12 +86,23 @@ function daDateTime(iso: string): string {
 /// admins. null = ingen at sende til, så vi springer kaldet over.
 async function audienceFor(
   rec: Record<string, unknown>,
+  udelad = "",
 ): Promise<Record<string, unknown> | null> {
   const groupIds = groupIdsOf(rec);
   if (groupIds.length === 0) {
-    return { included_segments: ["Total Subscriptions"] };
+    // Klub-bredt. Kan vi ikke udelade én person af et segment, sender vi til
+    // alle — det er stadig bedre end ingen besked.
+    if (!udelad) return { included_segments: ["Total Subscriptions"] };
+    const alle = await restGet(`profiles?select=id`);
+    const ids = alle
+      .map((p) => String(p.id))
+      .filter((id) => id && id !== udelad);
+    if (ids.length === 0) return null;
+    return { include_aliases: { external_id: ids } };
   }
-  const ids = await recipientsForGroups(groupIds);
+  const ids = (await recipientsForGroups(groupIds)).filter((id) =>
+    id !== udelad
+  );
   if (ids.length === 0) return null;
   return { include_aliases: { external_id: ids } };
 }
@@ -142,6 +153,20 @@ Deno.serve(async (req) => {
         ...target,
         headings: { en: "Ny begivenhed 🎾", da: "Ny begivenhed 🎾" },
         contents: { en: `${titel}${when}`, da: `${titel}${when}` },
+      });
+      break;
+    }
+    case "trainings_aendret": {
+      // Ændret begivenhed. Teksten er lavet i databasen, så push og klokke
+      // siger nøjagtig det samme.
+      const titel = (rec.titel as string) ?? "Begivenhed";
+      const hvad = (rec._aendringer as string) ?? "Der er sket en ændring";
+      const target = await audienceFor(rec, String(rec._af ?? ""));
+      if (!target) return new Response("no recipients", { status: 200 });
+      result = await sendPush({
+        ...target,
+        headings: { en: "Ændret 🔁", da: "Ændret 🔁" },
+        contents: { en: `${titel} — ${hvad}`, da: `${titel} — ${hvad}` },
       });
       break;
     }

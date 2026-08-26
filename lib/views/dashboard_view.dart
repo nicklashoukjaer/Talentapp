@@ -3757,6 +3757,171 @@ class _CreateTrainingDialogState extends State<CreateTrainingDialog> {
   static DateTime _combine(DateTime d, TimeOfDay t) =>
       DateTime(d.year, d.month, d.day, t.hour, t.minute);
 
+  /// Datoer fra afstemninger med opbakning nok til at være værd at overveje.
+  /// Hentes én gang når formularen åbnes.
+  List<({DateTime dato, int stemmer, String hold, bool booket})> _afstemteDatoer =
+      const [];
+  static const _minStemmer = 4;
+
+  Future<void> _hentAfstemteDatoer() async {
+    try {
+      final res = await Future.wait([
+        supabase.from('polls').select('id, group_id, group_ids'),
+        supabase.from('poll_options').select('id, poll_id, option_tid, booket'),
+        supabase.from('poll_responses').select('poll_option_id, svar'),
+        supabase.from('groups').select('id, navn'),
+      ]);
+      final polls = List<Map<String, dynamic>>.from(res[0] as List);
+      final options = List<Map<String, dynamic>>.from(res[1] as List);
+      final svar = List<Map<String, dynamic>>.from(res[2] as List);
+      final groups = {
+        for (final g in List<Map<String, dynamic>>.from(res[3] as List))
+          g['id'] as String: g['navn'] as String? ?? ''
+      };
+
+      final ja = <String, int>{};
+      for (final r in svar) {
+        if (r['svar'] == true) {
+          final id = r['poll_option_id'] as String;
+          ja[id] = (ja[id] ?? 0) + 1;
+        }
+      }
+      final pollById = {for (final p in polls) p['id'] as String: p};
+
+      final nu = DateTime.now();
+      final ud = <({DateTime dato, int stemmer, String hold, bool booket})>[];
+      for (final o in options) {
+        final antal = ja[o['id'] as String] ?? 0;
+        if (antal < _minStemmer) continue;
+        final tid = DateTime.parse(o['option_tid'] as String).toLocal();
+        if (tid.isBefore(DateTime(nu.year, nu.month, nu.day))) continue;
+        final p = pollById[o['poll_id'] as String];
+        if (p == null) continue;
+        final gids = _trainingGroupIds(p);
+        ud.add((
+          dato: tid,
+          stemmer: antal,
+          hold: gids.map((g) => groups[g] ?? '').where((n) => n.isNotEmpty).join(' · '),
+          booket: o['booket'] == true,
+        ));
+      }
+      ud.sort((a, b) => a.dato.compareTo(b.dato));
+      if (mounted) setState(() => _afstemteDatoer = ud);
+    } catch (_) {}
+  }
+
+  /// Genvej: vælg en dato der allerede er stemt om, i stedet for at slå op i
+  /// afstemningen og taste den ind bagefter.
+  Widget _afstemteDatoerFelt() {
+    // Er der valgt hold i formularen, vises kun datoer fra de holds
+    // afstemninger — ellers alle.
+    final valgteNavne = _groupIds
+        .map((id) {
+          final g = _groups.firstWhere((g) => g['id'] == id,
+              orElse: () => const <String, dynamic>{});
+          return g['navn'] as String? ?? '';
+        })
+        .where((n) => n.isNotEmpty)
+        .toSet();
+    final liste = valgteNavne.isEmpty
+        ? _afstemteDatoer
+        : _afstemteDatoer
+            .where((d) => valgteNavne.any((n) => d.hold.contains(n)))
+            .toList();
+    if (liste.isEmpty) return const SizedBox.shrink();
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            const Icon(Icons.how_to_vote_outlined, size: 15, color: _neon),
+            const SizedBox(width: 7),
+            Text('FRA AFSTEMNING',
+                style: _body(
+                    size: 11.5,
+                    weight: FontWeight.w700,
+                    color: _textSecondary,
+                    spacing: 0.8)),
+          ]),
+          const SizedBox(height: 3),
+          Text('Datoer med mindst $_minStemmer der kan. Tryk for at vælge.',
+              style: _body(size: 11.5, color: _textMuted)),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final d in liste)
+                Builder(builder: (_) {
+                  final valgt = _dato != null &&
+                      _dato!.year == d.dato.year &&
+                      _dato!.month == d.dato.month &&
+                      _dato!.day == d.dato.day;
+                  return GestureDetector(
+                    onTap: () => setState(() => _dato =
+                        DateTime(d.dato.year, d.dato.month, d.dato.day)),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 11, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: valgt
+                            ? _neon.withValues(alpha: 0.18)
+                            : _surfaceElevated,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                            color: valgt ? _neon : _borderSubtle),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Row(mainAxisSize: MainAxisSize.min, children: [
+                            Text(_fmtDate(d.dato),
+                                style: _body(
+                                    size: 13,
+                                    weight: FontWeight.w700,
+                                    color: valgt ? _neon : _textPrimary)),
+                            const SizedBox(width: 7),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 6, vertical: 1),
+                              decoration: BoxDecoration(
+                                color: _success.withValues(alpha: 0.16),
+                                borderRadius: BorderRadius.circular(999),
+                              ),
+                              child: Text('${d.stemmer}',
+                                  style: _body(
+                                      size: 10.5,
+                                      weight: FontWeight.w800,
+                                      color: _success)),
+                            ),
+                            if (d.booket) ...[
+                              const SizedBox(width: 5),
+                              const Icon(Icons.event_available,
+                                  size: 12, color: _gold),
+                            ],
+                          ]),
+                          if (d.hold.isNotEmpty)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 2),
+                              child: Text(d.hold,
+                                  style: _body(
+                                      size: 10.5, color: _textSecondary)),
+                            ),
+                        ],
+                      ),
+                    ),
+                  );
+                }),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _dateField() {
     return InkWell(
       onTap: () async {
@@ -3810,6 +3975,7 @@ class _CreateTrainingDialogState extends State<CreateTrainingDialog> {
       if (mounted) setState(() {});
     });
     _loadGroups();
+    _hentAfstemteDatoer();
   }
 
   Future<void> _loadGroups() async {
@@ -4145,6 +4311,7 @@ class _CreateTrainingDialogState extends State<CreateTrainingDialog> {
                 ),
                 const SizedBox(height: 20),
                 _fieldGroup('DATO & TIDSPUNKT', [
+                  _afstemteDatoerFelt(),
                   _dateField(),
                   const SizedBox(height: 10),
                   Row(children: [

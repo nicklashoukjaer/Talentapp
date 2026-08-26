@@ -3759,74 +3759,54 @@ class _CreateTrainingDialogState extends State<CreateTrainingDialog> {
 
   /// Datoer fra afstemninger med opbakning nok til at være værd at overveje.
   /// Hentes én gang når formularen åbnes.
-  List<({DateTime dato, int stemmer, String hold, bool booket})> _afstemteDatoer =
-      const [];
+  List<({
+    DateTime dato,
+    int stemmer,
+    String hold,
+    bool booket,
+    Set<String> holdIds
+  })> _afstemteDatoer = const [];
+  String? _afstemteFejl;
   static const _minStemmer = 4;
 
   Future<void> _hentAfstemteDatoer() async {
     try {
-      final res = await Future.wait([
-        supabase.from('polls').select('id, group_id, group_ids'),
-        supabase.from('poll_options').select('id, poll_id, option_tid, booket'),
-        supabase.from('poll_responses').select('poll_option_id, svar'),
-        supabase.from('groups').select('id, navn'),
-      ]);
-      final polls = List<Map<String, dynamic>>.from(res[0] as List);
-      final options = List<Map<String, dynamic>>.from(res[1] as List);
-      final svar = List<Map<String, dynamic>>.from(res[2] as List);
-      final groups = {
-        for (final g in List<Map<String, dynamic>>.from(res[3] as List))
-          g['id'] as String: g['navn'] as String? ?? ''
-      };
-
-      final ja = <String, int>{};
-      for (final r in svar) {
-        if (r['svar'] == true) {
-          final id = r['poll_option_id'] as String;
-          ja[id] = (ja[id] ?? 0) + 1;
-        }
-      }
-      final pollById = {for (final p in polls) p['id'] as String: p};
-
-      final nu = DateTime.now();
-      final ud = <({DateTime dato, int stemmer, String hold, bool booket})>[];
-      for (final o in options) {
-        final antal = ja[o['id'] as String] ?? 0;
-        if (antal < _minStemmer) continue;
-        final tid = DateTime.parse(o['option_tid'] as String).toLocal();
-        if (tid.isBefore(DateTime(nu.year, nu.month, nu.day))) continue;
-        final p = pollById[o['poll_id'] as String];
-        if (p == null) continue;
-        final gids = _trainingGroupIds(p);
+      final rows = await supabase.rpc('afstemte_datoer',
+          params: {'p_min': _minStemmer});
+      final ud = <({
+        DateTime dato,
+        int stemmer,
+        String hold,
+        bool booket,
+        Set<String> holdIds
+      })>[];
+      for (final r in List<Map<String, dynamic>>.from(rows as List)) {
         ud.add((
-          dato: tid,
-          stemmer: antal,
-          hold: gids.map((g) => groups[g] ?? '').where((n) => n.isNotEmpty).join(' · '),
-          booket: o['booket'] == true,
+          dato: DateTime.parse(r['dato'] as String).toLocal(),
+          stemmer: (r['stemmer'] as num).toInt(),
+          hold: r['hold'] as String? ?? '',
+          booket: r['booket'] == true,
+          holdIds: ((r['hold_ids'] as List?) ?? const [])
+              .map((e) => e.toString())
+              .toSet(),
         ));
       }
-      ud.sort((a, b) => a.dato.compareTo(b.dato));
       if (mounted) setState(() => _afstemteDatoer = ud);
-    } catch (_) {}
+    } catch (e) {
+      // Fejler opslaget, siger feltet det — frem for at stå tomt uden grund.
+      if (mounted) setState(() => _afstemteFejl = '$e');
+    }
   }
 
   /// Genvej: vælg en dato der allerede er stemt om, i stedet for at slå op i
   /// afstemningen og taste den ind bagefter.
   Widget _afstemteDatoerFelt() {
     // Er der valgt hold i formularen, vises kun datoer fra de holds
-    // afstemninger — ellers alle.
-    final valgteNavne = _groupIds
-        .map((id) {
-          final g = _groups.firstWhere((g) => g['id'] == id,
-              orElse: () => const <String, dynamic>{});
-          return g['navn'] as String? ?? '';
-        })
-        .where((n) => n.isNotEmpty)
-        .toSet();
-    final liste = valgteNavne.isEmpty
+    // afstemninger — sammenlignet på ID, ikke på holdnavne som tekst.
+    final liste = _groupIds.isEmpty
         ? _afstemteDatoer
         : _afstemteDatoer
-            .where((d) => valgteNavne.any((n) => d.hold.contains(n)))
+            .where((d) => d.holdIds.any(_groupIds.contains))
             .toList();
     return Padding(
       padding: const EdgeInsets.only(bottom: 14),
@@ -3845,10 +3825,18 @@ class _CreateTrainingDialogState extends State<CreateTrainingDialog> {
           ]),
           const SizedBox(height: 3),
           Text(
-              liste.isEmpty
-                  ? 'Ingen datoer med mindst $_minStemmer der kan — endnu.'
-                  : 'Datoer med mindst $_minStemmer der kan. Tryk for at vælge.',
-              style: _body(size: 11.5, color: _textMuted)),
+              _afstemteFejl != null
+                  ? 'Kunne ikke hente datoerne: $_afstemteFejl'
+                  : liste.isEmpty
+                      ? (_groupIds.isEmpty
+                          ? 'Ingen datoer med mindst $_minStemmer der kan — endnu.'
+                          : 'Ingen datoer med mindst $_minStemmer der kan for '
+                              'de valgte hold.')
+                      : 'Datoer med mindst $_minStemmer der kan. Tryk for at '
+                          'vælge.',
+              style: _body(
+                  size: 11.5,
+                  color: _afstemteFejl != null ? _danger : _textMuted)),
           const SizedBox(height: 8),
           Wrap(
             spacing: 8,

@@ -328,6 +328,100 @@ class _HomeShellState extends State<HomeShell> {
     _paletteOpen = false;
   }
 
+  // ───────────────────────────────────────────────────────────────────────
+  // PC-visning
+  // ───────────────────────────────────────────────────────────────────────
+
+  /// Tomt filter til faner der ikke har et hold-filter — så sidebaren har
+  /// noget at lytte på uden at skulle kende til null.
+  final ValueNotifier<HoldFilterModel?> _intetFilter =
+      ValueNotifier<HoldFilterModel?>(null);
+
+  /// Den aktive fanes hold-filter. Faner uden filter giver null, og så
+  /// udelader sidebaren afsnittet helt.
+  ValueListenable<HoldFilterModel?>? _holdFilterFor(int idx) => switch (idx) {
+        _tabOversigt => _oversigtKey.currentState?.holdFilterNotifier,
+        _tabAfstemning => _afstemningerKey.currentState?.holdFilterNotifier,
+        _tabBoede => _bodekasseKey.currentState?.holdFilterNotifier,
+        _ => null,
+      };
+
+  /// Fanens egne handlinger yderst i topbaren — samme muligheder som mobilens
+  /// FAB, bare placeret hvor man kigger på en PC.
+  List<Widget> _topbarHandlinger(int idx) {
+    Widget knap(IconData ikon, String tekst, VoidCallback onTap,
+        {bool primaer = true}) {
+      return Material(
+        color: primaer ? _neon : Colors.transparent,
+        borderRadius: BorderRadius.circular(12),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(12),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(12),
+              border: primaer ? null : Border.all(color: _borderSubtle),
+            ),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              Icon(ikon,
+                  size: 15, color: primaer ? Colors.white : _textSecondary),
+              const SizedBox(width: 7),
+              Text(tekst,
+                  style: _body(
+                      size: 13,
+                      weight: FontWeight.w700,
+                      color: primaer ? Colors.white : _textSecondary)),
+            ]),
+          ),
+        ),
+      );
+    }
+
+    if ((idx == _tabOversigt || idx == _tabDashboard) && _canCreate) {
+      return [
+        knap(Icons.how_to_vote, 'Ny afstemning', _quickCreatePoll,
+            primaer: false),
+        knap(Icons.add, 'Opret begivenhed', _quickCreateTraining),
+      ];
+    }
+    if (idx == _tabAfstemning && _canCreate) {
+      return [knap(Icons.add, 'Ny afstemning', _quickCreatePoll)];
+    }
+    if (idx == _tabBoede && (_isStaff || _isCaptain)) {
+      return [knap(Icons.gavel, 'Uddel bøde', _quickGiveFine)];
+    }
+    return const [];
+  }
+
+  Widget _desktopBody(
+      List<({IconData icon, IconData selectedIcon, String label})> navItems,
+      List<Widget> pages) {
+    final idx = _selectedIndex.clamp(0, pages.length - 1);
+    final filter = _holdFilterFor(idx);
+    // Første frame efter et faneskift findes fanens State endnu ikke, så
+    // filteret ville mangle i sidebaren. Ét skub når den er på plads — det
+    // stopper af sig selv, fordi betingelsen så ikke længere holder.
+    if (filter == null &&
+        (idx == _tabOversigt || idx == _tabAfstemning || idx == _tabBoede)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) setState(() {});
+      });
+    }
+    return _DesktopShell(
+      navItems: navItems,
+      selectedIndex: idx,
+      onSelect: _gotoTab,
+      titel: navItems[idx].label,
+      topbarHandlinger: _topbarHandlinger(idx),
+      bell: _NotificationsBell(isStaff: _isStaff, onGotoTab: _gotoTab),
+      onOpenPalette: _openPalette,
+      onLogout: _logout,
+      holdFilter: filter ?? _intetFilter,
+      child: IndexedStack(index: idx, children: pages),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_loading) {
@@ -359,8 +453,12 @@ class _HomeShellState extends State<HomeShell> {
       if (_isStaff) DashboardTab(key: _dashboardKey, isFullAdmin: _isAdmin),
     ];
 
+    // PC-visning fra 1100 px og op. Under grænsen er alt herunder uændret —
+    // både mobilen og den eksisterende NavigationRail fra 700 px.
+    final desktop = isDesktop(context);
+
     return Scaffold(
-      appBar: AppBar(
+      appBar: desktop ? null : AppBar(
         title: const FittedBox(
           fit: BoxFit.scaleDown,
           alignment: Alignment.centerLeft,
@@ -420,7 +518,9 @@ class _HomeShellState extends State<HomeShell> {
           const SizedBox(width: 8),
         ],
       ),
-      body: () {
+      body: desktop
+          ? _desktopBody(navItems, pages)
+          : () {
         final selIdx = _selectedIndex.clamp(0, pages.length - 1);
         final wide = MediaQuery.of(context).size.width >= 700;
         final content = IndexedStack(index: selIdx, children: pages);
@@ -448,7 +548,7 @@ class _HomeShellState extends State<HomeShell> {
       // Kontekstuel hurtig-opret pr. fane:
       //  Oversigt → begivenhed/afstemning · Afstemninger → ny afstemning ·
       //  Bødekasse → uddel bøde (kun admin).
-      floatingActionButton: () {
+      floatingActionButton: desktop ? null : () {
         final idx = _selectedIndex.clamp(0, pages.length - 1);
         if ((idx == _tabOversigt || idx == _tabDashboard) && _canCreate) {
           return _CreateSpeedDial(
@@ -475,7 +575,7 @@ class _HomeShellState extends State<HomeShell> {
         }
         return null;
       }(),
-      bottomNavigationBar: MediaQuery.of(context).size.width >= 700
+      bottomNavigationBar: desktop || MediaQuery.of(context).size.width >= 700
           ? null
           // Baggrund dækker helt ned i bunden; SafeArea skubber selve nav-baren
           // op over iPhonens home-indicator, så labels ikke skæres af.

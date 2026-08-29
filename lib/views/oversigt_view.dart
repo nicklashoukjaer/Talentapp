@@ -53,7 +53,8 @@ bool _showInKampTab(String titel) {
   return c.kamp || (!c.training && !c.kamp);
 }
 
-class _OversigtTabState extends State<OversigtTab> {
+class _OversigtTabState extends State<OversigtTab>
+    with HoldFilterKilde<OversigtTab> {
   List<_FeedItem> _items = const [];
   bool _loading = true;
   String? _error;
@@ -618,6 +619,44 @@ class _OversigtTabState extends State<OversigtTab> {
   /// Er der et aktivt hold-filter (bruges af tragt-badgen i app-headeren)?
   bool get holdFilterActive => _switcherGroupId != null || _allTeams;
 
+  /// Samme valgmuligheder som mobilens tragt-sheet, men som data PC-sidebaren
+  /// kan tegne. State'en er den samme (`_switcherGroupId` / `_allTeams`), så
+  /// de to indgange kan ikke komme ud af trit.
+  HoldFilterModel? get holdFilter {
+    final mine = _groups.where((g) => _myGroupIds.contains(g['id'])).toList();
+    final andre =
+        _groups.where((g) => !_myGroupIds.contains(g['id'])).toList();
+    final canSeeAll = widget.isFullAdmin;
+    if (mine.isEmpty && !canSeeAll) return null;
+
+    HoldFilterEntry af(Map<String, dynamic> g) => HoldFilterEntry(
+          id: g['id'] as String,
+          navn: g['navn'] as String,
+          farve: holdFarve(g['farve']),
+        );
+
+    return HoldFilterModel(
+      mine: [
+        if (mine.isNotEmpty)
+          const HoldFilterEntry(id: null, navn: 'Alle mine hold', farve: _neon),
+        ...mine.map(af),
+      ],
+      klub: canSeeAll
+          ? [
+              const HoldFilterEntry(
+                  id: null, navn: 'Alle klubbens hold', farve: _gold),
+              ...andre.map(af),
+            ]
+          : const [],
+      erValgt: (id, {required klub}) =>
+          _switcherGroupId == id && _allTeams == klub,
+      vaelg: (id, {required klub}) => setState(() {
+        _switcherGroupId = id;
+        _allTeams = klub;
+      }),
+    );
+  }
+
   /// Åbner hold-filteret som bundsheet — kaldes af tragt-ikonet i app-headeren.
   Future<void> showHoldFilterSheet() async {
     final myGroups =
@@ -817,8 +856,165 @@ class _OversigtTabState extends State<OversigtTab> {
     return out;
   }
 
+  // ── PC-visning ─────────────────────────────────────────────────────────
+  //
+  // Samme kort, samme data, samme handlinger som på mobilen — kun opstillingen
+  // er anderledes. Mobilen rammer aldrig disse metoder.
+
+  /// Måneds-skillere som i mobilens liste, men med kortene sat op i et gitter.
+  /// Kort af forskellig højde toppstilles, så rækkerne ikke hopper.
+  List<Widget> _maanedsGitter(List<_FeedItem> items, {int kolonner = 2}) {
+    final out = <Widget>[];
+    final buffer = <_FeedItem>[];
+
+    void tomBuffer() {
+      for (var i = 0; i < buffer.length; i += kolonner) {
+        final raekke = buffer.skip(i).take(kolonner).toList();
+        out.add(Padding(
+          padding: const EdgeInsets.only(bottom: 14),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              for (var k = 0; k < kolonner; k++) ...[
+                if (k > 0) const SizedBox(width: 14),
+                Expanded(
+                  child: k < raekke.length
+                      ? RepaintBoundary(child: _feedCard(raekke[k]))
+                      : const SizedBox.shrink(),
+                ),
+              ],
+            ],
+          ),
+        ));
+      }
+      buffer.clear();
+    }
+
+    String? sidste;
+    for (final item in items) {
+      if (item is _TrainingFeedItem) {
+        final m = _monthLabel(
+            DateTime.parse(item.training['start_tid'] as String).toLocal());
+        if (m != sidste) {
+          tomBuffer();
+          sidste = m;
+          out.add(_monthDivider(m));
+        }
+      }
+      buffer.add(item);
+    }
+    tomBuffer();
+    return out;
+  }
+
+  /// På PC lægges feedet i venstre spalte med et sidepanel til højre.
+  /// Er det ikke PC, returneres indholdet fuldstændig uændret.
+  Widget _pcRamme(bool pc, List<_PollFeedItem> polls, Widget indhold) {
+    if (!pc) return indhold;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(child: indhold),
+        const SizedBox(width: 24),
+        SizedBox(width: 360, child: _pcSidepanel(polls)),
+      ],
+    );
+  }
+
+  /// Højrespalten: afstemninger man mangler at forholde sig til, og hvilke
+  /// hold man kigger på. På mobilen er der ikke plads — her er der.
+  Widget _pcSidepanel(List<_PollFeedItem> polls) {
+    Widget overskrift(String t) => Padding(
+          padding: const EdgeInsets.only(bottom: 10),
+          child: Text(t,
+              style: _body(
+                  size: 11,
+                  weight: FontWeight.w700,
+                  spacing: 0.6,
+                  color: _textMuted)),
+        );
+
+    final mine = _groups.where((g) => _myGroupIds.contains(g['id'])).toList();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        overskrift('ÅBNE AFSTEMNINGER'),
+        // Tegnes altid — også når der ingen er — så det ikke ligner at
+        // afstemninger mangler på PC'en.
+        if (polls.isEmpty)
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: _surfaceDark,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: _borderSubtle),
+            ),
+            child: Row(children: [
+              const Icon(Icons.how_to_vote_outlined,
+                  size: 20, color: _textMuted),
+              const SizedBox(width: 11),
+              Expanded(
+                child: Text('Ingen åbne afstemninger lige nu',
+                    style: _body(size: 12.5, color: _textSecondary)),
+              ),
+            ]),
+          )
+        else
+          for (final p in polls)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 14),
+              child: RepaintBoundary(child: _feedCard(p)),
+            ),
+        const SizedBox(height: 22),
+        overskrift(_allTeams ? 'KLUBBENS HOLD' : 'MINE HOLD'),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+          decoration: BoxDecoration(
+            color: _surfaceDark,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: _borderSubtle),
+          ),
+          child: Column(
+            children: [
+              if ((_allTeams ? _groups : mine).isEmpty)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                  child: Text('Du er ikke på noget hold endnu',
+                      style: _body(size: 12.5, color: _textSecondary)),
+                ),
+              for (final g in (_allTeams ? _groups : mine))
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 9),
+                  child: Row(children: [
+                    Container(
+                      width: 9,
+                      height: 9,
+                      decoration: BoxDecoration(
+                          color: holdFarve(g['farve']), shape: BoxShape.circle),
+                    ),
+                    const SizedBox(width: 11),
+                    Expanded(
+                      child: Text(g['navn'] as String,
+                          overflow: TextOverflow.ellipsis,
+                          style: _body(size: 13, weight: FontWeight.w600)),
+                    ),
+                    if (_switcherGroupId == g['id'])
+                      const Icon(Icons.filter_list, size: 14, color: _neon),
+                  ]),
+                ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    // Meld filteret til PC-sidebaren. Sker før alle tidlige returns, så
+    // filteret ikke forsvinder mens der loades eller er tomt.
+    meldHoldFilter(holdFilter);
     final theme = Theme.of(context);
     if (_loading) return _loadingSkeleton();
     if (_error != null) return _ErrorView(error: _error!, onRetry: reload);
@@ -872,6 +1068,7 @@ class _OversigtTabState extends State<OversigtTab> {
         _showInKampTab(t.training['titel'] as String)).toList();
 
     final showingTrainings = _activeView == 0;
+    final pc = isDesktop(context);
     final List<_FeedItem> visible;
     if (showingTrainings) {
       visible = switch (_activitySubview) {
@@ -886,12 +1083,17 @@ class _OversigtTabState extends State<OversigtTab> {
     return RefreshIndicator(
       onRefresh: reload,
       child: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
+        padding: pc
+            ? const EdgeInsets.fromLTRB(22, 18, 22, 40)
+            : const EdgeInsets.fromLTRB(16, 16, 16, 96),
         children: [
           Center(
             child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 760),
-              child: Column(
+              constraints: BoxConstraints(maxWidth: pc ? 1500 : 760),
+              child: _pcRamme(
+                pc,
+                polls,
+                Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   // Ingen in-body titel: app-headeren viser "DE TALENTLØSE
@@ -1012,7 +1214,9 @@ class _OversigtTabState extends State<OversigtTab> {
                     if (!(showingTrainings && _showHistory &&
                         MediaQuery.of(context).size.width >= 700))
                       ...(showingTrainings && !_showHistory
-                          ? _interleaveMonths(visible.skip(1).toList())
+                          ? (pc
+                              ? _maanedsGitter(visible.skip(1).toList())
+                              : _interleaveMonths(visible.skip(1).toList()))
                           : visible.map((item) => RepaintBoundary(
                               child: Padding(
                                 padding: const EdgeInsets.only(bottom: 14),
@@ -1020,6 +1224,7 @@ class _OversigtTabState extends State<OversigtTab> {
                               )))),
                   ],
                 ],
+              ),
               ),
             ),
           ),

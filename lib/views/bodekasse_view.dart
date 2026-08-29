@@ -10,7 +10,8 @@ class BodekasseTab extends StatefulWidget {
   State<BodekasseTab> createState() => BodekasseTabState();
 }
 
-class BodekasseTabState extends State<BodekasseTab> {
+class BodekasseTabState extends State<BodekasseTab>
+    with HoldFilterKilde<BodekasseTab> {
   List<Map<String, dynamic>> _rows = const [];
   List<Map<String, dynamic>> _groups = const [];
   Map<String, Set<String>> _memberIdsByGroup = {}; // group_id → medlemmers user_id
@@ -213,9 +214,14 @@ class BodekasseTabState extends State<BodekasseTab> {
 
   /// Takstbladet — hvad kan man få en bøde for, og hvad koster det.
   /// Viser klub-brede takster plus dem der gælder ens eget fællesskab.
-  Future<void> _visTakstblad() async {
+  /// Takstbladets opdeling — fælles takster først, derefter pr. fællesskab.
+  /// Delt af bundsheet'et (mobil) og panelet i PC-visningen, så de to ikke
+  /// kan komme til at vise forskellige takster.
+  ({
+    List<Map<String, dynamic>> faelles,
+    Map<String, List<Map<String, dynamic>>> prGruppe
+  }) _takstGrupper() {
     final mine = _typesForCommunities(_fineTypes, _myGroupIds);
-    // Gruppér: fælles først, derefter pr. fællesskab.
     final faelles = mine
         .where((t) => t['hold_group_id'] == null && t['group_id'] == null)
         .toList();
@@ -227,50 +233,154 @@ class BodekasseTabState extends State<BodekasseTab> {
           : 'solo:${t['group_id']}';
       (prGruppe[key] ??= []).add(t);
     }
-    String navnFor(String key) {
-      final g = _groups.firstWhere((g) => g['id'] == key,
-          orElse: () => const <String, dynamic>{});
-      return (g['navn'] as String?) ?? 'Dit hold';
-    }
+    return (faelles: faelles, prGruppe: prGruppe);
+  }
+
+  String _takstGruppeNavn(String key) {
+    final g = _groups.firstWhere((g) => g['id'] == key,
+        orElse: () => const <String, dynamic>{});
+    return (g['navn'] as String?) ?? 'Dit hold';
+  }
+
+  /// Én takst: titel (+ evt. "opkræves automatisk") og beløb.
+  Widget _takstRaekke(Map<String, dynamic> t) {
+    final erAuto = _noShowAuto && t['id'] == _noShowTypeId;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 9),
+      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(t['titel'] as String? ?? '',
+                  style: _body(size: 14, weight: FontWeight.w600)),
+              if (erAuto) ...[
+                const SizedBox(height: 3),
+                Row(children: [
+                  const Icon(Icons.bolt, size: 13, color: _gold),
+                  const SizedBox(width: 4),
+                  Text('Opkræves automatisk',
+                      style: _body(
+                          size: 11, weight: FontWeight.w600, color: _gold)),
+                ]),
+              ],
+            ],
+          ),
+        ),
+        const SizedBox(width: 12),
+        Text(_fmtKr((t['belob_oere'] as num).toInt()),
+            style: _cond(size: 17, weight: FontWeight.w800)),
+      ]),
+    );
+  }
+
+  // ── PC-visning ───────────────────────────────────────────────────────────
+
+  /// På PC står ranglisten til venstre og takstbladet fast til højre.
+  /// Er det ikke PC, returneres indholdet fuldstændig uændret.
+  Widget _pcRamme(bool pc, Widget indhold) {
+    if (!pc) return indhold;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(child: indhold),
+        const SizedBox(width: 24),
+        SizedBox(width: 320, child: _takstbladPanel()),
+      ],
+    );
+  }
+
+
+  /// Takstbladet som fast spalte. Samme takster som bundsheet'et — her er der
+  /// bare plads til at have dem fremme hele tiden.
+  Widget _takstbladPanel() {
+    final grupper = _takstGrupper();
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 10),
+      decoration: BoxDecoration(
+        color: _surfaceDark,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: _borderSubtle),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(children: [
+            Container(
+              width: 34,
+              height: 34,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: _gold.withValues(alpha: 0.16),
+                borderRadius: BorderRadius.circular(11),
+              ),
+              child: const Icon(Icons.receipt_long, color: _gold, size: 17),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text('TAKSTBLAD',
+                  style: _cond(size: 18, weight: FontWeight.w800)),
+            ),
+          ]),
+          const SizedBox(height: 8),
+          // Tegnes altid — også tomt — så det ikke ligner at takstbladet
+          // mangler på PC'en.
+          if (grupper.faelles.isEmpty && grupper.prGruppe.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 10),
+              child: Text('Der er ikke oprettet nogen bødetyper endnu',
+                  style: _body(size: 12.5, color: _textSecondary)),
+            ),
+          if (grupper.prGruppe.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 2),
+              child: Text('FÆLLES FOR KLUBBEN',
+                  style: _body(
+                      size: 11,
+                      weight: FontWeight.w700,
+                      color: _textMuted,
+                      spacing: 1)),
+            ),
+          for (final t in grupper.faelles) _takstRaekke(t),
+          for (final e in grupper.prGruppe.entries) ...[
+            const SizedBox(height: 8),
+            Text(_takstGruppeNavn(e.key).toUpperCase(),
+                style: _body(
+                    size: 11,
+                    weight: FontWeight.w700,
+                    color: _textMuted,
+                    spacing: 1)),
+            for (final t in e.value) _takstRaekke(t),
+          ],
+          const Divider(height: 22, color: _borderSubtle),
+          TextButton.icon(
+            onPressed: () => showDialog<bool>(
+              context: context,
+              builder: (_) => const SuggestFineTypeDialog(),
+            ),
+            icon: const Icon(Icons.lightbulb_outline, size: 16),
+            label: const Text('Foreslå en bødetype'),
+            style: TextButton.styleFrom(foregroundColor: _textSecondary),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _visTakstblad() async {
+    final grupper = _takstGrupper();
+    final faelles = grupper.faelles;
+    final prGruppe = grupper.prGruppe;
+    String navnFor(String key) => _takstGruppeNavn(key);
 
     await showModalBottomSheet<void>(
       context: context,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
       builder: (ctx) {
-        Widget takst(Map<String, dynamic> t) {
-          final erAuto = _noShowAuto && t['id'] == _noShowTypeId;
-          return Padding(
-            padding: const EdgeInsets.symmetric(vertical: 9),
-            child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(t['titel'] as String? ?? '',
-                        style: _body(size: 14, weight: FontWeight.w600)),
-                    if (erAuto) ...[
-                      const SizedBox(height: 3),
-                      Row(children: [
-                        const Icon(Icons.bolt, size: 13, color: _gold),
-                        const SizedBox(width: 4),
-                        Text('Opkræves automatisk',
-                            style: _body(
-                                size: 11,
-                                weight: FontWeight.w600,
-                                color: _gold)),
-                      ]),
-                    ],
-                  ],
-                ),
-              ),
-              const SizedBox(width: 12),
-              Text(_fmtKr((t['belob_oere'] as num).toInt()),
-                  style: _cond(size: 17, weight: FontWeight.w800)),
-            ]),
-          );
-        }
+        Widget takst(Map<String, dynamic> t) => _takstRaekke(t);
 
         return SafeArea(
           top: false,
@@ -354,6 +464,51 @@ class BodekasseTabState extends State<BodekasseTab> {
           ),
         );
       },
+    );
+  }
+
+  /// Samme valg som tragt-sheet'et herunder, men som data PC-sidebaren kan
+  /// tegne. Deler `_selectedGroupIds`, så de to indgange ikke kan komme ud af
+  /// trit — og admin beholder sit multi-valg.
+  HoldFilterModel? get holdFilter {
+    final mine =
+        _groups.where((g) => _myGroupIds.contains(g['id'] as String)).toList();
+    final andre = widget.isAdmin
+        ? _groups.where((g) => !_myGroupIds.contains(g['id'] as String)).toList()
+        : const <Map<String, dynamic>>[];
+    if (mine.isEmpty && andre.isEmpty) return null;
+    final multi = widget.isAdmin;
+
+    HoldFilterEntry af(Map<String, dynamic> g) => HoldFilterEntry(
+          id: g['id'] as String,
+          navn: g['navn'] as String,
+          farve: holdFarve(g['farve']),
+        );
+
+    return HoldFilterModel(
+      multi: multi,
+      mine: [
+        HoldFilterEntry(
+            id: null,
+            navn: widget.isAdmin ? 'Alle hold' : 'Alle mine hold',
+            farve: _neon),
+        ...mine.map(af),
+      ],
+      klub: andre.map(af).toList(),
+      erValgt: (id, {required klub}) => id == null
+          ? _selectedGroupIds.isEmpty
+          : _selectedGroupIds.contains(id),
+      vaelg: (id, {required klub}) => setState(() {
+        if (id == null) {
+          _selectedGroupIds.clear();
+        } else if (multi) {
+          if (!_selectedGroupIds.add(id)) _selectedGroupIds.remove(id);
+        } else {
+          _selectedGroupIds
+            ..clear()
+            ..add(id);
+        }
+      }),
     );
   }
 
@@ -469,6 +624,9 @@ class BodekasseTabState extends State<BodekasseTab> {
 
   @override
   Widget build(BuildContext context) {
+    // Meld filteret til PC-sidebaren. Sker før alle tidlige returns, så
+    // filteret ikke forsvinder mens der loades eller er tomt.
+    meldHoldFilter(holdFilter);
     if (_loading) return _loadingSkeleton();
     if (_error != null) return _ErrorView(error: _error!, onRetry: reload);
 
@@ -500,18 +658,25 @@ class BodekasseTabState extends State<BodekasseTab> {
                     .contains(r['id'] as String))))
         .toList();
 
+    final pc = isDesktop(context);
+
     return RefreshIndicator(
       onRefresh: reload,
       child: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
+        padding: pc
+            ? const EdgeInsets.fromLTRB(22, 18, 22, 40)
+            : const EdgeInsets.fromLTRB(16, 16, 16, 96),
         children: [
           Center(
             child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 720),
-              child: Column(
+              constraints: BoxConstraints(maxWidth: pc ? 1400 : 720),
+              child: _pcRamme(
+                pc,
+                Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Padding(
+                  if (!pc)
+                    Padding(
                     padding: const EdgeInsets.only(bottom: 16, top: 4),
                     child: Row(children: [
                       const Text('🏆', style: TextStyle(fontSize: 22)),
@@ -530,7 +695,7 @@ class BodekasseTabState extends State<BodekasseTab> {
                   ),
                   // Takstblad — øverst, så man kan nå det INDEN man dummer sig,
                   // og ikke først efter at have scrollet forbi hele ranglisten.
-                  if (_fineTypes.isNotEmpty)
+                  if (_fineTypes.isNotEmpty && !pc)
                     Padding(
                       padding: const EdgeInsets.only(bottom: 18),
                       child: InkWell(
@@ -626,6 +791,7 @@ class BodekasseTabState extends State<BodekasseTab> {
                     ),
                   ],
                 ],
+              ),
               ),
             ),
           ),

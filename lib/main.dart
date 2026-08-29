@@ -5,6 +5,7 @@ import 'dart:math';
 import 'platform_io.dart';
 
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -14,6 +15,7 @@ import 'package:onesignal_flutter/onesignal_flutter.dart';
 
 part 'core/theme.dart';
 part 'core/utils.dart';
+part 'core/responsive.dart';
 part 'services/supabase_service.dart';
 part 'services/cache_service.dart';
 part 'services/config_service.dart';
@@ -23,6 +25,7 @@ part 'models/feed_models.dart';
 part 'models/models.dart';
 part 'views/login_view.dart';
 part 'views/home_shell.dart';
+part 'views/desktop_shell.dart';
 part 'views/oversigt_view.dart';
 part 'views/profile_view.dart';
 part 'views/traeninger_view.dart';

@@ -268,7 +268,12 @@ class DashboardTabState extends State<DashboardTab> {
               children: [
                 Center(
                   child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 760),
+                    // Medlemmer & hold står i to spalter på PC og har derfor
+                    // brug for hele bredden; resten er som før.
+                    constraints: BoxConstraints(
+                        maxWidth: isDesktop(context) && _openSection == 'members'
+                            ? 1400
+                            : 760),
                     child: switch (_openSection) {
                       'members' => _buildMembersSection(),
                       'mobilepay' => const _MobilePayConfigCard(),
@@ -1423,6 +1428,204 @@ class _MembersAdminViewState extends State<_MembersAdminView> {
     );
   }
 
+  /// Hold-detaljen. På mobilen erstatter den listen; på PC står den i
+  /// højre spalte, så medlemslisten bliver stående ved siden af.
+  Widget _holdDetalje(List<Map<String, dynamic>> noTeam) {
+    final isNone = _teamOpen == 'none';
+    final g = isNone
+        ? null
+        : _groups.firstWhere((g) => g['id'] == _teamOpen,
+            orElse: () => const {});
+    // Spillere og trænere vises hver for sig; trænere tæller ikke med i
+    // "X spillere".
+    final teamPlayers = isNone ? noTeam : _playersOf(_teamOpen!);
+    final teamTrainers = isNone
+        ? const <Map<String, dynamic>>[]
+        : _trainersOf(_teamOpen!);
+    final dotColor =
+        isNone ? _gold : _groupHex(g?['farve'] as String?);
+    final name = isNone ? 'Uden hold' : (g?['navn'] as String? ?? '');
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(children: [
+          InkWell(
+            onTap: () => setState(() => _teamOpen = null),
+            borderRadius: BorderRadius.circular(8),
+            child: const Padding(
+              padding: EdgeInsets.all(4),
+              child: Icon(Icons.chevron_left, color: _textSecondary),
+            ),
+          ),
+          const SizedBox(width: 4),
+          Container(
+            width: 11, height: 11,
+            decoration: BoxDecoration(color: dotColor, shape: BoxShape.circle),
+          ),
+          const SizedBox(width: 9),
+          Expanded(
+            child: Text(name.toUpperCase(),
+                style: _cond(size: 17, weight: FontWeight.w800)),
+          ),
+          Text('${teamPlayers.length} spillere',
+              style: _body(size: 12, color: _textSecondary)),
+          if (!isNone && widget.isAdmin && g != null) ...[
+            IconButton(
+              onPressed: () => _editHold(g),
+              icon: const Icon(Icons.edit_outlined, size: 18, color: _textMuted),
+              visualDensity: VisualDensity.compact,
+              tooltip: 'Redigér hold',
+            ),
+            IconButton(
+              onPressed: () => _deleteHold(g),
+              icon: const Icon(Icons.delete_outline, size: 18, color: _textMuted),
+              visualDensity: VisualDensity.compact,
+              tooltip: 'Slet hold',
+            ),
+          ],
+        ]),
+        const SizedBox(height: 14),
+        if (teamTrainers.isNotEmpty) ...[
+          _sectionLabel('TRÆNERE'),
+          _listCard(teamTrainers),
+          const SizedBox(height: 14),
+          _sectionLabel('SPILLERE'),
+        ],
+        _listCard(teamPlayers),
+        if (!isNone) ...[
+          const SizedBox(height: 12),
+          _addToTeamButton(_teamOpen!),
+          const SizedBox(height: 8),
+          InkWell(
+            onTap: () => _inviterTilHold(_teamOpen!),
+            borderRadius: BorderRadius.circular(13),
+            child: Container(
+              padding: const EdgeInsets.symmetric(vertical: 13),
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(13),
+                border: Border.all(color: _borderSubtle),
+              ),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                const Icon(Icons.link, size: 16, color: _textSecondary),
+                const SizedBox(width: 8),
+                Text('Invitér ny spiller (engangs-link)',
+                    style: _body(
+                        size: 13.5,
+                        weight: FontWeight.w700,
+                        color: _textSecondary)),
+              ]),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  /// Medlemslisten med søgefelt. Uændret indhold — bare trukket ud, så
+  /// både mobilens faner og PC-visningens to spalter kan bruge den.
+  List<Widget> _medlemmerIndhold(
+      List<Map<String, dynamic>> filtered, List<Map<String, dynamic>> noTeam) {
+    return [
+      // Søgefelt
+      Container(
+        padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 2),
+        decoration: BoxDecoration(
+          color: _surfaceElevated,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: _borderSubtle),
+        ),
+        child: Row(children: [
+          const Icon(Icons.search, size: 16, color: _textMuted),
+          const SizedBox(width: 9),
+          Expanded(
+            child: TextField(
+              onChanged: (v) => setState(() => _search = v),
+              style: _body(size: 14),
+              decoration: InputDecoration(
+                isDense: true,
+                border: InputBorder.none,
+                hintText: 'Søg medlem…',
+                hintStyle: _body(size: 14, color: _textMuted),
+              ),
+            ),
+          ),
+        ]),
+      ),
+      const SizedBox(height: 14),
+      _goldCard(noTeam.length),
+      _listCard(filtered),
+    ];
+  }
+
+  /// Holdlisten med "Nyt hold". Uændret indhold, trukket ud på samme måde.
+  List<Widget> _holdIndhold(List<Map<String, dynamic>> noTeam) {
+    return [
+      // Hold-faner: hold-kort → detalje
+      for (final g in _groups) ...[
+        InkWell(
+          onTap: () => setState(() => _teamOpen = g['id'] as String),
+          borderRadius: BorderRadius.circular(14),
+          child: Container(
+            margin: const EdgeInsets.only(bottom: 10),
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: _surfaceDark,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: _borderSubtle),
+            ),
+            child: Row(children: [
+              Container(
+                width: 11, height: 11,
+                decoration: BoxDecoration(
+                    color: _groupHex(g['farve'] as String?),
+                    shape: BoxShape.circle),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(g['navn'] as String,
+                        style: _body(size: 14.5, weight: FontWeight.w700)),
+                    Text(
+                        _teamCountLabel(g['id'] as String),
+                        style: _body(size: 11.5, color: _textSecondary)),
+                  ],
+                ),
+              ),
+              const Icon(Icons.chevron_right, size: 16, color: _textMuted),
+            ]),
+          ),
+        ),
+      ],
+      // Nyt hold
+      InkWell(
+        onTap: _newHold,
+        borderRadius: BorderRadius.circular(13),
+        child: Container(
+          margin: const EdgeInsets.only(bottom: 16),
+          padding: const EdgeInsets.symmetric(vertical: 13),
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(13),
+            border: Border.all(
+                color: _neon.withValues(alpha: 0.5),
+                style: BorderStyle.solid),
+          ),
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            const Icon(Icons.add, size: 16, color: _neon),
+            const SizedBox(width: 8),
+            Text('Nyt hold',
+                style: _body(size: 13.5, weight: FontWeight.w700, color: _neon)),
+          ]),
+        ),
+      ),
+      _goldCard(noTeam.length),
+    ];
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_loading) {
@@ -1432,105 +1635,13 @@ class _MembersAdminViewState extends State<_MembersAdminView> {
       );
     }
 
+    final pc = isDesktop(context);
+
     final noTeam = _members
         .where((m) => (_membership[m['id']] ?? const {}).isEmpty)
         .toList();
 
-    // ── Hold-detalje ────────────────────────────────────────────────────────
-    if (_teamOpen != null) {
-      final isNone = _teamOpen == 'none';
-      final g = isNone
-          ? null
-          : _groups.firstWhere((g) => g['id'] == _teamOpen,
-              orElse: () => const {});
-      // Spillere og trænere vises hver for sig; trænere tæller ikke med i
-      // "X spillere".
-      final teamPlayers = isNone ? noTeam : _playersOf(_teamOpen!);
-      final teamTrainers = isNone
-          ? const <Map<String, dynamic>>[]
-          : _trainersOf(_teamOpen!);
-      final dotColor =
-          isNone ? _gold : _groupHex(g?['farve'] as String?);
-      final name = isNone ? 'Uden hold' : (g?['navn'] as String? ?? '');
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(children: [
-            InkWell(
-              onTap: () => setState(() => _teamOpen = null),
-              borderRadius: BorderRadius.circular(8),
-              child: const Padding(
-                padding: EdgeInsets.all(4),
-                child: Icon(Icons.chevron_left, color: _textSecondary),
-              ),
-            ),
-            const SizedBox(width: 4),
-            Container(
-              width: 11, height: 11,
-              decoration: BoxDecoration(color: dotColor, shape: BoxShape.circle),
-            ),
-            const SizedBox(width: 9),
-            Expanded(
-              child: Text(name.toUpperCase(),
-                  style: _cond(size: 17, weight: FontWeight.w800)),
-            ),
-            Text('${teamPlayers.length} spillere',
-                style: _body(size: 12, color: _textSecondary)),
-            if (!isNone && widget.isAdmin && g != null) ...[
-              IconButton(
-                onPressed: () => _editHold(g),
-                icon: const Icon(Icons.edit_outlined, size: 18, color: _textMuted),
-                visualDensity: VisualDensity.compact,
-                tooltip: 'Redigér hold',
-              ),
-              IconButton(
-                onPressed: () => _deleteHold(g),
-                icon: const Icon(Icons.delete_outline, size: 18, color: _textMuted),
-                visualDensity: VisualDensity.compact,
-                tooltip: 'Slet hold',
-              ),
-            ],
-          ]),
-          const SizedBox(height: 14),
-          if (teamTrainers.isNotEmpty) ...[
-            _sectionLabel('TRÆNERE'),
-            _listCard(teamTrainers),
-            const SizedBox(height: 14),
-            _sectionLabel('SPILLERE'),
-          ],
-          _listCard(teamPlayers),
-          if (!isNone) ...[
-            const SizedBox(height: 12),
-            _addToTeamButton(_teamOpen!),
-            const SizedBox(height: 8),
-            InkWell(
-              onTap: () => _inviterTilHold(_teamOpen!),
-              borderRadius: BorderRadius.circular(13),
-              child: Container(
-                padding: const EdgeInsets.symmetric(vertical: 13),
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(13),
-                  border: Border.all(color: _borderSubtle),
-                ),
-                child: Row(mainAxisSize: MainAxisSize.min, children: [
-                  const Icon(Icons.link, size: 16, color: _textSecondary),
-                  const SizedBox(width: 8),
-                  Text('Invitér ny spiller (engangs-link)',
-                      style: _body(
-                          size: 13.5,
-                          weight: FontWeight.w700,
-                          color: _textSecondary)),
-                ]),
-              ),
-            ),
-          ],
-        ],
-      );
-    }
-
-    // ── Liste (faner) ─────────────────────────────────────────────────────────
-    final filtered = _tab == 'medlemmer'
+    final filtered = _tab == 'medlemmer' || pc
         ? (_search.trim().isEmpty
             ? _members
             : _members
@@ -1540,104 +1651,43 @@ class _MembersAdminViewState extends State<_MembersAdminView> {
                 .toList())
         : _members;
 
+    // ── PC: medlemmer til venstre, hold (eller det åbne hold) til højre ─────
+    if (pc) {
+      return Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: _medlemmerIndhold(filtered, noTeam),
+            ),
+          ),
+          const SizedBox(width: 24),
+          SizedBox(
+            width: 400,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: _teamOpen != null
+                  ? [_holdDetalje(noTeam)]
+                  : _holdIndhold(noTeam),
+            ),
+          ),
+        ],
+      );
+    }
+
+    // ── Mobil: uændret — hold-detalje erstatter listen, ellers faner ────────
+    if (_teamOpen != null) return _holdDetalje(noTeam);
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _segTabs(),
         const SizedBox(height: 16),
-        if (_tab == 'medlemmer') ...[
-          // Søgefelt
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 2),
-            decoration: BoxDecoration(
-              color: _surfaceElevated,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: _borderSubtle),
-            ),
-            child: Row(children: [
-              const Icon(Icons.search, size: 16, color: _textMuted),
-              const SizedBox(width: 9),
-              Expanded(
-                child: TextField(
-                  onChanged: (v) => setState(() => _search = v),
-                  style: _body(size: 14),
-                  decoration: InputDecoration(
-                    isDense: true,
-                    border: InputBorder.none,
-                    hintText: 'Søg medlem…',
-                    hintStyle: _body(size: 14, color: _textMuted),
-                  ),
-                ),
-              ),
-            ]),
-          ),
-          const SizedBox(height: 14),
-          _goldCard(noTeam.length),
-          _listCard(filtered),
-        ] else ...[
-          // Hold-faner: hold-kort → detalje
-          for (final g in _groups) ...[
-            InkWell(
-              onTap: () => setState(() => _teamOpen = g['id'] as String),
-              borderRadius: BorderRadius.circular(14),
-              child: Container(
-                margin: const EdgeInsets.only(bottom: 10),
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: _surfaceDark,
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: _borderSubtle),
-                ),
-                child: Row(children: [
-                  Container(
-                    width: 11, height: 11,
-                    decoration: BoxDecoration(
-                        color: _groupHex(g['farve'] as String?),
-                        shape: BoxShape.circle),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(g['navn'] as String,
-                            style: _body(size: 14.5, weight: FontWeight.w700)),
-                        Text(
-                            _teamCountLabel(g['id'] as String),
-                            style: _body(size: 11.5, color: _textSecondary)),
-                      ],
-                    ),
-                  ),
-                  const Icon(Icons.chevron_right, size: 16, color: _textMuted),
-                ]),
-              ),
-            ),
-          ],
-          // Nyt hold
-          InkWell(
-            onTap: _newHold,
-            borderRadius: BorderRadius.circular(13),
-            child: Container(
-              margin: const EdgeInsets.only(bottom: 16),
-              padding: const EdgeInsets.symmetric(vertical: 13),
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(13),
-                border: Border.all(
-                    color: _neon.withValues(alpha: 0.5),
-                    style: BorderStyle.solid),
-              ),
-              child: Row(mainAxisSize: MainAxisSize.min, children: [
-                const Icon(Icons.add, size: 16, color: _neon),
-                const SizedBox(width: 8),
-                Text('Nyt hold',
-                    style: _body(size: 13.5, weight: FontWeight.w700, color: _neon)),
-              ]),
-            ),
-          ),
-          _goldCard(noTeam.length),
-        ],
+        if (_tab == 'medlemmer')
+          ..._medlemmerIndhold(filtered, noTeam)
+        else
+          ..._holdIndhold(noTeam),
       ],
     );
   }

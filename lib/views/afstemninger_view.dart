@@ -10,12 +10,38 @@ class AfstemningerTab extends StatefulWidget {
   State<AfstemningerTab> createState() => _AfstemningerTabState();
 }
 
-class _AfstemningerTabState extends State<AfstemningerTab> {
+class _AfstemningerTabState extends State<AfstemningerTab>
+    with HoldFilterKilde<AfstemningerTab> {
   List<Map<String, dynamic>> _polls = const [];
   Set<String> _myCaptainGroupIds = {};
   List<Map<String, dynamic>> _groups = const []; // alle hold (til filteret)
   Set<String> _myGroupIds = {};
   String? _filterGroupId; // valgt hold i tragt-filteret (null = ingen)
+
+  /// PC-visning: hvilken afstemning står åben i højre spalte. På mobilen
+  /// bruges den ikke — dér skubbes detaljen som en ny skærm som hidtil.
+  String? _valgtPollId;
+
+  static bool _erLukket(Map<String, dynamic> p) =>
+      p['lukket_at'] != null &&
+      DateTime.parse(p['lukket_at'] as String).isBefore(DateTime.now());
+
+  /// Afstemningerne i den viste fane (Åbne / Afsluttede) efter hold-filteret.
+  List<Map<String, dynamic>> get _polleIFane => _visiblePolls
+      .where((p) => _tab == 0 ? !_erLukket(p) : _erLukket(p))
+      .toList();
+
+  /// Den afstemning PC-visningen skal vise. Er intet valgt — eller er det
+  /// valgte filtreret væk — falder den tilbage på den øverste, så højre
+  /// spalte aldrig står tom uden grund.
+  Map<String, dynamic>? get _valgtPoll {
+    final liste = _polleIFane;
+    if (liste.isEmpty) return null;
+    for (final p in liste) {
+      if (p['id'] == _valgtPollId) return p;
+    }
+    return liste.first;
+  }
 
   /// Må den aktuelle bruger slette denne afstemning? (staff, opretter eller
   /// kaptajn for afstemningens hold)
@@ -97,6 +123,33 @@ class _AfstemningerTabState extends State<AfstemningerTab> {
       : _polls
           .where((p) => _pollGroupIds(p).contains(_filterGroupId))
           .toList();
+
+  /// Samme valg som tragt-sheet'et herunder, men som data PC-sidebaren kan
+  /// tegne. Der er ét `_filterGroupId`, så de to indgange deler state.
+  HoldFilterModel? get holdFilter {
+    final mine =
+        _groups.where((g) => _myGroupIds.contains(g['id'] as String)).toList();
+    final andre = widget.isAdmin
+        ? _groups.where((g) => !_myGroupIds.contains(g['id'] as String)).toList()
+        : const <Map<String, dynamic>>[];
+    if (mine.isEmpty && andre.isEmpty) return null;
+
+    HoldFilterEntry af(Map<String, dynamic> g) => HoldFilterEntry(
+          id: g['id'] as String,
+          navn: g['navn'] as String,
+          farve: holdFarve(g['farve']),
+        );
+
+    return HoldFilterModel(
+      mine: [
+        const HoldFilterEntry(id: null, navn: 'Alle hold', farve: _neon),
+        ...mine.map(af),
+      ],
+      klub: andre.map(af).toList(),
+      erValgt: (id, {required klub}) => _filterGroupId == id,
+      vaelg: (id, {required klub}) => setState(() => _filterGroupId = id),
+    );
+  }
 
   /// Hold-filter som bundsheet — kaldes af tragt-ikonet i app-headeren.
   /// Admin kan vælge hvilket som helst hold; øvrige kun deres egne.
@@ -190,6 +243,11 @@ class _AfstemningerTabState extends State<AfstemningerTab> {
   }
 
   void _open(Map<String, dynamic> poll) {
+    // PC: afstemningen åbnes i højre spalte, så listen bliver stående.
+    if (isDesktop(context)) {
+      setState(() => _valgtPollId = poll['id'] as String);
+      return;
+    }
     Navigator.of(context).push(MaterialPageRoute(
       builder: (_) => PollDetailScreen(poll: poll),
     )).then((_) => _load());
@@ -255,6 +313,9 @@ class _AfstemningerTabState extends State<AfstemningerTab> {
 
   @override
   Widget build(BuildContext context) {
+    // Meld filteret til PC-sidebaren. Sker før alle tidlige returns, så
+    // filteret ikke forsvinder mens der loades eller er tomt.
+    meldHoldFilter(holdFilter);
     if (_loading) return _loadingSkeleton();
     if (_error != null) return _ErrorView(error: _error!, onRetry: _load);
     if (_polls.isEmpty) {
@@ -266,10 +327,13 @@ class _AfstemningerTabState extends State<AfstemningerTab> {
         ),
       );
     }
-    return RefreshIndicator(
+    final pc = isDesktop(context);
+    final liste = RefreshIndicator(
       onRefresh: _load,
       child: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
+        padding: pc
+            ? const EdgeInsets.fromLTRB(16, 18, 16, 24)
+            : const EdgeInsets.fromLTRB(16, 16, 16, 96),
         children: [
           Center(
             child: ConstrainedBox(
@@ -342,15 +406,21 @@ class _AfstemningerTabState extends State<AfstemningerTab> {
                       return 'Lukker ${_omDage(l).toLowerCase()}';
                     }();
                     final isDato = (p['type'] as String?) != 'tekst';
+                    // PC: den afstemning der står åben til højre markeres,
+                    // så man kan se hvor man er i listen.
+                    final aabenHer = pc && _valgtPoll?['id'] == p['id'];
                     return Padding(
                       padding: const EdgeInsets.only(bottom: 11),
                       child: Opacity(
                         opacity: lukket ? 0.8 : 1,
                         child: Container(
                           decoration: BoxDecoration(
-                            color: _surfaceDark,
+                            color: aabenHer
+                                ? _neon.withValues(alpha: 0.10)
+                                : _surfaceDark,
                             borderRadius: BorderRadius.circular(16),
-                            border: Border.all(color: _borderSubtle),
+                            border: Border.all(
+                                color: aabenHer ? _neon : _borderSubtle),
                           ),
                           child: InkWell(
                             borderRadius: BorderRadius.circular(16),
@@ -502,6 +572,35 @@ class _AfstemningerTabState extends State<AfstemningerTab> {
           ),
         ],
       ),
+    );
+
+    if (!pc) return liste;
+
+    // PC: listen bliver stående til venstre, afstemningen åbnes til højre.
+    final valgt = _valgtPoll;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        SizedBox(width: 340, child: liste),
+        const VerticalDivider(width: 1, thickness: 1, color: _borderSubtle),
+        Expanded(
+          child: valgt == null
+              ? const Center(
+                  child: _EmptyState(
+                    icon: Icons.how_to_vote_outlined,
+                    title: 'Vælg en afstemning',
+                    subtitle: 'Klik på en afstemning i listen til venstre',
+                  ),
+                )
+              : PollDetailScreen(
+                  // Ny nøgle pr. afstemning, så detaljen henter forfra når
+                  // man skifter i listen.
+                  key: ValueKey(valgt['id']),
+                  poll: valgt,
+                  indlejret: true,
+                ),
+        ),
+      ],
     );
   }
 }
@@ -729,7 +828,12 @@ class _EditPollSheetState extends State<_EditPollSheet> {
 
 class PollDetailScreen extends StatefulWidget {
   final Map<String, dynamic> poll;
-  const PollDetailScreen({super.key, required this.poll});
+
+  /// Vist inde i PC-visningens todelte layout — så uden egen AppBar, fordi
+  /// stellet allerede har en topbar. Alt andet er uændret.
+  final bool indlejret;
+  const PollDetailScreen(
+      {super.key, required this.poll, this.indlejret = false});
   @override
   State<PollDetailScreen> createState() => _PollDetailScreenState();
 }
@@ -1107,9 +1211,11 @@ class _PollDetailScreenState extends State<PollDetailScreen> {
             : 'Stemmefrist ${_fmtDateTime(DateTime.parse(lukketAt).toLocal())}');
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('AFSTEMNING'),
-      ),
+      appBar: widget.indlejret
+          ? null
+          : AppBar(
+              title: const Text('AFSTEMNING'),
+            ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : _error != null

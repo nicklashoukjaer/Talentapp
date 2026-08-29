@@ -879,31 +879,6 @@ class _PollDetailScreenState extends State<PollDetailScreen> {
   List<Map<String, dynamic>> get _manglerAtStemme =>
       _eligible.where((p) => !_responded.contains(p['id'])).toList();
 
-  /// Slå "booket kamp" til/fra på en dato. Kun staff/opretter/kaptajn —
-  /// håndhæves også af RLS, så knappen ikke er den eneste spærring.
-  Future<void> _toggleBooket(String optionId, bool nu) async {
-    setState(() {
-      _options = [
-        for (final o in _options)
-          o['id'] == optionId ? {...o, 'booket': !nu} : o
-      ];
-    });
-    try {
-      await supabase
-          .from('poll_options')
-          .update({'booket': !nu})
-          .eq('id', optionId);
-    } on PostgrestException catch (e) {
-      setState(() {
-        _options = [
-          for (final o in _options)
-            o['id'] == optionId ? {...o, 'booket': nu} : o
-        ];
-      });
-      if (mounted) _snack(context, e.message, _danger);
-    }
-  }
-
   /// Opret en kamp direkte på en afstemt dato. Formularen åbner som
   /// bundsheet OVEN PÅ afstemningen, så man bliver stående og kan oprette
   /// flere kampe i træk for den periode man kigger på.
@@ -918,8 +893,8 @@ class _PollDetailScreenState extends State<PollDetailScreen> {
       ),
     );
     if (oprettet == true && mounted) {
-      // Datoen bliver markeret som booket af databasen; hent stille så
-      // markeringen dukker op uden at listen hopper.
+      // Databasen markerer selv datoen som booket; hent stille så mærkatet
+      // dukker op uden at listen hopper.
       await _load(stille: true);
       if (mounted) _snack(context, 'Kamp oprettet', _success);
     }
@@ -1243,11 +1218,6 @@ class _PollDetailScreenState extends State<PollDetailScreen> {
                                               _jaNavne[o['id'] as String] ??
                                                   const [],
                                           booket: o['booket'] == true,
-                                          onBooket: !_canManage
-                                              ? null
-                                              : () => _toggleBooket(
-                                                  o['id'] as String,
-                                                  o['booket'] == true),
                                           onOpretKamp: !_canManage
                                               ? null
                                               : () => _opretKampPaa(
@@ -1380,8 +1350,10 @@ class _PollCheckRow extends StatelessWidget {
   final VoidCallback onToggle;
   // Hvem kan denne dato. Kun udfyldt for staff/opretter/kaptajn.
   final List<String> jaNavne;
-  final bool booket;          // der er booket kamp denne dato
-  final VoidCallback? onBooket; // null = må ikke ændre markeringen
+  // Sat automatisk af databasen når der findes en kamp på datoen for et af
+  // afstemningens hold. Kan ikke sættes i hånden — så kan den ikke komme til
+  // at pege på en kamp der ikke findes.
+  final bool booket;
   final VoidCallback? onOpretKamp; // opret kamp direkte på datoen
   final bool udvidet;
   final VoidCallback? onUdvid;
@@ -1397,7 +1369,6 @@ class _PollCheckRow extends StatelessWidget {
     required this.onToggle,
     this.jaNavne = const [],
     this.booket = false,
-    this.onBooket,
     this.onOpretKamp,
     this.udvidet = false,
     this.onUdvid,
@@ -1537,28 +1508,6 @@ class _PollCheckRow extends StatelessWidget {
                       backgroundColor: _neon,
                       visualDensity: VisualDensity.compact,
                       textStyle: _body(size: 12.5, weight: FontWeight.w700),
-                    ),
-                  ),
-                ),
-              ],
-              if (onBooket != null) ...[
-                const SizedBox(height: 4),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: TextButton.icon(
-                    onPressed: onBooket,
-                    icon: Icon(
-                        booket
-                            ? Icons.event_busy_outlined
-                            : Icons.event_available_outlined,
-                        size: 17),
-                    label: Text(booket
-                        ? 'Fjern booket-markering'
-                        : 'Markér som booket kamp'),
-                    style: TextButton.styleFrom(
-                      foregroundColor: booket ? _textSecondary : _neon,
-                      visualDensity: VisualDensity.compact,
-                      textStyle: _body(size: 12.5, weight: FontWeight.w600),
                     ),
                   ),
                 ),

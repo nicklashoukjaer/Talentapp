@@ -132,8 +132,12 @@ Bund-navigation (mobil) / sidebar (bred skærm), 4–5 faner afhængigt af rolle
 - **Bookede kampdatoer** (`poll_options.booket`): markeres **automatisk** når
   der oprettes en kamp (titel indeholder "kamp") på en dato der findes i en
   afstemning for et af kampens hold — også selvom afstemningen er lukket.
-  Staff/opretter/kaptajn kan også sætte og fjerne den i hånden; automatikken
-  sætter kun, den fjerner aldrig.
+  Markeringen genberegnes ved oprettelse, flytning og sletning af kampen, så
+  den altid følger virkeligheden. Den kan IKKE sættes i hånden — ellers
+  kunne den komme til at pege på en kamp der ikke findes.
+- **Opret kamp fra en afstemt dato:** fold datoen ud → "Opret kamp på denne
+  dato" åbner opret-formularen med dato og hold udfyldt, oven på
+  afstemningen, så man kan oprette flere i træk.
 - **Stemme-overblik** (staff/opretter/kaptajn): hvem har stemt og hvad de
   stemte, hvem mangler, og "Påmind X der mangler" — med mulighed for at
   fravælge enkeltpersoner. Trænere for holdet tælles ikke som manglende.

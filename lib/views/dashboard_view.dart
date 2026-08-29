@@ -3737,7 +3737,15 @@ class _PendingSuggestionsCardState extends State<_PendingSuggestionsCard> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 class CreateTrainingDialog extends StatefulWidget {
-  const CreateTrainingDialog({super.key});
+  /// Forudfyldt dato og hold — bruges når man opretter en kamp direkte fra en
+  /// afstemt dato, så man slipper for at taste det ind igen.
+  final DateTime? forudvalgtDato;
+  final Set<String>? forudvalgteHold;
+  const CreateTrainingDialog({
+    super.key,
+    this.forudvalgtDato,
+    this.forudvalgteHold,
+  });
   @override
   State<CreateTrainingDialog> createState() => _CreateTrainingDialogState();
 }
@@ -3963,6 +3971,11 @@ class _CreateTrainingDialogState extends State<CreateTrainingDialog> {
     _weeksCtrl.addListener(() {
       if (mounted) setState(() {});
     });
+    if (widget.forudvalgtDato != null) {
+      final d = widget.forudvalgtDato!;
+      _dato = DateTime(d.year, d.month, d.day);
+    }
+    if (widget.forudvalgteHold != null) _groupIds.addAll(widget.forudvalgteHold!);
     _loadGroups();
     _hentAfstemteDatoer();
   }

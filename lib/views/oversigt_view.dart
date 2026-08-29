@@ -1740,10 +1740,12 @@ String _omDage(DateTime start) {
 }
 
 /// Sæson-label ("2025/26") ud fra en dato — sæsonen starter i juli.
+/// Lunar ligaen spiller to sæsoner om året: forår (februar–juni) og efterår
+/// (august–december). Januar og juli er mellemrum og lægges til den sæson de
+/// grænser op til, så alt har et navn.
 String _saeson(DateTime d) {
-  final startYear = d.month >= 7 ? d.year : d.year - 1;
-  final endShort  = ((startYear + 1) % 100).toString().padLeft(2, '0');
-  return '$startYear/$endShort';
+  final foraar = d.month >= 2 && d.month <= 7;
+  return foraar ? 'Forår ${d.year}' : 'Efterår ${d.month == 1 ? d.year - 1 : d.year}';
 }
 
 /// Initial-avatar (cirkel med forbogstav). [attended]=false → afbud-styling.

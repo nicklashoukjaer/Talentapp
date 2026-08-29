@@ -904,6 +904,27 @@ class _PollDetailScreenState extends State<PollDetailScreen> {
     }
   }
 
+  /// Opret en kamp direkte på en afstemt dato. Formularen åbner som
+  /// bundsheet OVEN PÅ afstemningen, så man bliver stående og kan oprette
+  /// flere kampe i træk for den periode man kigger på.
+  Future<void> _opretKampPaa(DateTime dato) async {
+    final oprettet = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => CreateTrainingDialog(
+        forudvalgtDato: dato,
+        forudvalgteHold: _pollGroupIds(widget.poll).toSet(),
+      ),
+    );
+    if (oprettet == true && mounted) {
+      // Datoen bliver markeret som booket af databasen; hent stille så
+      // markeringen dukker op uden at listen hopper.
+      await _load(stille: true);
+      if (mounted) _snack(context, 'Kamp oprettet', _success);
+    }
+  }
+
   Future<void> _sendRykker() async {
     final modtagere = _manglerAtStemme
         .where((p) => !_remindSkip.contains(p['id']))
@@ -1227,6 +1248,12 @@ class _PollDetailScreenState extends State<PollDetailScreen> {
                                               : () => _toggleBooket(
                                                   o['id'] as String,
                                                   o['booket'] == true),
+                                          onOpretKamp: !_canManage
+                                              ? null
+                                              : () => _opretKampPaa(
+                                                  DateTime.parse(o['option_tid']
+                                                          as String)
+                                                      .toLocal()),
                                           udvidet: _udvidede
                                               .contains(o['id'] as String),
                                           onUdvid: !_canManage
@@ -1355,6 +1382,7 @@ class _PollCheckRow extends StatelessWidget {
   final List<String> jaNavne;
   final bool booket;          // der er booket kamp denne dato
   final VoidCallback? onBooket; // null = må ikke ændre markeringen
+  final VoidCallback? onOpretKamp; // opret kamp direkte på datoen
   final bool udvidet;
   final VoidCallback? onUdvid;
 
@@ -1370,6 +1398,7 @@ class _PollCheckRow extends StatelessWidget {
     this.jaNavne = const [],
     this.booket = false,
     this.onBooket,
+    this.onOpretKamp,
     this.udvidet = false,
     this.onUdvid,
   });
@@ -1496,8 +1525,24 @@ class _PollCheckRow extends StatelessWidget {
                   overskrift: 'Kan denne dato',
                   farve: _success,
                   navne: jaNavne),
-              if (onBooket != null) ...[
+              if (onOpretKamp != null) ...[
                 const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: FilledButton.icon(
+                    onPressed: onOpretKamp,
+                    icon: const Icon(Icons.add, size: 17),
+                    label: const Text('Opret kamp på denne dato'),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: _neon,
+                      visualDensity: VisualDensity.compact,
+                      textStyle: _body(size: 12.5, weight: FontWeight.w700),
+                    ),
+                  ),
+                ),
+              ],
+              if (onBooket != null) ...[
+                const SizedBox(height: 4),
                 Align(
                   alignment: Alignment.centerLeft,
                   child: TextButton.icon(

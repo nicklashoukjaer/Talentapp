@@ -1021,6 +1021,56 @@ class _FineHistoryScreenState extends State<FineHistoryScreen> {
     }
   }
 
+  /// Gør op med spilleren: markér ALT ubetalt som afregnet på én gang —
+  /// både bøderne og de kreditter der er trukket fra. Ellers skulle man
+  /// klikke hver enkelt, og en oversprunget kredit ville blive ved med at
+  /// give rabat næste gang.
+  Future<void> _afregnAlt() async {
+    final ubetalte =
+        _fines.where((f) => f['status'] == 'ubetalt').toList();
+    if (ubetalte.isEmpty) return;
+    final boeder =
+        ubetalte.where((f) => (f['belob_oere'] as num) > 0).toList();
+    final kreditter = ubetalte.length - boeder.length;
+    final netto = ubetalte.fold<int>(
+        0, (sum, f) => sum + (f['belob_oere'] as num).toInt());
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Gør op?'),
+        content: Text(
+          '${boeder.length} bøde${boeder.length == 1 ? '' : 'r'}'
+          '${kreditter > 0 ? ' og $kreditter kredit${kreditter == 1 ? '' : 'ter'}' : ''}'
+          ' markeres som afregnet for ${widget.userName}.\n\n'
+          '${netto >= 0 ? 'Beløb at betale: ${_fmtKr(netto)}' : 'Tilgodehavende der bortfalder: ${_fmtKr(netto.abs())}'}',
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Annullér')),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Gør op'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+
+    try {
+      await supabase.from('fines').update({
+        'status': 'godkendt_betalt',
+        'approved_by': supabase.auth.currentUser!.id,
+        'paid_at': DateTime.now().toUtc().toIso8601String(),
+      }).inFilter('id', [for (final f in ubetalte) f['id'] as String]);
+      if (mounted) _snack(context, 'Gjort op ✓', Colors.green);
+      await _load();
+    } on PostgrestException catch (e) {
+      if (mounted) _snack(context, e.message, Colors.red);
+    }
+  }
+
   /// Sletter en bøde permanent (fx hvis den er givet forkert).
   Future<void> _delete(Map<String, dynamic> fine) async {
     final titel = fine['titel'] as String? ?? 'bøde';
@@ -1215,6 +1265,28 @@ class _FineHistoryScreenState extends State<FineHistoryScreen> {
                             else ...[
                               if (ubetalte.isNotEmpty) ...[
                                 _groupHeader('UBETALT', ubetalte.length, _danger),
+                                if (widget.isAdmin)
+                                  Padding(
+                                    padding:
+                                        const EdgeInsets.only(bottom: 6),
+                                    child: SizedBox(
+                                      width: double.infinity,
+                                      child: OutlinedButton.icon(
+                                        onPressed: _afregnAlt,
+                                        icon: const Icon(Icons.done_all,
+                                            size: 18),
+                                        label: Text(totalUbetalt >= 0
+                                            ? 'Gør op — markér alt betalt (${_fmtKr(totalUbetalt)})'
+                                            : 'Gør op — markér alt afregnet'),
+                                        style: OutlinedButton.styleFrom(
+                                          foregroundColor: _success,
+                                          side: BorderSide(
+                                              color: _success.withValues(
+                                                  alpha: 0.5)),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
                                 for (final f in ubetalte)
                                   _FineHistoryRow(
                                     fine: f,

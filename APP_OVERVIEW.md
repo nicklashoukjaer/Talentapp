@@ -249,6 +249,8 @@ skrivning er gated på rolle-helpers (`is_admin()`, `is_staff()`, `is_captain()`
 - `send_training_reminders` — manuel "påmind alle der mangler" (hold-bevidst).
 - `send_poll_reminders` — samme for afstemninger; staff/opretter/kaptajn, og
   trænere for holdet springes over.
+- `notify_boedeforslag` — klokke + push til staff når nogen foreslår en
+  bødetype (`fine_types` med aktiv = false).
 - **Triggere på `trainings`:** `marker_booket_kampdato` (auto-booket) og
   `notify_training_changed` (klokke-besked når titel, tid, sted, frist,
   pladser eller hold ændres — ikke ved interne felter som synlig_fra).

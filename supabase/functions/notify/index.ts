@@ -181,6 +181,25 @@ Deno.serve(async (req) => {
       });
       break;
     }
+    case "boedeforslag": {
+      // Navngiven modtagerliste (staff) frem for et hold — derfor ikke
+      // audienceFor() her.
+      const ids = ((rec._modtagere as unknown[]) ?? []).map(String).filter(
+        Boolean,
+      );
+      if (ids.length === 0) return new Response("no recipients", { status: 200 });
+      const titel = (rec.titel as string) ?? "Bødeforslag";
+      const af = (rec._af as string) ?? "";
+      result = await sendPush({
+        include_aliases: { external_id: ids },
+        headings: { en: "Nyt bødeforslag ⚖️", da: "Nyt bødeforslag ⚖️" },
+        contents: {
+          en: af ? `${titel} — foreslået af ${af}` : titel,
+          da: af ? `${titel} — foreslået af ${af}` : titel,
+        },
+      });
+      break;
+    }
     case "fines": {
       const userId = rec.user_id ? String(rec.user_id) : "";
       if (!userId) return new Response("no user_id", { status: 200 });

@@ -3135,7 +3135,8 @@ class _FineTypeDialogState extends State<_FineTypeDialog> {
     super.initState();
     _titel = TextEditingController(text: widget.existing?['titel'] as String? ?? '');
     final oere = (widget.existing?['belob_oere'] as num?)?.toInt();
-    _krCtrl = TextEditingController(text: oere == null ? '' : '${oere ~/ 100}');
+    _krCtrl = TextEditingController(
+        text: oere == null ? '' : '${(oere / 100).round()}');
   }
 
   @override
@@ -3148,7 +3149,7 @@ class _FineTypeDialogState extends State<_FineTypeDialog> {
   void _save() {
     final titel = _titel.text.trim();
     final kr = int.tryParse(_krCtrl.text.trim());
-    if (titel.isEmpty || kr == null || kr <= 0) {
+    if (titel.isEmpty || kr == null || kr == 0) {
       _snack(context, 'Indtast titel og beløb i hele kroner', _gold);
       return;
     }
@@ -3175,14 +3176,20 @@ class _FineTypeDialogState extends State<_FineTypeDialog> {
           const SizedBox(height: 14),
           TextField(
             controller: _krCtrl,
-            keyboardType: TextInputType.number,
-            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+            keyboardType:
+                const TextInputType.numberWithOptions(signed: true),
+            // Minus er tilladt: en negativ bødetype er en kredit, fx en
+            // "stikker-bøde" der trækker fra det skyldige beløb.
+            inputFormatters: [
+              FilteringTextInputFormatter.allow(RegExp(r'^-?\d*')),
+            ],
             textInputAction: TextInputAction.done,
             onSubmitted: (_) => _save(),
             decoration: const InputDecoration(
               labelText: 'Beløb',
               hintText: '100',
               suffixText: 'kr',
+              helperText: 'Minus = kredit, fx -20 til en stikker-bøde',
             ),
           ),
         ],

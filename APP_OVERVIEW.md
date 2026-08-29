@@ -237,7 +237,12 @@ skrivning er gated på rolle-helpers (`is_admin()`, `is_staff()`, `is_captain()`
   status (ubetalt/godkendt_betalt), approved_by, paid_at. (titel/beløb udfyldes
   af en snapshot-trigger ud fra bødetypen.)
 - **fine_types** — titel, belob_oere, aktiv (false = forslag afventer admin).
-- **fine_leaderboard** (view) — aggregeret highscore + skyldigt pr. spiller.
+  Beløbet må være NEGATIVT: en kredit-type, fx en "stikker-bøde" på -20 kr,
+  uddeles som enhver anden bøde og trækker fra det skyldige beløb.
+- **fine_leaderboard** (view) — highscore + saldo pr. spiller. Kreditter
+  (negative beløb) trækkes fra `skyldigt_oere` og kan gøre det negativt =
+  tilgodehavende, men tælles IKKE med i `total_oere` (rangeringen) eller
+  `ubetalte_antal`. `kredit_oere` er tilgodehavendet som positivt tal.
 - **club_config** (én række) — mobilepay_box_id (fælles), noshow_fine_type_id,
   noshow_auto_enabled.
 - **notifications** — recipient_id, kind, titel, body, data, created_at,

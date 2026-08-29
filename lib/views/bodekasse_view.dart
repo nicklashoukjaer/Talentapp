@@ -594,7 +594,7 @@ class BodekasseTabState extends State<BodekasseTab> {
                           orElse: () => null);
                       final mySkyldigt =
                           myRow == null ? 0 : (myRow['skyldigt_oere'] as num).toInt();
-                      if (mySkyldigt <= 0) return const SizedBox.shrink();
+                      if (mySkyldigt == 0) return const SizedBox.shrink();
                       return Padding(
                         padding: const EdgeInsets.only(bottom: 20),
                         child: _DuSkylderCallout(
@@ -750,7 +750,9 @@ class _PodiumSpot extends StatelessWidget {
   }
 }
 
-/// "Du skylder"-callout — rød-tonet kort med MobilePay-betaling.
+/// Egen saldo. Skylder man penge: rødt kort med MobilePay. Har man derimod
+/// et tilgodehavende — fx efter en stikker-bøde — vises det grønt, og der er
+/// ikke noget at betale.
 class _DuSkylderCallout extends StatelessWidget {
   final int oere;
   final VoidCallback onPay;
@@ -758,12 +760,14 @@ class _DuSkylderCallout extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final tilGode = oere < 0;
+    final farve = tilGode ? _success : _danger;
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: _danger.withValues(alpha: 0.12),
+        color: farve.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: _danger.withValues(alpha: 0.5)),
+        border: Border.all(color: farve.withValues(alpha: 0.5)),
       ),
       child: Wrap(
         alignment: WrapAlignment.spaceBetween,
@@ -775,26 +779,30 @@ class _DuSkylderCallout extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text('DU SKYLDER',
+              Text(tilGode ? 'DU HAR TIL GODE' : 'DU SKYLDER',
                   style: _body(
                       size: 11,
                       weight: FontWeight.w700,
                       spacing: 1.2,
-                      color: _danger)),
+                      color: farve)),
               const SizedBox(height: 2),
-              Text(_fmtKr(oere),
-                  style: _cond(size: 22, weight: FontWeight.w800, color: _danger)),
+              Text(_fmtKr(oere.abs()),
+                  style: _cond(size: 22, weight: FontWeight.w800, color: farve)),
+              if (tilGode)
+                Text('Modregnes i din næste bøde',
+                    style: _body(size: 11.5, color: _textSecondary)),
             ],
           ),
-          FilledButton.icon(
-            onPressed: onPay,
-            icon: const Icon(Icons.account_balance_wallet_outlined, size: 18),
-            label: const Text('Betal med MobilePay'),
-            style: FilledButton.styleFrom(
-              backgroundColor: _success,
-              foregroundColor: _onSuccess,
+          if (!tilGode)
+            FilledButton.icon(
+              onPressed: onPay,
+              icon: const Icon(Icons.account_balance_wallet_outlined, size: 18),
+              label: const Text('Betal med MobilePay'),
+              style: FilledButton.styleFrom(
+                backgroundColor: _success,
+                foregroundColor: _onSuccess,
+              ),
             ),
-          ),
         ],
       ),
     );

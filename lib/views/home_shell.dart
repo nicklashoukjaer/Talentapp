@@ -374,7 +374,10 @@ class _HomeShellState extends State<HomeShell> {
               icon: const Icon(Icons.filter_list, color: _textPrimary),
               tooltip: 'Filtrér på hold',
             ),
-          const _NotificationsBell(),
+          _NotificationsBell(
+            isStaff: _isStaff,
+            onGotoTab: _gotoTab,
+          ),
           // Ctrl+K kun på brede skærme (desktop/web) — skjult på mobil
           if (MediaQuery.of(context).size.width >= 700) ...[
             TextButton.icon(
@@ -653,7 +656,9 @@ class _Kbd extends StatelessWidget {
 // Ulæst-tælling via lokal "sidst set"-tid, så det virker uden backend-ændringer.
 // ─────────────────────────────────────────────────────────────────────────────
 class _NotificationsBell extends StatefulWidget {
-  const _NotificationsBell();
+  final bool isStaff;
+  final void Function(int tab) onGotoTab;
+  const _NotificationsBell({required this.isStaff, required this.onGotoTab});
   @override
   State<_NotificationsBell> createState() => _NotificationsBellState();
 }
@@ -689,6 +694,69 @@ class _NotificationsBellState extends State<_NotificationsBell> {
   }
 
   bool _erUlaest(Map<String, dynamic> n) => n['laest_at'] == null;
+
+  /// Åbn det beskeden handler om. Uden det er en notifikation kun en
+  /// oplysning man selv skal lede videre ud fra.
+  Future<void> _aabn(Map<String, dynamic> n) async {
+    final data = n['data'];
+    final map = data is Map ? Map<String, dynamic>.from(data) : const {};
+    final trainingId = map['training_id'] as String?;
+    final pollId = map['poll_id'] as String?;
+    final fineTypeId = map['fine_type_id'] as String?;
+
+    Navigator.of(context).pop(); // luk klokke-panelet først
+
+    try {
+      if (trainingId != null) {
+        final row = await supabase
+            .from('trainings')
+            .select('id, titel, beskrivelse, max_deltagere, start_tid, slut_tid, '
+                'adresse, tilmeldings_deadline, group_id, group_ids, synlig_fra, '
+                'created_by, series_id')
+            .eq('id', trainingId)
+            .maybeSingle();
+        if (row == null) {
+          if (mounted) _snack(context, 'Begivenheden findes ikke længere', _gold);
+          return;
+        }
+        if (!mounted) return;
+        await Navigator.of(context).push(MaterialPageRoute(
+          builder: (_) => EventDetailScreen(
+              training: Map<String, dynamic>.from(row),
+              isStaff: widget.isStaff),
+        ));
+      } else if (pollId != null) {
+        final row = await supabase
+            .from('polls')
+            .select('id, titel, beskrivelse, lukket_at, created_at, group_id, '
+                'group_ids, created_by, type, allow_multiple')
+            .eq('id', pollId)
+            .maybeSingle();
+        if (row == null) {
+          if (mounted) _snack(context, 'Afstemningen findes ikke længere', _gold);
+          return;
+        }
+        if (!mounted) return;
+        await Navigator.of(context).push(MaterialPageRoute(
+          builder: (_) =>
+              PollDetailScreen(poll: Map<String, dynamic>.from(row)),
+        ));
+      } else if (fineTypeId != null) {
+        // Bødeforslag godkendes i admin-sektionen.
+        widget.onGotoTab(4);
+      }
+    } catch (e) {
+      if (mounted) _snack(context, 'Kunne ikke åbne: $e', _danger);
+    }
+  }
+
+  /// Har beskeden et sted at hoppe hen?
+  bool _kanAabnes(Map<String, dynamic> n) {
+    final data = n['data'];
+    if (data is! Map) return false;
+    if (n['data']['fine_type_id'] != null) return widget.isStaff;
+    return data['training_id'] != null || data['poll_id'] != null;
+  }
 
   Future<void> _markerLaest(List<String> ids, void Function() refreshSheet) async {
     if (ids.isEmpty) return;
@@ -806,10 +874,15 @@ class _NotificationsBellState extends State<_NotificationsBell> {
                         tileColor: ulaest
                             ? _neon.withValues(alpha: 0.07)
                             : Colors.transparent,
-                        onTap: ulaest
-                            ? () => _markerLaest(
-                                [n['id'] as String], () => setSheet(() {}))
-                            : null,
+                        // Tryk: markér som læst OG hop derhen beskeden
+                        // handler om. Er der intet at åbne, markeres den bare.
+                        onTap: () {
+                          if (ulaest) {
+                            _markerLaest(
+                                [n['id'] as String], () => setSheet(() {}));
+                          }
+                          if (_kanAabnes(n)) _aabn(n);
+                        },
                         leading: Container(
                           width: 40, height: 40,
                           alignment: Alignment.center,
@@ -841,6 +914,12 @@ class _NotificationsBellState extends State<_NotificationsBell> {
                                     color: _neon, shape: BoxShape.circle),
                               ),
                             ],
+                            if (_kanAabnes(n))
+                              const Padding(
+                                padding: EdgeInsets.only(left: 4),
+                                child: Icon(Icons.chevron_right,
+                                    size: 16, color: _textMuted),
+                              ),
                           ],
                         ),
                       );
@@ -850,7 +929,8 @@ class _NotificationsBellState extends State<_NotificationsBell> {
               if (_unread > 0)
                 Padding(
                   padding: const EdgeInsets.fromLTRB(20, 6, 20, 0),
-                  child: Text('Tryk på en besked for at markere den som læst.',
+                  child: Text('Tryk på en besked for at åbne den og markere '
+                      'den som læst.',
                       style: _body(size: 11.5, color: _textMuted)),
                 ),
               const SafeArea(top: false, child: SizedBox(height: 8)),

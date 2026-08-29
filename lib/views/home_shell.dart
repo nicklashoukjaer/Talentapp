@@ -31,6 +31,9 @@ class _HomeShellState extends State<HomeShell> {
     if (uid != null) unawaited(NotificationService.identify(uid));
     // Varm MobilePay Box-config så betalingsknappen i Bødekassen er klar.
     unawaited(ClubConfig.fetchMobilePayBox());
+    // Blev profilen oprettet via et invitations-link, men krævede mailen
+    // bekræftelse, ligger token'et og venter. Indløs det nu.
+    unawaited(_indloesVentendeInvite());
     HardwareKeyboard.instance.addHandler(_handleGlobalKey);
   }
 
@@ -51,6 +54,23 @@ class _HomeShellState extends State<HomeShell> {
     if (!hasMod) return false;
     _openPalette();
     return true;
+  }
+
+  Future<void> _indloesVentendeInvite() async {
+    final token = pendingInvite;
+    if (token == null || token.isEmpty) return;
+    try {
+      final hold = await supabase.rpc('indloes_invite', params: {'p_token': token});
+      platformStorageSet('pending_invite', '');
+      pendingInvite = null;
+      if (mounted && hold is String) {
+        _snack(context, 'Du er sat på $hold 🎾', _success);
+      }
+    } catch (_) {
+      // Brugt eller udløbet — en træner kan sætte personen på hold i hånden.
+      platformStorageSet('pending_invite', '');
+      pendingInvite = null;
+    }
   }
 
   Future<void> _loadProfile() async {

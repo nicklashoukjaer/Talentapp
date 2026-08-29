@@ -41,9 +41,6 @@ const _supabaseAnonKey = String.fromEnvironment('SUPABASE_ANON_KEY');
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Klubkode — kræves for at oprette en ny bruger. Skift den her når den ændres.
-// ─────────────────────────────────────────────────────────────────────────────
-String clubCode = 'Talentloes2026';
 
 const _addressUnspecified = 'Ikke angivet';
 const _defaultMaxParticipants = 4;
@@ -52,10 +49,23 @@ const _defaultMaxParticipants = 4;
 // Fortæller AuthGate at appen blev åbnet via et nulstil-kodeord-link.
 bool pendingPasswordRecovery = false;
 
+/// Invitations-token fra et engangs-link, hvis appen blev åbnet med et.
+String? pendingInvite;
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   // Fang recovery-linket før SDK'et behandler og rydder URL'en.
   pendingPasswordRecovery = Uri.base.fragment.contains('type=recovery');
+  // Invitations-link: .../?invite=<token>. Gemmes så det overlever at
+  // Supabase-SDK'et rydder URL'en, og at brugeren skal bekræfte sin mail.
+  final inviteParam = Uri.base.queryParameters['invite'];
+  if (inviteParam != null && inviteParam.trim().isNotEmpty) {
+    pendingInvite = inviteParam.trim();
+    platformStorageSet('pending_invite', pendingInvite!);
+  } else {
+    final gemt = platformStorageGet('pending_invite');
+    pendingInvite = (gemt != null && gemt.isNotEmpty) ? gemt : null;
+  }
   if (_supabaseUrl.isEmpty || _supabaseAnonKey.isEmpty) {
     runApp(const _MissingEnvApp());
     return;
@@ -123,7 +133,9 @@ class _AuthGateState extends State<AuthGate> {
       stream: supabase.auth.onAuthStateChange,
       builder: (context, _) {
         final session = supabase.auth.currentSession;
-        return session == null ? const AuthScreen() : const HomeShell();
+        return session == null
+            ? AuthScreen(inviteToken: pendingInvite)
+            : const HomeShell();
       },
     );
   }

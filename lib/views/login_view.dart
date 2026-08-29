@@ -3,7 +3,10 @@
 part of '../main.dart';
 
 class AuthScreen extends StatefulWidget {
-  const AuthScreen({super.key});
+  /// Engangs-token fra et invitations-link. Kun med et gyldigt token kan man
+  /// oprette en profil — ellers viser skærmen udelukkende log ind.
+  final String? inviteToken;
+  const AuthScreen({super.key, this.inviteToken});
   @override
   State<AuthScreen> createState() => _AuthScreenState();
 }
@@ -11,19 +14,53 @@ class AuthScreen extends StatefulWidget {
 class _AuthScreenState extends State<AuthScreen> {
   bool _isSignup = false;
   bool _loading  = false;
+  // Invitationen: holdets navn hvis linket er gyldigt, ellers en forklaring.
+  String? _inviteHold;
+  String? _inviteFejl;
+  bool _inviteTjekker = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _tjekInvite();
+  }
+
+  Future<void> _tjekInvite() async {
+    final token = widget.inviteToken;
+    if (token == null || token.isEmpty) return;
+    setState(() => _inviteTjekker = true);
+    try {
+      final rows = await supabase.rpc('invite_info', params: {'p_token': token});
+      final list = List<Map<String, dynamic>>.from(rows as List);
+      if (!mounted) return;
+      if (list.isEmpty) {
+        setState(() => _inviteFejl = 'Invitationen findes ikke.');
+      } else if (list.first['gyldig'] != true) {
+        setState(() => _inviteFejl =
+            'Invitationen er allerede brugt. Bed om et nyt link.');
+      } else {
+        setState(() {
+          _inviteHold = list.first['hold'] as String?;
+          _isSignup = true;
+        });
+      }
+    } catch (e) {
+      if (mounted) setState(() => _inviteFejl = 'Kunne ikke slå linket op: $e');
+    } finally {
+      if (mounted) setState(() => _inviteTjekker = false);
+    }
+  }
 
   final _formKey      = GlobalKey<FormState>();
   final _emailCtrl    = TextEditingController();
   final _passwordCtrl = TextEditingController();
   final _navnCtrl     = TextEditingController();
-  final _clubCodeCtrl = TextEditingController();
 
   @override
   void dispose() {
     _emailCtrl.dispose();
     _passwordCtrl.dispose();
     _navnCtrl.dispose();
-    _clubCodeCtrl.dispose();
     super.dispose();
   }
 
@@ -38,9 +75,15 @@ class _AuthScreenState extends State<AuthScreen> {
           data:     {'navn': _navnCtrl.text.trim()},
         );
         if (!mounted) return;
-        if (res.session == null) {
+        if (res.session != null) {
+          // Logget ind med det samme → sæt personen på holdet nu.
+          await _indloesInvite();
+        } else {
+          // Mailbekræftelse kræves. Token'et ligger gemt lokalt og indløses
+          // ved første login, så holdet ikke går tabt.
           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text('Profil oprettet — tjek din mail for bekræftelseslink.'),
+            content: Text('Profil oprettet — tjek din mail for bekræftelseslink. '
+                'Du sættes på holdet når du logger ind.'),
           ));
           setState(() => _isSignup = false);
         }
@@ -56,6 +99,24 @@ class _AuthScreenState extends State<AuthScreen> {
       _showError('Uventet fejl: $e');
     } finally {
       if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _indloesInvite() async {
+    final token = widget.inviteToken;
+    if (token == null) return;
+    try {
+      final hold = await supabase.rpc('indloes_invite', params: {'p_token': token});
+      platformStorageSet('pending_invite', '');
+      pendingInvite = null;
+      if (mounted && hold is String) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Du er nu på $hold 🎾')),
+        );
+      }
+    } catch (_) {
+      // Linket kan være brugt i mellemtiden. Profilen findes stadig; en
+      // træner kan sætte personen på hold i hånden.
     }
   }
 
@@ -156,15 +217,51 @@ class _AuthScreenState extends State<AuthScreen> {
                               letterSpacing: 4,
                               fontWeight: FontWeight.bold)),
                       const SizedBox(height: 24),
-                      SegmentedButton<bool>(
-                        segments: const [
-                          ButtonSegment(value: false, label: Text('Log ind')),
-                          ButtonSegment(value: true,  label: Text('Opret profil')),
-                        ],
-                        selected: {_isSignup},
-                        onSelectionChanged: (s) => setState(() => _isSignup = s.first),
-                      ),
-                      const SizedBox(height: 24),
+                      if (_inviteTjekker) ...[
+                        const Center(child: CircularProgressIndicator()),
+                        const SizedBox(height: 24),
+                      ] else if (_inviteHold != null) ...[
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(14),
+                          decoration: BoxDecoration(
+                            color: _neon.withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(14),
+                            border: Border.all(
+                                color: _neon.withValues(alpha: 0.45)),
+                          ),
+                          child: Column(children: [
+                            Text('OPRET PROFIL',
+                                style: _body(
+                                    size: 11,
+                                    weight: FontWeight.w700,
+                                    spacing: 1.2,
+                                    color: _neon)),
+                            const SizedBox(height: 4),
+                            Text('Du bliver sat på $_inviteHold',
+                                textAlign: TextAlign.center,
+                                style: _body(
+                                    size: 14, weight: FontWeight.w600)),
+                          ]),
+                        ),
+                        const SizedBox(height: 20),
+                      ] else if (_inviteFejl != null) ...[
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(14),
+                          decoration: BoxDecoration(
+                            color: _danger.withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(14),
+                            border: Border.all(
+                                color: _danger.withValues(alpha: 0.45)),
+                          ),
+                          child: Text(_inviteFejl!,
+                              textAlign: TextAlign.center,
+                              style: _body(size: 13, color: _danger)),
+                        ),
+                        const SizedBox(height: 20),
+                      ],
+                      const SizedBox(height: 4),
                       if (_isSignup) ...[
                         TextFormField(
                           controller: _navnCtrl,
@@ -177,22 +274,6 @@ class _AuthScreenState extends State<AuthScreen> {
                               ? 'Indtast dit navn' : null,
                         ),
                         const SizedBox(height: 16),
-                        TextFormField(
-                          controller: _clubCodeCtrl,
-                          textInputAction: TextInputAction.next,
-                          decoration: const InputDecoration(
-                            labelText: 'Klubkode',
-                            prefixIcon: Icon(Icons.vpn_key_outlined),
-                            helperText: 'Få koden af en træner',
-                          ),
-                          validator: (v) {
-                            if (v == null || v.trim().isEmpty) {
-                              return 'Indtast klubkode';
-                            }
-                            if (v.trim() != clubCode) return 'Forkert klubkode';
-                            return null;
-                          },
-                        ),
                         const SizedBox(height: 16),
                       ],
                       TextFormField(

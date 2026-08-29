@@ -1301,6 +1301,45 @@ class _MembersAdminViewState extends State<_MembersAdminView> {
     );
   }
 
+  /// Lav et engangs-link der sætter modtageren på dette hold. Erstatter den
+  /// fælles klubkode: linket virker én gang, så det ikke kan deles videre.
+  Future<void> _inviterTilHold(String gid) async {
+    try {
+      final row = await supabase
+          .from('invites')
+          .insert({'group_id': gid, 'oprettet_af': widget.currentUserId})
+          .select('token')
+          .single();
+      final link = '$_passwordResetRedirect/?invite=${row['token']}';
+      await Clipboard.setData(ClipboardData(text: link));
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text('Invitation til ${_groupName(gid)}'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Linket er kopieret. Send det til spilleren — det '
+                  'virker ÉN gang og sætter dem på holdet.'),
+              const SizedBox(height: 12),
+              SelectableText(link,
+                  style: _body(size: 12, color: _textSecondary)),
+            ],
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Luk')),
+          ],
+        ),
+      );
+    } on PostgrestException catch (e) {
+      if (mounted) _snack(context, e.message, _danger);
+    }
+  }
+
   Future<void> _addMembersToTeam(String gid) async {
     final candidates =
         _members.where((m) => !_isMemberOf(m, gid)).toList(growable: false);
@@ -1463,6 +1502,28 @@ class _MembersAdminViewState extends State<_MembersAdminView> {
           if (!isNone) ...[
             const SizedBox(height: 12),
             _addToTeamButton(_teamOpen!),
+            const SizedBox(height: 8),
+            InkWell(
+              onTap: () => _inviterTilHold(_teamOpen!),
+              borderRadius: BorderRadius.circular(13),
+              child: Container(
+                padding: const EdgeInsets.symmetric(vertical: 13),
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(13),
+                  border: Border.all(color: _borderSubtle),
+                ),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  const Icon(Icons.link, size: 16, color: _textSecondary),
+                  const SizedBox(width: 8),
+                  Text('Invitér ny spiller (engangs-link)',
+                      style: _body(
+                          size: 13.5,
+                          weight: FontWeight.w700,
+                          color: _textSecondary)),
+                ]),
+              ),
+            ),
           ],
         ],
       );

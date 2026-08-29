@@ -861,32 +861,56 @@ class _OversigtTabState extends State<OversigtTab>
   // Samme kort, samme data, samme handlinger som på mobilen — kun opstillingen
   // er anderledes. Mobilen rammer aldrig disse metoder.
 
-  /// Måneds-skillere som i mobilens liste, men med kortene sat op i et gitter.
-  /// Kort af forskellig højde toppstilles, så rækkerne ikke hopper.
-  List<Widget> _maanedsGitter(List<_FeedItem> items, {int kolonner = 2}) {
-    final out = <Widget>[];
+  /// Begivenhederne som kompakt tabel med månedsskillere. Ét kort pr. linje
+  /// var uoverskueligt når 24 træninger ligner hinanden — her bliver
+  /// gentagelserne til kolonner man kan skimme.
+  List<Widget> _maanedsTabel(List<_FeedItem> items) {
+    final kanStyre = items.whereType<_TrainingFeedItem>()
+        .any((t) => _canManageTraining(t.training));
+    final out = <Widget>[_tabelHoved(kanStyre: kanStyre)];
     final buffer = <_FeedItem>[];
 
     void tomBuffer() {
-      for (var i = 0; i < buffer.length; i += kolonner) {
-        final raekke = buffer.skip(i).take(kolonner).toList();
-        out.add(Padding(
-          padding: const EdgeInsets.only(bottom: 14),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              for (var k = 0; k < kolonner; k++) ...[
-                if (k > 0) const SizedBox(width: 14),
-                Expanded(
-                  child: k < raekke.length
-                      ? RepaintBoundary(child: _feedCard(raekke[k]))
-                      : const SizedBox.shrink(),
-                ),
-              ],
-            ],
-          ),
+      if (buffer.isEmpty) return;
+      final linjer = <Widget>[];
+      for (var i = 0; i < buffer.length; i++) {
+        final item = buffer[i];
+        if (item is! _TrainingFeedItem) {
+          // Ikke-træninger (fx afstemninger) beholder deres kort.
+          linjer.add(Padding(
+            padding: const EdgeInsets.symmetric(vertical: 7),
+            child: _feedCard(item),
+          ));
+          continue;
+        }
+        linjer.add(_FeedTrainingRow(
+          item: item,
+          isAdmin: widget.isAdmin,
+          canManage: _canManageTraining(item.training),
+          groupNames: _groupNamesFor(item.training),
+          foerste: i == 0,
+          visMenuKolonne: kanStyre,
+          onSignUp: () => _signUp(item),
+          onDecline: () => _decline(item),
+          onDelete: _canManageTraining(item.training)
+              ? () => _deleteTraining(item)
+              : null,
+          onPublish: _canManageTraining(item.training)
+              ? () => _publishTraining(item)
+              : null,
         ));
       }
+      out.add(Padding(
+        padding: const EdgeInsets.only(bottom: 18),
+        child: Container(
+          decoration: BoxDecoration(
+            color: _surfaceDark,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: _borderSubtle),
+          ),
+          child: Column(children: linjer),
+        ),
+      ));
       buffer.clear();
     }
 
@@ -1089,7 +1113,7 @@ class _OversigtTabState extends State<OversigtTab>
         children: [
           Center(
             child: ConstrainedBox(
-              constraints: BoxConstraints(maxWidth: pc ? 1500 : 760),
+              constraints: BoxConstraints(maxWidth: pc ? 1800 : 760),
               child: _pcRamme(
                 pc,
                 polls,
@@ -1215,7 +1239,7 @@ class _OversigtTabState extends State<OversigtTab>
                         MediaQuery.of(context).size.width >= 700))
                       ...(showingTrainings && !_showHistory
                           ? (pc
-                              ? _maanedsGitter(visible.skip(1).toList())
+                              ? _maanedsTabel(visible.skip(1).toList())
                               : _interleaveMonths(visible.skip(1).toList()))
                           : visible.map((item) => RepaintBoundary(
                               child: Padding(
@@ -1496,6 +1520,319 @@ class _FeedTrainingCardState extends State<_FeedTrainingCard> {
                         ]),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+// ─── PC: begivenheder som kompakt tabel ─────────────────────────────────────
+//
+// 24 næsten ens træninger som store kort er umuligt at overskue. Her er én
+// linje pr. begivenhed med faste kolonner, så gentagelserne bliver til noget
+// man kan skimme. Samme data og samme handlinger som kortet — kun tættere.
+// Bruges udelukkende på PC; mobilen har kortene som hidtil.
+
+const double _kolDato   = 92;
+const double _kolTid    = 112;
+const double _kolTilm   = 88;
+const double _kolHandl  = 250;
+const double _kolMenu   = 34;
+const double _kolMellem = 14;
+
+Widget _tabelHoved({required bool kanStyre}) => Padding(
+      // Flugter med rækkernes vandrette indrykning (10 px) plus kortets kant.
+      padding: const EdgeInsets.fromLTRB(11, 0, 11, 6),
+      child: Row(children: [
+        SizedBox(width: _kolDato, child: _kolNavn('DATO')),
+        const SizedBox(width: _kolMellem),
+        Expanded(flex: 3, child: _kolNavn('BEGIVENHED')),
+        const SizedBox(width: _kolMellem),
+        SizedBox(width: _kolTid, child: _kolNavn('TID')),
+        const SizedBox(width: _kolMellem),
+        Expanded(flex: 2, child: _kolNavn('HOLD')),
+        const SizedBox(width: _kolMellem),
+        SizedBox(width: _kolTilm, child: _kolNavn('TILMELDT')),
+        const SizedBox(width: _kolMellem),
+        const SizedBox(width: _kolHandl),
+        if (kanStyre) const SizedBox(width: _kolMenu),
+      ]),
+    );
+
+Widget _kolNavn(String s) => Text(s,
+    style: _body(
+        size: 10.5, weight: FontWeight.w700, spacing: 0.9, color: _textMuted));
+
+class _FeedTrainingRow extends StatelessWidget {
+  final _TrainingFeedItem item;
+  final bool isAdmin;
+  final bool canManage;
+  final List<String> groupNames;
+  final VoidCallback onSignUp;
+  final VoidCallback onDecline;
+  final VoidCallback? onDelete;
+  final VoidCallback? onPublish;
+  final bool foerste;
+
+  /// Reserverer menu-kolonnen på alle linjer, også dem uden menu — ellers
+  /// ville kolonnerne stå forskudt fra linje til linje.
+  final bool visMenuKolonne;
+
+  const _FeedTrainingRow({
+    required this.item,
+    required this.isAdmin,
+    required this.canManage,
+    required this.groupNames,
+    required this.onSignUp,
+    required this.onDecline,
+    required this.foerste,
+    required this.visMenuKolonne,
+    this.onDelete,
+    this.onPublish,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = item.training;
+    final start = DateTime.parse(t['start_tid'] as String).toLocal();
+    final slut = DateTime.parse(t['slut_tid'] as String).toLocal();
+    final deadline =
+        DateTime.parse(t['tilmeldings_deadline'] as String).toLocal();
+    final adresse = t['adresse'] as String;
+    final max = t['max_deltagere'] as int?;
+    final cnt = item.signedUpCount;
+    final status = item.myStatus;
+    final hasAddr = adresse.isNotEmpty && adresse != _addressUnspecified;
+    final deadlinePassed = DateTime.now().isAfter(deadline);
+    final canSignUp = !deadlinePassed || isAdmin;
+    final canDecline =
+        canSignUp || status == 'tilmeldt' || status == 'venteliste';
+    final isSignedUp = status == 'tilmeldt' || status == 'venteliste';
+    final hasDeclined = status == 'afmeldt';
+    final synligFraStr = t['synlig_fra'] as String?;
+    final hiddenUntil =
+        synligFraStr == null ? null : DateTime.parse(synligFraStr).toLocal();
+    final isHidden = hiddenUntil != null && hiddenUntil.isAfter(DateTime.now());
+    final staffHidden = isAdmin && isHidden && onPublish != null;
+
+    void openDetail() => Navigator.of(context).push(MaterialPageRoute(
+          builder: (_) => EventDetailScreen(
+              training: t, isStaff: isAdmin, canManage: canManage),
+        ));
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: openDetail,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+          decoration: BoxDecoration(
+            border: foerste
+                ? null
+                : const Border(top: BorderSide(color: _borderSubtle)),
+          ),
+          child: Row(children: [
+            // Dato
+            SizedBox(
+              width: _kolDato,
+              child: Row(children: [
+                Text('${start.day}',
+                    style: _cond(
+                        size: 19, weight: FontWeight.w800, color: _neon)),
+                const SizedBox(width: 5),
+                Text(_shortMonths[start.month - 1],
+                    style: _body(size: 11, color: _textMuted)),
+              ]),
+            ),
+            const SizedBox(width: _kolMellem),
+            // Begivenhed (+ adresse som understreg)
+            Expanded(
+              flex: 3,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text((t['titel'] as String).toUpperCase(),
+                      style: _cond(size: 15, weight: FontWeight.w700),
+                      maxLines: 1, overflow: TextOverflow.ellipsis),
+                  if (hasAddr)
+                    Text(adresse,
+                        style: _body(size: 11.5, color: _textMuted),
+                        maxLines: 1, overflow: TextOverflow.ellipsis),
+                ],
+              ),
+            ),
+            const SizedBox(width: _kolMellem),
+            // Tid
+            SizedBox(
+              width: _kolTid,
+              child: Text('${_fmtTime(start)}–${_fmtTime(slut)}',
+                  style: _body(size: 12.5, color: _textSecondary),
+                  maxLines: 1, overflow: TextOverflow.ellipsis),
+            ),
+            const SizedBox(width: _kolMellem),
+            // Hold
+            Expanded(
+              flex: 2,
+              child: Text(groupNames.isEmpty ? '—' : groupNames.join(' + '),
+                  style: _body(size: 12.5, color: _textSecondary),
+                  maxLines: 1, overflow: TextOverflow.ellipsis),
+            ),
+            const SizedBox(width: _kolMellem),
+            // Tilmeldt
+            SizedBox(
+              width: _kolTilm,
+              child: Row(children: [
+                const Icon(Icons.people_outline, size: 13, color: _success),
+                const SizedBox(width: 5),
+                Flexible(
+                  child: Text.rich(
+                    TextSpan(children: [
+                      TextSpan(
+                          text: '$cnt',
+                          style: _body(
+                              size: 12.5,
+                              weight: FontWeight.w700,
+                              color: _success)),
+                      if (max != null)
+                        TextSpan(
+                            text: ' / $max',
+                            style: _body(size: 12, color: _textMuted)),
+                    ]),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ]),
+            ),
+            const SizedBox(width: _kolMellem),
+            // Handling
+            SizedBox(
+              width: _kolHandl,
+              child: staffHidden
+                  ? Row(children: [
+                      const Icon(Icons.visibility_off_outlined,
+                          size: 14, color: _textMuted),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text('Udgives ${_fmtDate(hiddenUntil)}',
+                            style: _body(size: 11.5, color: _textMuted),
+                            maxLines: 1, overflow: TextOverflow.ellipsis),
+                      ),
+                      _MiniKnap(
+                          label: 'Udgiv nu',
+                          farve: _neon,
+                          onTap: onPublish),
+                    ])
+                  : isSignedUp
+                      ? Row(children: [
+                          const Icon(Icons.check, size: 14, color: _success),
+                          const SizedBox(width: 5),
+                          Expanded(
+                            child: Text('Tilmeldt',
+                                style: _body(
+                                    size: 12.5,
+                                    weight: FontWeight.w700,
+                                    color: _success),
+                                maxLines: 1),
+                          ),
+                          _MiniKnap(
+                              label: 'Afbud',
+                              farve: _danger,
+                              onTap: canDecline ? onDecline : null),
+                        ])
+                      : hasDeclined
+                          ? Row(children: [
+                              const Icon(Icons.close, size: 14, color: _danger),
+                              const SizedBox(width: 5),
+                              Expanded(
+                                child: Text('Meldt afbud',
+                                    style: _body(
+                                        size: 12.5,
+                                        weight: FontWeight.w700,
+                                        color: _danger),
+                                    maxLines: 1),
+                              ),
+                              _MiniKnap(
+                                  label: 'Tilmeld',
+                                  farve: _success,
+                                  onTap: canSignUp ? onSignUp : null),
+                            ])
+                          : Row(children: [
+                              Expanded(
+                                child: _MiniKnap(
+                                    label: 'Tilmeld',
+                                    farve: _neon,
+                                    fyldt: true,
+                                    bred: true,
+                                    onTap: canSignUp ? onSignUp : null),
+                              ),
+                              const SizedBox(width: 7),
+                              Expanded(
+                                child: _MiniKnap(
+                                    label: 'Afbud',
+                                    farve: _textSecondary,
+                                    bred: true,
+                                    onTap: canDecline ? onDecline : null),
+                              ),
+                            ]),
+            ),
+            if (visMenuKolonne)
+              SizedBox(
+                width: _kolMenu,
+                child: canManage
+                    ? _CardMenu(onDelete: onDelete)
+                    : const SizedBox.shrink(),
+              ),
+          ]),
+        ),
+      ),
+    );
+  }
+}
+
+/// Lav knap til tabellinjerne — samme handlinger som kortets, bare i den
+/// højde en tabelrække har råd til.
+class _MiniKnap extends StatelessWidget {
+  final String label;
+  final Color farve;
+  final VoidCallback? onTap;
+  final bool fyldt;
+  final bool bred;
+  const _MiniKnap({
+    required this.label,
+    required this.farve,
+    required this.onTap,
+    this.fyldt = false,
+    this.bred = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final aktiv = onTap != null;
+    final f = aktiv ? farve : _textMuted;
+    return Material(
+      color: fyldt && aktiv ? f : Colors.transparent,
+      borderRadius: BorderRadius.circular(9),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(9),
+        child: Container(
+          padding: EdgeInsets.symmetric(horizontal: bred ? 8 : 11, vertical: 7),
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(9),
+            border: fyldt && aktiv
+                ? null
+                : Border.all(color: f.withValues(alpha: 0.5)),
+          ),
+          child: Text(label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: _body(
+                  size: 12,
+                  weight: FontWeight.w700,
+                  color: fyldt && aktiv ? Colors.white : f)),
         ),
       ),
     );

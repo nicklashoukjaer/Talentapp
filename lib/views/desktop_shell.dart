@@ -67,8 +67,15 @@ class _DesktopShell extends StatelessWidget {
                   Text(titel.toUpperCase(),
                       style: _cond(size: 22, weight: FontWeight.w800)),
                   const SizedBox(width: 16),
-                  Flexible(child: topbarMidt),
-                  const Spacer(),
+                  // Ét felt der æder al plads mellem titlen og handlingerne,
+                  // så knapperne står helt ude i højre kant. (Flexible +
+                  // Spacer delte pladsen ligeligt og efterlod et hul.)
+                  Expanded(
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: topbarMidt,
+                    ),
+                  ),
                   _CtrlKKnap(onTap: onOpenPalette),
                   const SizedBox(width: 12),
                   ?bell,

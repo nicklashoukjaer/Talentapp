@@ -959,6 +959,9 @@ class _MembersAdminViewState extends State<_MembersAdminView> {
   Map<String, Set<String>> _captains = {};   // uid → gruppe-id'er (kaptajn)
   Map<String, Set<String>> _trainers = {};   // uid → gruppe-id'er (træner)
   Map<String, int> _skyldigt = {};           // uid → ubetalt øre
+  // gid → uid'er der får besked når nogen til-/afmelder sig holdets
+  // begivenheder. Uafhængig af medlemskab.
+  Map<String, Set<String>> _tilmeldingsAbon = {};
   bool _loading = true;
   String _tab = 'medlemmer';
   String _search = '';
@@ -979,6 +982,7 @@ class _MembersAdminViewState extends State<_MembersAdminView> {
         supabase.from('group_members')
             .select('group_id, user_id, is_captain, is_trainer'),
         supabase.from('fine_leaderboard').select('id, skyldigt_oere'),
+        supabase.from('tilmeldings_abonnenter').select('group_id, user_id'),
       ]);
       final gm = List<Map<String, dynamic>>.from(res[2] as List);
       final map = <String, Set<String>>{};
@@ -995,8 +999,13 @@ class _MembersAdminViewState extends State<_MembersAdminView> {
       for (final r in List<Map<String, dynamic>>.from(res[3] as List)) {
         skyldigt[r['id'] as String] = (r['skyldigt_oere'] as num?)?.toInt() ?? 0;
       }
+      final abon = <String, Set<String>>{};
+      for (final r in List<Map<String, dynamic>>.from(res[4] as List)) {
+        (abon[r['group_id'] as String] ??= {}).add(r['user_id'] as String);
+      }
       if (!mounted) return;
       setState(() {
+        _tilmeldingsAbon = abon;
         _groups = List<Map<String, dynamic>>.from(res[0] as List);
         _members = List<Map<String, dynamic>>.from(res[1] as List);
         _membership = map;
@@ -1428,6 +1437,180 @@ class _MembersAdminViewState extends State<_MembersAdminView> {
     );
   }
 
+  /// Hvem skal have besked når nogen til-/afmelder sig holdets begivenheder?
+  ///
+  /// Listen er ikke bundet til medlemskab — en admin kan følge et hold uden at
+  /// være spiller på det. Derfor vises alle klubbens medlemmer.
+  Future<void> _redigerTilmeldingsAbon(String gid) async {
+    final valgte = {...(_tilmeldingsAbon[gid] ?? const <String>{})};
+    final gemt = await showModalBottomSheet<Set<String>>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => StatefulBuilder(builder: (ctx, setSheet) {
+        return SafeArea(
+          top: false,
+          child: Container(
+            margin: const EdgeInsets.all(12),
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 10),
+            constraints:
+                BoxConstraints(maxHeight: MediaQuery.of(ctx).size.height * 0.8),
+            decoration: BoxDecoration(
+              color: _surfaceDark,
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: _borderSubtle),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text('BESKED VED TIL-/AFMELDING',
+                    style: _cond(size: 19, weight: FontWeight.w800)),
+                const SizedBox(height: 4),
+                Text(
+                    'De valgte får klokke og push hver gang nogen svarer på '
+                    '${_groupName(gid)}. Man behøver ikke være på holdet.',
+                    style: _body(size: 12.5, color: _textSecondary)),
+                const SizedBox(height: 14),
+                Flexible(
+                  child: SingleChildScrollView(
+                    child: Column(
+                      children: [
+                        for (final m in _members)
+                          Builder(builder: (_) {
+                            final id = m['id'] as String;
+                            final valgt = valgte.contains(id);
+                            return InkWell(
+                              onTap: () => setSheet(() {
+                                if (!valgte.add(id)) valgte.remove(id);
+                              }),
+                              borderRadius: BorderRadius.circular(12),
+                              child: Container(
+                                margin: const EdgeInsets.only(bottom: 6),
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 12, vertical: 11),
+                                decoration: BoxDecoration(
+                                  color: valgt
+                                      ? _neon.withValues(alpha: 0.14)
+                                      : _surfaceElevated,
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(
+                                      color: valgt ? _neon : _borderSubtle),
+                                ),
+                                child: Row(children: [
+                                  Icon(
+                                      valgt
+                                          ? Icons.check_box
+                                          : Icons.check_box_outline_blank,
+                                      size: 19,
+                                      color: valgt ? _neon : _textMuted),
+                                  const SizedBox(width: 11),
+                                  Expanded(
+                                    child: Text(m['navn'] as String? ?? '?',
+                                        style: _body(
+                                            size: 14,
+                                            weight: FontWeight.w600)),
+                                  ),
+                                  if (_isMemberOf(m, gid))
+                                    Text('på holdet',
+                                        style: _body(
+                                            size: 11, color: _textMuted)),
+                                ]),
+                              ),
+                            );
+                          }),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                FilledButton(
+                  onPressed: () => Navigator.of(ctx).pop(valgte),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: _neon,
+                    padding: const EdgeInsets.symmetric(vertical: 13),
+                  ),
+                  child: const Text('Gem'),
+                ),
+              ],
+            ),
+          ),
+        );
+      }),
+    );
+    if (gemt == null) return;
+
+    final foer = _tilmeldingsAbon[gid] ?? const <String>{};
+    final tilfoej = gemt.difference(foer);
+    final fjern = foer.difference(gemt);
+    if (tilfoej.isEmpty && fjern.isEmpty) return;
+
+    try {
+      if (tilfoej.isNotEmpty) {
+        await supabase.from('tilmeldings_abonnenter').insert([
+          for (final uid in tilfoej) {'group_id': gid, 'user_id': uid},
+        ]);
+      }
+      for (final uid in fjern) {
+        await supabase
+            .from('tilmeldings_abonnenter')
+            .delete()
+            .eq('group_id', gid)
+            .eq('user_id', uid);
+      }
+      if (mounted) setState(() => _tilmeldingsAbon[gid] = gemt);
+    } on PostgrestException catch (e) {
+      if (mounted) _snack(context, e.message, _danger);
+      await _load();
+    }
+  }
+
+  /// Knappen i holddetaljen. Tegnes ALTID — også når ingen er valgt — så det
+  /// ikke ligner at funktionen mangler.
+  Widget _tilmeldingsAbonKnap(String gid) {
+    final valgte = _tilmeldingsAbon[gid] ?? const <String>{};
+    final navne = _members
+        .where((m) => valgte.contains(m['id'] as String))
+        .map((m) => (m['navn'] as String? ?? '?').split(' ').first)
+        .toList();
+    return InkWell(
+      onTap: () => _redigerTilmeldingsAbon(gid),
+      borderRadius: BorderRadius.circular(13),
+      child: Container(
+        padding: const EdgeInsets.all(13),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(13),
+          border: Border.all(color: _borderSubtle),
+        ),
+        child: Row(children: [
+          const Icon(Icons.notifications_active_outlined,
+              size: 17, color: _textSecondary),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text('Besked ved til-/afmelding',
+                    style: _body(size: 13.5, weight: FontWeight.w700)),
+                Text(
+                    navne.isEmpty
+                        ? 'Ingen får besked endnu'
+                        : navne.join(', '),
+                    style: _body(
+                        size: 11.5,
+                        color: navne.isEmpty ? _gold : _textSecondary),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis),
+              ],
+            ),
+          ),
+          const Icon(Icons.chevron_right, size: 16, color: _textMuted),
+        ]),
+      ),
+    );
+  }
+
   /// Hold-detaljen. På mobilen erstatter den listen; på PC står den i
   /// højre spalte, så medlemslisten bliver stående ved siden af.
   Widget _holdDetalje(List<Map<String, dynamic>> noTeam) {
@@ -1495,6 +1678,8 @@ class _MembersAdminViewState extends State<_MembersAdminView> {
         if (!isNone) ...[
           const SizedBox(height: 12),
           _addToTeamButton(_teamOpen!),
+          const SizedBox(height: 8),
+          _tilmeldingsAbonKnap(_teamOpen!),
           const SizedBox(height: 8),
           InkWell(
             onTap: () => _inviterTilHold(_teamOpen!),

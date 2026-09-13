@@ -1120,6 +1120,9 @@ class _OversigtTabState extends State<OversigtTab>
                 Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  // Push kan ikke slås til for folk — de skal selv trykke ja.
+                  // Banneret tegner sig selv væk når de har gjort det.
+                  const _PushBanner(),
                   // Ingen in-body titel: app-headeren viser "DE TALENTLØSE
                   // HJØRRING" + tragt (hold-filter). Vi starter direkte på
                   // Kommende/Historik som i prototypen.
@@ -1253,6 +1256,138 @@ class _OversigtTabState extends State<OversigtTab>
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Banner der beder om push — men kun til dem der ikke har det.
+///
+/// Prompten kan ikke slås til for folk: browseren og telefonen kræver at
+/// personen selv trykker ja. Knappen lå kun inde i Profil-fanen, og 17 ud af
+/// 22 havde derfor aldrig fundet den. Her ligger den hvor folk kigger.
+///
+/// Tegner INTET når man allerede har push, eller har lukket banneret.
+class _PushBanner extends StatefulWidget {
+  const _PushBanner();
+  @override
+  State<_PushBanner> createState() => _PushBannerState();
+}
+
+class _PushBannerState extends State<_PushBanner> {
+  static const _skjultNoegle = 'push_banner_skjult';
+
+  /// null = ved det ikke endnu (så tegner vi ingenting frem for at blinke).
+  bool? _harPush;
+  bool _busy = false;
+  bool _skjult = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _skjult = platformStorageGet(_skjultNoegle) == '1';
+    if (!_skjult) _tjek();
+  }
+
+  Future<void> _tjek() async {
+    final uid = supabase.auth.currentUser?.id;
+    if (uid == null) return;
+    try {
+      final row = await supabase
+          .from('profiles')
+          .select('onesignal_id')
+          .eq('id', uid)
+          .maybeSingle();
+      if (!mounted) return;
+      setState(() => _harPush = row?['onesignal_id'] != null);
+    } catch (_) {
+      // Kan vi ikke slå det op, tier vi hellere end at tigge uden grund.
+      if (mounted) setState(() => _harPush = true);
+    }
+  }
+
+  void _luk() {
+    platformStorageSet(_skjultNoegle, '1');
+    setState(() => _skjult = true);
+  }
+
+  Future<void> _slaaTil() async {
+    setState(() => _busy = true);
+    final result = await NotificationService.requestPermissionAndSaveToken();
+    if (!mounted) return;
+    setState(() => _busy = false);
+    switch (result) {
+      case PushResult.saved:
+        setState(() => _harPush = true);
+        _snack(context, 'Notifikationer aktiveret 🎾', _success);
+      case PushResult.denied:
+        _snack(
+            context,
+            'Tilladelse blev ikke givet. Tjek browserens eller telefonens '
+            'notifikations-indstillinger og prøv igen.',
+            _gold);
+      case PushResult.notConfigured:
+        _snack(context, 'Notifikationer er ikke sat op endnu.', _gold);
+      case PushResult.noUser:
+        _snack(context, 'Du skal være logget ind.', _gold);
+      case PushResult.error:
+        _snack(context, 'Noget gik galt. Prøv igen senere.', _danger);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_skjult || _harPush != false) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(14, 12, 8, 12),
+        decoration: BoxDecoration(
+          color: _neon.withValues(alpha: 0.10),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: _neon.withValues(alpha: 0.45)),
+        ),
+        child: Row(children: [
+          const Icon(Icons.notifications_active_outlined,
+              size: 20, color: _neon),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text('Slå notifikationer til',
+                    style: _body(size: 13.5, weight: FontWeight.w700)),
+                Text(
+                    'Så får du besked om nye kampe, ændringer og rykkere — '
+                    'også når appen er lukket.',
+                    style: _body(size: 12, color: _textSecondary)),
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          FilledButton(
+            onPressed: _busy ? null : _slaaTil,
+            style: FilledButton.styleFrom(
+              backgroundColor: _neon,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              textStyle: _body(size: 13, weight: FontWeight.w700),
+            ),
+            child: _busy
+                ? const SizedBox(
+                    width: 15,
+                    height: 15,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2, color: Colors.white))
+                : const Text('Slå til'),
+          ),
+          IconButton(
+            onPressed: _luk,
+            icon: const Icon(Icons.close, size: 17, color: _textMuted),
+            tooltip: 'Ikke nu',
+            visualDensity: VisualDensity.compact,
+          ),
+        ]),
       ),
     );
   }

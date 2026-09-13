@@ -200,6 +200,26 @@ Deno.serve(async (req) => {
       });
       break;
     }
+    case "training_svar": {
+      // Navngiven modtagerliste (abonnenterne på holdet) frem for et hold —
+      // derfor ikke audienceFor() her, samme mønster som boedeforslag.
+      const ids = ((rec._modtagere as unknown[]) ?? []).map(String).filter(
+        Boolean,
+      );
+      if (ids.length === 0) return new Response("no recipients", { status: 200 });
+      const navn = (rec._navn as string) ?? "En spiller";
+      const hvad = (rec._hvad as string) ?? "har svaret";
+      const ikon = (rec._ikon as string) ?? "🎾";
+      const titel = (rec.titel as string) ?? "Begivenhed";
+      const naar = rec.start_tid ? daDateTime(String(rec.start_tid)) : "";
+      const tekst = `${navn} ${hvad} · ${titel}${naar ? ` · ${naar}` : ""}`;
+      result = await sendPush({
+        include_aliases: { external_id: ids },
+        headings: { en: `Svar på begivenhed ${ikon}`, da: `Svar på begivenhed ${ikon}` },
+        contents: { en: tekst, da: tekst },
+      });
+      break;
+    }
     case "fines": {
       const userId = rec.user_id ? String(rec.user_id) : "";
       if (!userId) return new Response("no user_id", { status: 200 });

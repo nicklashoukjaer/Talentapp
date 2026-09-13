@@ -1,4 +1,4 @@
--- TRIN 4 ── Opsætning: Mads følger T1 + T2, Betina følger Damer ────────────
+-- TRIN 4 ── Opsætning: Nicklas følger T1 + T2, Betina følger Damer ─────────
 -- Navnene står KUN her. Bagefter styres det fra appen under
 -- Admin → Medlemmer & hold → hold → "Besked ved til-/afmelding".
 
@@ -6,7 +6,7 @@ insert into public.tilmeldings_abonnenter (user_id, group_id)
 select p.id, g.id
   from public.profiles p
   cross join public.groups g
- where (p.navn = 'Mads Houkjær'
+ where (p.navn = 'Nicklas Houkjær'
         and g.navn in ('Talentløse 1', 'Talentløse 2'))
     or (p.navn = 'Betina Valentin Staal'
         and g.navn = 'Talentløse Damer')

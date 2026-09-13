@@ -220,6 +220,27 @@ Deno.serve(async (req) => {
       });
       break;
     }
+    case "boede_selvmeldt": {
+      // Navngiven modtagerliste (staff) — samme mønster som boedeforslag.
+      const ids = ((rec._modtagere as unknown[]) ?? []).map(String).filter(
+        Boolean,
+      );
+      if (ids.length === 0) return new Response("no recipients", { status: 200 });
+      const navn = (rec._navn as string) ?? "En spiller";
+      const antal = Number(rec._antal ?? 0);
+      const kr = (Number(rec._belob ?? 0) / 100).toLocaleString("da-DK", {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      });
+      const tekst =
+        `${navn} · ${antal} bøde${antal === 1 ? "" : "r"} · ${kr} kr — tjek MobilePay`;
+      result = await sendPush({
+        include_aliases: { external_id: ids },
+        headings: { en: "Bøde meldt betalt 💸", da: "Bøde meldt betalt 💸" },
+        contents: { en: tekst, da: tekst },
+      });
+      break;
+    }
     case "fines": {
       const userId = rec.user_id ? String(rec.user_id) : "";
       if (!userId) return new Response("no user_id", { status: 200 });

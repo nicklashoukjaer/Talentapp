@@ -194,7 +194,8 @@ class BodekasseTabState extends State<BodekasseTab>
   /// Åbner MobilePay med det skyldige beløb forudfyldt — til spillerens holds boks.
   // Synkron: boksen er forvarmet i _load(), så linket kan åbnes direkte i
   // trykket. Se _betalMedMobilePay for hvorfor det er nødvendigt.
-  void _payWithMobilePay(int oere) => _betalMedMobilePay(context, oere);
+  void _payWithMobilePay(int oere) =>
+      _betalMedMobilePay(context, oere, genindlaes: reload);
 
   static Color _commHex(Object? farve) {
     final h = farve as String?;
@@ -1125,7 +1126,7 @@ class _FineHistoryScreenState extends State<FineHistoryScreen> {
 
       final rows = await supabase
           .from('fines')
-          .select('id, titel, belob_oere, begrundelse, status, created_at, paid_at, given_by')
+          .select('id, titel, belob_oere, begrundelse, status, created_at, paid_at, given_by, selvmeldt')
           .eq('user_id', widget.userId)
           .order('created_at', ascending: false);
       final fines = List<Map<String, dynamic>>.from(rows as List);
@@ -1278,7 +1279,8 @@ class _FineHistoryScreenState extends State<FineHistoryScreen> {
   }
 
   /// Åbner MobilePay med det skyldige beløb forudfyldt — til spillerens holds boks.
-  void _payWithMobilePay(int oere) => _betalMedMobilePay(context, oere);
+  void _payWithMobilePay(int oere) =>
+      _betalMedMobilePay(context, oere, genindlaes: _load);
 
   @override
   Widget build(BuildContext context) {
@@ -1608,8 +1610,30 @@ class _FineHistoryRow extends StatelessWidget {
                   ],
                   if (isPaid && paidAt != null) ...[
                     const SizedBox(height: 5),
-                    Text('Betalt ${_fmtDate(paidAt)}',
-                        style: _body(size: 11.5, weight: FontWeight.w600, color: _success)),
+                    // Selvmeldt vises anderledes end godkendt: MobilePay
+                    // bekræfter ikke noget, så en admin skal kunne se
+                    // forskel på "jeg har godkendt den" og "spilleren siger
+                    // selv han har betalt".
+                    if (fine['selvmeldt'] == true)
+                      Row(children: [
+                        const Icon(Icons.info_outline, size: 13, color: _gold),
+                        const SizedBox(width: 5),
+                        Expanded(
+                          child: Text(
+                              'Meldt betalt af spilleren selv '
+                              '${_fmtDate(paidAt)} — ikke bekræftet',
+                              style: _body(
+                                  size: 11.5,
+                                  weight: FontWeight.w600,
+                                  color: _gold)),
+                        ),
+                      ])
+                    else
+                      Text('Betalt ${_fmtDate(paidAt)}',
+                          style: _body(
+                              size: 11.5,
+                              weight: FontWeight.w600,
+                              color: _success)),
                   ],
                   if (isAdmin && (!isPaid || onDelete != null)) ...[
                     const SizedBox(height: 10),
@@ -1672,7 +1696,8 @@ void _openMobilePay(BuildContext context, String box, int oere) {
 /// Betal-knappen. Synkron hele vejen til `launchUrl` når boksen er kendt.
 /// Er der flere holds-bokse at vælge imellem, åbnes vælgeren — og dér er
 /// brugerens tryk på en række en ny aktivering, så linket må åbnes derfra.
-void _betalMedMobilePay(BuildContext context, int oere) {
+void _betalMedMobilePay(BuildContext context, int oere,
+    {Future<void> Function()? genindlaes}) {
   final teams = ClubConfig.cachedTeamBoxes ?? const [];
   if (teams.length > 1) {
     showModalBottomSheet<({String navn, String box})>(
@@ -1682,6 +1707,7 @@ void _betalMedMobilePay(BuildContext context, int oere) {
     ).then((chosen) {
       if (chosen != null && context.mounted) {
         _openMobilePay(context, chosen.box, oere);
+        _registrerBetalt(context, genindlaes);
       }
     });
     return;
@@ -1696,6 +1722,33 @@ void _betalMedMobilePay(BuildContext context, int oere) {
     return;
   }
   _openMobilePay(context, box, oere);
+  _registrerBetalt(context, genindlaes);
+}
+
+/// Markerer spillerens ubetalte bøder som betalt i samme øjeblik MobilePay
+/// åbnes. MobilePay melder ikke tilbage til appen, så vi kan ikke VIDE om
+/// betalingen blev gennemført — vi tror på spilleren.
+///
+/// Derfor sættes `selvmeldt`, og staff får besked med det samme, så beløbet
+/// kan tjekkes i MobilePay mens det er friskt. Betaler man ikke, står det
+/// sort på hvidt hvem der meldte hvad og hvornår.
+///
+/// Kaldes FØRST efter at MobilePay er åbnet: åbnes vinduet efter et await,
+/// har browseren mistet user activation og blokerer det uden fejlbesked.
+Future<void> _registrerBetalt(
+    BuildContext context, Future<void> Function()? genindlaes) async {
+  try {
+    final rows = await supabase.rpc('marker_mine_boeder_betalt');
+    final liste = List<Map<String, dynamic>>.from(rows as List);
+    final antal = liste.isEmpty ? 0 : (liste.first['antal'] as num).toInt();
+    if (!context.mounted) return;
+    if (antal > 0) {
+      _snack(context, 'Markeret som betalt 🎾', _success);
+    }
+    await genindlaes?.call();
+  } on PostgrestException catch (e) {
+    if (context.mounted) _snack(context, e.message, _danger);
+  }
 }
 
 /// Bottom sheet: vælg hvilket holds MobilePay-boks der betales til.

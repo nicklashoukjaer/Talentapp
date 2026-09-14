@@ -151,16 +151,37 @@
     }
     #dln-splash .status {
       font-size: 12.5px; letter-spacing: .3px; color: #8B8079;
+      /* Fast højde, så teksten kan sættes af JS uden at layoutet hopper. */
+      min-height: 15px;
     }
   </style>
   <div id="dln-splash">
     <div class="navn">DE TALENTLØSE</div>
     <div class="by">HJØRRING</div>
     <div class="bjaelke"><i></i></div>
-    <div class="status">Starter…</div>
+    <div class="status" id="dln-status"></div>
   </div>
   <script>
     (function () {
+      // iOS' swipe-tilbage forlader siden, så hele appen indlæses forfra.
+      // "Starter…" er direkte misvisende dér: brugeren har ikke startet
+      // noget, de gik bare tilbage. Browseren ved godt hvorfor siden
+      // indlæses, så teksten følger den.
+      try {
+        var n = (performance.getEntriesByType('navigation') || [])[0];
+        var aarsag = n && n.type;
+        var t = document.getElementById('dln-status');
+        if (t) {
+          t.textContent =
+            aarsag === 'back_forward' ? 'Går tilbage…' :
+            aarsag === 'reload'       ? 'Opdaterer…'   :
+                                        'Starter…';
+        }
+      } catch (e) {
+        var t2 = document.getElementById('dln-status');
+        if (t2) t2.textContent = 'Et øjeblik…';
+      }
+
       var fjernet = false;
       function fjern() {
         if (fjernet) return;

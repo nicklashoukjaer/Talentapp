@@ -167,22 +167,46 @@
       // "Starter…" er direkte misvisende dér: brugeren har ikke startet
       // noget, de gik bare tilbage.
       //
-      // Første forsøg spurgte browseren HVORFOR siden blev indlæst
-      // (PerformanceNavigationTiming). Det virkede ikke: efter et swipe
-      // rapporterer iOS ikke 'back_forward', så teksten blev ved med at
-      // sige "Starter…".
+      // To forsøg virkede ikke, og begge lærte os noget:
+      //   1. PerformanceNavigationTiming — iOS rapporterer ikke
+      //      'back_forward' efter et swipe, men en helt almindelig
+      //      indlæsning.
+      //   2. sessionStorage — også ryddet. iOS river altså HELE webview'et
+      //      ned; det er ikke en navigation inde i den samme side.
       //
-      // Derfor spørges der nu om noget vi selv kan svare på: kørte appen
-      // allerede? sessionStorage overlever både genindlæsning og
-      // historik-navigation i samme vindue, men ryddes når appen lukkes
-      // helt. Kørte den allerede, er det aldrig en opstart — uanset hvad
-      // browseren måtte mene. Navigationsårsagen bruges stadig, når den
-      // findes, til at vælge de præcise ord.
-      var foersteStart = true;
+      // Det eneste der overlever er localStorage. Derfor sætter appen et
+      // tidsstempel mens den kører, og især i det øjeblik siden forlades
+      // (pagehide — præcis når swipet sker). Er stemplet få sekunder
+      // gammelt ved næste start, kørte appen lige før, og så er det ikke
+      // en opstart uanset hvad browseren påstår.
+      //
+      // Lukker nogen appen og åbner den igen inden for 20 sekunder, står
+      // der "Et øjeblik…" i stedet for "Starter…". Det er en harmløs
+      // skævhed — og de VAR jo lige inde i appen.
+      var NOEGLE = 'dln-sidst-aktiv';
+      var VINDUE = 20000;
+
+      function stempl() {
+        try { localStorage.setItem(NOEGLE, String(Date.now())); } catch (e) {}
+      }
+
+      var genstart = false;
       try {
-        foersteStart = !sessionStorage.getItem('dln-koert');
+        var sidst = parseInt(localStorage.getItem(NOEGLE) || '0', 10);
+        genstart = sidst > 0 && (Date.now() - sidst) < VINDUE;
+      } catch (e) {}
+      try {
+        if (sessionStorage.getItem('dln-koert')) genstart = true;
         sessionStorage.setItem('dln-koert', '1');
       } catch (e) {}
+
+      stempl();
+      // Stempl når siden forlades — det er dér swipet rammer.
+      window.addEventListener('pagehide', stempl);
+      document.addEventListener('visibilitychange', function () {
+        if (document.visibilityState === 'hidden') stempl();
+      });
+      setInterval(stempl, 2000);
 
       var aarsag = '';
       try {
@@ -200,7 +224,7 @@
         t.textContent =
           aarsag === 'back_forward' ? 'Går tilbage…' :
           aarsag === 'reload'       ? 'Opdaterer…'   :
-          !foersteStart             ? 'Et øjeblik…'  :
+          genstart                  ? 'Et øjeblik…'  :
                                       'Starter…';
       }
 

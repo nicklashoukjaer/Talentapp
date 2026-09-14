@@ -228,16 +228,36 @@
                                       'Starter…';
       }
 
+      // iOS viser et STILLBILLEDE af siden fra sidste indlæsning når man
+      // swiper tilbage. Scriptet kører altså ikke — brugeren ser et
+      // fotografi af startskærmen, som den så ud dengang appen startede,
+      // hvor der med rette stod "Starter…". Det var også derfor bjælken
+      // stod stille: et billede bevæger sig ikke.
+      //
+      // Teksten skal derfor være rigtig allerede NÅR billedet tages. Så
+      // snart appen er oppe, sættes den til den neutrale ordlyd, som er
+      // sand i enhver senere situation.
+      function neutraliser() {
+        var t2 = document.getElementById('dln-status');
+        if (t2) t2.textContent = 'Et øjeblik…';
+      }
+
       var fjernet = false;
       function fjern() {
         if (fjernet) return;
         fjernet = true;
+        neutraliser();
         var el = document.getElementById('dln-splash');
         if (!el) return;
         el.classList.add('skjul');
         setTimeout(function () { if (el.parentNode) el.parentNode.removeChild(el); }, 320);
       }
       window.addEventListener('flutter-first-frame', fjern);
+      // Genskabes siden fra browserens cache, kører scriptet ovenfor ikke
+      // igen — men pageshow fyrer. Ret teksten dér.
+      window.addEventListener('pageshow', function (e) {
+        if (e.persisted) neutraliser();
+      });
       // Sikkerhedsnet — appen må aldrig kunne blive spærret af startskærmen.
       setTimeout(fjern, 20000);
     })();

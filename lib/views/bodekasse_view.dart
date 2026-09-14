@@ -20,6 +20,14 @@ class BodekasseTabState extends State<BodekasseTab>
   Set<String> _trainerOnlyIds = {};
   // Takstbladet: aktive bødetyper + hvilken der udløses automatisk.
   List<Map<String, dynamic>> _fineTypes = const [];
+
+  /// Alle bøder — bruges kun til periodeopgørelsen (se _Regnskab).
+  List<Map<String, dynamic>> _alleBoeder = const [];
+
+  /// Valgt periode i regnskabet. null = hele historikken.
+  DateTimeRange? _regnskabPeriode;
+  /// Navnet på den valgte periode, fx "Efterår 2026".
+  String _regnskabNavn = '';
   String? _noShowTypeId;
   bool _noShowAuto = false;
   Set<String> _myGroupIds = {};
@@ -74,12 +82,17 @@ class BodekasseTabState extends State<BodekasseTab>
             .select('id, titel, belob_oere, hold_group_id, group_id')
             .eq('aktiv', true)
             .order('belob_oere', ascending: false),
+        // Alle bøder — bruges KUN til periodeopgørelsen. Lagt sidst, så
+        // indekserne ovenfor ikke rykker.
+        supabase.from('fines')
+            .select('user_id, belob_oere, status, paid_at, selvmeldt'),
       ]);
       final list = List<Map<String, dynamic>>.from(results[0] as List);
       final groups = List<Map<String, dynamic>>.from(results[1] as List);
       final gm = List<Map<String, dynamic>>.from(results[2] as List);
       final holdGroups = List<Map<String, dynamic>>.from(results[3] as List);
       final fineTypes = List<Map<String, dynamic>>.from(results[4] as List);
+      final alleBoeder = List<Map<String, dynamic>>.from(results[5] as List);
 
       // Forvarm MobilePay-boksen, så betal-knappen kan åbne linket synkront.
       await ClubConfig.warmPaymentCache(widget.currentUserId);
@@ -160,6 +173,7 @@ class BodekasseTabState extends State<BodekasseTab>
         _memberIdsByGroup = byGroup;
         _trainerOnlyIds = trainerOnly;
         _fineTypes = fineTypes;
+        _alleBoeder = alleBoeder;
         _noShowTypeId = noShowId;
         _noShowAuto = noShowAuto;
         _myGroupIds = mine;
@@ -276,6 +290,302 @@ class BodekasseTabState extends State<BodekasseTab>
     );
   }
 
+  // ── Regnskab for en periode ──────────────────────────────────────────────
+  //
+  // "Hvad er der kommet ind i sæsonen?" kunne ikke besvares nogen steder —
+  // ranglisten viser hvem der har fået flest bøder, ikke hvad kassen har
+  // modtaget. Her opgøres det på betalingsdatoen.
+
+  /// Sæsonen en dato hører til. Lunar ligaen kører forår (feb–juli) og
+  /// efterår (aug–jan), så en dato i januar hører til efteråret før.
+  static ({DateTime fra, DateTime til, String navn}) _saesonFor(DateTime d) {
+    final foraar = d.month >= 2 && d.month <= 7;
+    if (foraar) {
+      return (
+        fra: DateTime(d.year, 2, 1),
+        til: DateTime(d.year, 8, 1),
+        navn: 'Forår ${d.year}'
+      );
+    }
+    final aar = d.month == 1 ? d.year - 1 : d.year;
+    return (
+      fra: DateTime(aar, 8, 1),
+      til: DateTime(aar + 1, 2, 1),
+      navn: 'Efterår $aar'
+    );
+  }
+
+  /// Sætter perioden til indeværende sæson, hvis intet er valgt endnu.
+  void _sikrPeriode() {
+    if (_regnskabNavn.isNotEmpty) return;
+    final s = _saesonFor(DateTime.now());
+    _regnskabPeriode = DateTimeRange(start: s.fra, end: s.til);
+    _regnskabNavn = s.navn;
+  }
+
+  /// Opgørelsen for den valgte periode og det aktive hold-filter.
+  ({int indbetalt, int antal, int selvmeldt, int selvmeldtBelob, int udestaaende})
+      _regnskab() {
+    // Hold-filteret: tom = alt man må se.
+    Set<String>? tilladte;
+    if (_selectedGroupIds.isNotEmpty) {
+      tilladte = <String>{};
+      for (final g in _selectedGroupIds) {
+        tilladte.addAll(_memberIdsByGroup[g] ?? const <String>{});
+      }
+    }
+
+    bool iPerioden(DateTime? d) {
+      final p = _regnskabPeriode;
+      if (p == null) return true;
+      if (d == null) return false;
+      return !d.isBefore(p.start) && d.isBefore(p.end);
+    }
+
+    var indbetalt = 0, antal = 0, selvmeldt = 0, selvmeldtBelob = 0;
+    var udestaaende = 0;
+    for (final f in _alleBoeder) {
+      final uid = f['user_id'] as String?;
+      if (tilladte != null && (uid == null || !tilladte.contains(uid))) continue;
+      final oere = (f['belob_oere'] as num?)?.toInt() ?? 0;
+
+      if (f['status'] == 'ubetalt') {
+        // Udestående er et ØJEBLIKSBILLEDE, ikke noget der hører til en
+        // periode — en ubetalt bøde har jo ingen betalingsdato.
+        udestaaende += oere;
+        continue;
+      }
+      // Kreditter ("stikker") er aldrig penge i kassen. De trækkes fra det
+      // enkelte medlems gæld, men de er ikke en indbetaling.
+      if (oere <= 0) continue;
+      final betalt = f['paid_at'] == null
+          ? null
+          : DateTime.parse(f['paid_at'] as String).toLocal();
+      if (!iPerioden(betalt)) continue;
+      indbetalt += oere;
+      antal++;
+      if (f['selvmeldt'] == true) {
+        selvmeldt++;
+        selvmeldtBelob += oere;
+      }
+    }
+    return (
+      indbetalt: indbetalt,
+      antal: antal,
+      selvmeldt: selvmeldt,
+      selvmeldtBelob: selvmeldtBelob,
+      udestaaende: udestaaende
+    );
+  }
+
+  Future<void> _vaelgPeriode() async {
+    final nu = DateTime.now();
+    final denne = _saesonFor(nu);
+    final forrige = _saesonFor(denne.fra.subtract(const Duration(days: 1)));
+
+    final valg = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        Widget punkt(String id, String titel, String under) => InkWell(
+              onTap: () => Navigator.of(ctx).pop(id),
+              borderRadius: BorderRadius.circular(12),
+              child: Container(
+                margin: const EdgeInsets.only(bottom: 8),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                decoration: BoxDecoration(
+                  color: _regnskabNavn == titel
+                      ? _neon.withValues(alpha: 0.14)
+                      : _surfaceElevated,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                      color: _regnskabNavn == titel ? _neon : _borderSubtle),
+                ),
+                child: Row(children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(titel,
+                            style:
+                                _body(size: 14, weight: FontWeight.w600)),
+                        Text(under,
+                            style: _body(size: 11.5, color: _textSecondary)),
+                      ],
+                    ),
+                  ),
+                  if (_regnskabNavn == titel)
+                    const Icon(Icons.check, size: 18, color: _neon),
+                ]),
+              ),
+            );
+
+        String spand(DateTime a, DateTime b) =>
+            '${_fmtDate(a)} – ${_fmtDate(b.subtract(const Duration(days: 1)))}';
+
+        return SafeArea(
+          top: false,
+          child: Container(
+            margin: const EdgeInsets.all(12),
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+            decoration: BoxDecoration(
+              color: _surfaceDark,
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: _borderSubtle),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text('VÆLG PERIODE',
+                    style: _cond(size: 20, weight: FontWeight.w800)),
+                const SizedBox(height: 12),
+                punkt('denne', denne.navn, spand(denne.fra, denne.til)),
+                punkt('forrige', forrige.navn, spand(forrige.fra, forrige.til)),
+                punkt('aar', 'I år ${nu.year}', '1. januar – 31. december'),
+                punkt('alt', 'Hele historikken', 'Alt siden bødekassen startede'),
+                punkt('egen', 'Egen periode', 'Vælg fra- og til-dato'),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+    if (valg == null || !mounted) return;
+
+    if (valg == 'egen') {
+      final r = await showDateRangePicker(
+        context: context,
+        firstDate: DateTime(2024),
+        lastDate: DateTime(nu.year + 1, 12, 31),
+        initialDateRange: _regnskabPeriode,
+        helpText: 'Vælg periode',
+        saveText: 'Vælg',
+      );
+      if (r == null || !mounted) return;
+      setState(() {
+        // Til-datoen skal tælle HELE dagen med.
+        _regnskabPeriode = DateTimeRange(
+            start: DateTime(r.start.year, r.start.month, r.start.day),
+            end: DateTime(r.end.year, r.end.month, r.end.day)
+                .add(const Duration(days: 1)));
+        _regnskabNavn = '${_fmtDate(r.start)} – ${_fmtDate(r.end)}';
+      });
+      return;
+    }
+
+    setState(() {
+      switch (valg) {
+        case 'denne':
+          _regnskabPeriode = DateTimeRange(start: denne.fra, end: denne.til);
+          _regnskabNavn = denne.navn;
+        case 'forrige':
+          _regnskabPeriode =
+              DateTimeRange(start: forrige.fra, end: forrige.til);
+          _regnskabNavn = forrige.navn;
+        case 'aar':
+          _regnskabPeriode = DateTimeRange(
+              start: DateTime(nu.year, 1, 1), end: DateTime(nu.year + 1, 1, 1));
+          _regnskabNavn = 'I år ${nu.year}';
+        case 'alt':
+          _regnskabPeriode = null;
+          _regnskabNavn = 'Hele historikken';
+      }
+    });
+  }
+
+  /// Regnskabskortet. Tegnes ALTID — også når der intet er kommet ind — så
+  /// det ikke ligner at opgørelsen mangler.
+  Widget _regnskabKort() {
+    _sikrPeriode();
+    final r = _regnskab();
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+      decoration: BoxDecoration(
+        color: _surfaceDark,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: _borderSubtle),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(children: [
+            const Icon(Icons.savings_outlined, size: 18, color: _success),
+            const SizedBox(width: 9),
+            Expanded(
+              child: Text('I KASSEN',
+                  style: _cond(size: 18, weight: FontWeight.w800)),
+            ),
+            InkWell(
+              onTap: _vaelgPeriode,
+              borderRadius: BorderRadius.circular(999),
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(color: _borderSubtle),
+                ),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  Text(_regnskabNavn,
+                      style: _body(
+                          size: 12, weight: FontWeight.w700, color: _neon)),
+                  const SizedBox(width: 5),
+                  const Icon(Icons.expand_more, size: 15, color: _neon),
+                ]),
+              ),
+            ),
+          ]),
+          const SizedBox(height: 12),
+          Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+            Text(_fmtKr(r.indbetalt),
+                style: _cond(
+                    size: 34, weight: FontWeight.w800, color: _success)),
+            const SizedBox(width: 10),
+            Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Text(
+                  r.antal == 0
+                      ? 'ingen betalinger endnu'
+                      : '${r.antal} bøde${r.antal == 1 ? "" : "r"} betalt',
+                  style: _body(size: 12.5, color: _textSecondary)),
+            ),
+          ]),
+          if (r.selvmeldt > 0 && widget.isAdmin) ...[
+            const SizedBox(height: 8),
+            Row(children: [
+              const Icon(Icons.info_outline, size: 13, color: _gold),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                    'Heraf ${_fmtKr(r.selvmeldtBelob)} meldt af spillerne '
+                    'selv — tjek MobilePay',
+                    style: _body(size: 11.5, color: _gold)),
+              ),
+            ]),
+          ],
+          const Divider(height: 22, color: _borderSubtle),
+          Row(children: [
+            Expanded(
+              child: Text('Udestående lige nu',
+                  style: _body(size: 12.5, color: _textSecondary)),
+            ),
+            Text(_fmtKr(r.udestaaende),
+                style: _cond(
+                    size: 18,
+                    weight: FontWeight.w800,
+                    color: r.udestaaende > 0 ? _danger : _textSecondary)),
+          ]),
+          Text('Uafhængigt af perioden — en ubetalt bøde har ingen dato',
+              style: _body(size: 10.5, color: _textMuted)),
+        ],
+      ),
+    );
+  }
+
   // ── PC-visning ───────────────────────────────────────────────────────────
 
   /// På PC står ranglisten til venstre og takstbladet fast til højre.
@@ -287,7 +597,17 @@ class BodekasseTabState extends State<BodekasseTab>
       children: [
         Expanded(child: indhold),
         const SizedBox(width: 24),
-        SizedBox(width: 320, child: _takstbladPanel()),
+        SizedBox(
+          width: 320,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _regnskabKort(),
+              const SizedBox(height: 16),
+              _takstbladPanel(),
+            ],
+          ),
+        ),
       ],
     );
   }
@@ -676,6 +996,11 @@ class BodekasseTabState extends State<BodekasseTab>
                 Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  if (!pc)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 16),
+                      child: _regnskabKort(),
+                    ),
                   if (!pc)
                     Padding(
                     padding: const EdgeInsets.only(bottom: 16, top: 4),

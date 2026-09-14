@@ -95,6 +95,62 @@
   </script>
 </head>
 <body>
+  <!-- ── Startskærm ───────────────────────────────────────────────────────────
+       <body> var tom og hvid indtil Flutter tegnede sit første billede. Det
+       ses hver gang appen starter — og især når iOS' swipe-tilbage forlader
+       siden, så hele appen indlæses forfra. Den hvide flade fik det til at
+       ligne et nedbrud, selvom appen bare var på vej.
+
+       Fjernes ved 'flutter-first-frame'. Sikkerhedsnet: fjernes under alle
+       omstændigheder efter 20 sekunder, så et overlay aldrig kan blive
+       hængende og spærre for appen. -->
+  <style>
+    html, body { background: #161210; margin: 0; }
+    #dln-splash {
+      position: fixed; inset: 0; z-index: 2147483645;
+      background: #161210; color: #F3ECE4;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 22px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      transition: opacity .28s ease;
+    }
+    #dln-splash.skjul { opacity: 0; pointer-events: none; }
+    #dln-splash .navn {
+      font-size: 19px; font-weight: 800; letter-spacing: 3px;
+    }
+    #dln-splash .by {
+      font-size: 13px; font-weight: 800; letter-spacing: 4px; color: #E8622C;
+      margin-top: -14px;
+    }
+    #dln-splash .ring {
+      width: 26px; height: 26px; border-radius: 50%;
+      border: 2.5px solid rgba(255,255,255,.14);
+      border-top-color: #E8622C;
+      animation: dln-snurr .8s linear infinite;
+    }
+    @keyframes dln-snurr { to { transform: rotate(360deg); } }
+  </style>
+  <div id="dln-splash">
+    <div class="navn">DE TALENTLØSE</div>
+    <div class="by">HJØRRING</div>
+    <div class="ring"></div>
+  </div>
+  <script>
+    (function () {
+      var fjernet = false;
+      function fjern() {
+        if (fjernet) return;
+        fjernet = true;
+        var el = document.getElementById('dln-splash');
+        if (!el) return;
+        el.classList.add('skjul');
+        setTimeout(function () { if (el.parentNode) el.parentNode.removeChild(el); }, 320);
+      }
+      window.addEventListener('flutter-first-frame', fjern);
+      // Sikkerhedsnet — appen må aldrig kunne blive spærret af startskærmen.
+      setTimeout(fjern, 20000);
+    })();
+  </script>
   <!--
     You can customize the "flutter_bootstrap.js" script.
     This is useful to provide a custom configuration to the Flutter loader

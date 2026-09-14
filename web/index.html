@@ -130,7 +130,7 @@
          1. Kun transform animeres, og laget tvinges over på GPU'en med
             translateZ + will-change. Så kører bevægelsen videre selvom
             hovedtråden er optaget.
-         2. Der står "Starter…" ved siden af. Fryser bevægelsen alligevel —
+         2. Der står "Et øjeblik..." ved siden af. Fryser bevægelsen alligevel —
             fx hvis Safari viser et stillbillede under selve swipet — er der
             stadig ord der fortæller hvad der foregår. En tekst kan ikke se
             gået i stå. */
@@ -159,105 +159,33 @@
     <div class="navn">DE TALENTLØSE</div>
     <div class="by">HJØRRING</div>
     <div class="bjaelke"><i></i></div>
-    <div class="status" id="dln-status"></div>
+    <div class="status">Et øjeblik…</div>
   </div>
   <script>
     (function () {
-      // iOS' swipe-tilbage forlader siden, så hele appen indlæses forfra.
-      // "Starter…" er direkte misvisende dér: brugeren har ikke startet
-      // noget, de gik bare tilbage.
+      // Her stod tre lag detektion, der skulle skrive "Starter..." ved en
+      // ægte opstart og noget andet efter et swipe tilbage: navigationstypen,
+      // sessionStorage og et tidsstempel i localStorage.
       //
-      // To forsøg virkede ikke, og begge lærte os noget:
-      //   1. PerformanceNavigationTiming — iOS rapporterer ikke
-      //      'back_forward' efter et swipe, men en helt almindelig
-      //      indlæsning.
-      //   2. sessionStorage — også ryddet. iOS river altså HELE webview'et
-      //      ned; det er ikke en navigation inde i den samme side.
-      //
-      // Det eneste der overlever er localStorage. Derfor sætter appen et
-      // tidsstempel mens den kører, og især i det øjeblik siden forlades
-      // (pagehide — præcis når swipet sker). Er stemplet få sekunder
-      // gammelt ved næste start, kørte appen lige før, og så er det ikke
-      // en opstart uanset hvad browseren påstår.
-      //
-      // Lukker nogen appen og åbner den igen inden for 20 sekunder, står
-      // der "Et øjeblik…" i stedet for "Starter…". Det er en harmløs
-      // skævhed — og de VAR jo lige inde i appen.
-      var NOEGLE = 'dln-sidst-aktiv';
-      var VINDUE = 20000;
-
-      function stempl() {
-        try { localStorage.setItem(NOEGLE, String(Date.now())); } catch (e) {}
-      }
-
-      var genstart = false;
-      try {
-        var sidst = parseInt(localStorage.getItem(NOEGLE) || '0', 10);
-        genstart = sidst > 0 && (Date.now() - sidst) < VINDUE;
-      } catch (e) {}
-      try {
-        if (sessionStorage.getItem('dln-koert')) genstart = true;
-        sessionStorage.setItem('dln-koert', '1');
-      } catch (e) {}
-
-      stempl();
-      // Stempl når siden forlades — det er dér swipet rammer.
-      window.addEventListener('pagehide', stempl);
-      document.addEventListener('visibilitychange', function () {
-        if (document.visibilityState === 'hidden') stempl();
-      });
-      setInterval(stempl, 2000);
-
-      var aarsag = '';
-      try {
-        var nav = (performance.getEntriesByType('navigation') || [])[0];
-        if (nav && nav.type) {
-          aarsag = nav.type;
-        } else if (performance.navigation) {
-          aarsag = ['navigate', 'reload', 'back_forward',
-                    'prerender'][performance.navigation.type] || '';
-        }
-      } catch (e) {}
-
-      var t = document.getElementById('dln-status');
-      if (t) {
-        t.textContent =
-          aarsag === 'back_forward' ? 'Går tilbage…' :
-          aarsag === 'reload'       ? 'Opdaterer…'   :
-          genstart                  ? 'Et øjeblik…'  :
-                                      'Starter…';
-      }
-
-      // iOS viser et STILLBILLEDE af siden fra sidste indlæsning når man
-      // swiper tilbage. Scriptet kører altså ikke — brugeren ser et
-      // fotografi af startskærmen, som den så ud dengang appen startede,
-      // hvor der med rette stod "Starter…". Det var også derfor bjælken
+      // Ingen af dem kunne virke. iOS viser et STILLBILLEDE af siden fra
+      // sidste indlæsning når man swiper tilbage — der kører intet script,
+      // så der er ikke noget at regne på. Brugeren så et fotografi af
+      // startskærmen fra dengang appen startede. Det var også derfor bjælken
       // stod stille: et billede bevæger sig ikke.
       //
-      // Teksten skal derfor være rigtig allerede NÅR billedet tages. Så
-      // snart appen er oppe, sættes den til den neutrale ordlyd, som er
-      // sand i enhver senere situation.
-      function neutraliser() {
-        var t2 = document.getElementById('dln-status');
-        if (t2) t2.textContent = 'Et øjeblik…';
-      }
-
+      // Teksten står derfor fast i HTML'en som "Et øjeblik...", der er sand i
+      // enhver situation — opstart, genindlæsning, swipe tilbage og genbrugt
+      // billede. Et ord der ikke kan tage fejl slår tre lag logik der kan.
       var fjernet = false;
       function fjern() {
         if (fjernet) return;
         fjernet = true;
-        neutraliser();
         var el = document.getElementById('dln-splash');
         if (!el) return;
         el.classList.add('skjul');
         setTimeout(function () { if (el.parentNode) el.parentNode.removeChild(el); }, 320);
       }
       window.addEventListener('flutter-first-frame', fjern);
-      // Genskabes siden fra browserens cache, kører scriptet ovenfor ikke
-      // igen — men pageshow fyrer. Ret teksten dér.
-      window.addEventListener('pageshow', function (e) {
-        if (e.persisted) neutraliser();
-      });
       // Sikkerhedsnet — appen må aldrig kunne blive spærret af startskærmen.
       setTimeout(fjern, 20000);
     })();

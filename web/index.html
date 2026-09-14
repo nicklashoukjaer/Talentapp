@@ -165,21 +165,43 @@
     (function () {
       // iOS' swipe-tilbage forlader siden, så hele appen indlæses forfra.
       // "Starter…" er direkte misvisende dér: brugeren har ikke startet
-      // noget, de gik bare tilbage. Browseren ved godt hvorfor siden
-      // indlæses, så teksten følger den.
+      // noget, de gik bare tilbage.
+      //
+      // Første forsøg spurgte browseren HVORFOR siden blev indlæst
+      // (PerformanceNavigationTiming). Det virkede ikke: efter et swipe
+      // rapporterer iOS ikke 'back_forward', så teksten blev ved med at
+      // sige "Starter…".
+      //
+      // Derfor spørges der nu om noget vi selv kan svare på: kørte appen
+      // allerede? sessionStorage overlever både genindlæsning og
+      // historik-navigation i samme vindue, men ryddes når appen lukkes
+      // helt. Kørte den allerede, er det aldrig en opstart — uanset hvad
+      // browseren måtte mene. Navigationsårsagen bruges stadig, når den
+      // findes, til at vælge de præcise ord.
+      var foersteStart = true;
       try {
-        var n = (performance.getEntriesByType('navigation') || [])[0];
-        var aarsag = n && n.type;
-        var t = document.getElementById('dln-status');
-        if (t) {
-          t.textContent =
-            aarsag === 'back_forward' ? 'Går tilbage…' :
-            aarsag === 'reload'       ? 'Opdaterer…'   :
-                                        'Starter…';
+        foersteStart = !sessionStorage.getItem('dln-koert');
+        sessionStorage.setItem('dln-koert', '1');
+      } catch (e) {}
+
+      var aarsag = '';
+      try {
+        var nav = (performance.getEntriesByType('navigation') || [])[0];
+        if (nav && nav.type) {
+          aarsag = nav.type;
+        } else if (performance.navigation) {
+          aarsag = ['navigate', 'reload', 'back_forward',
+                    'prerender'][performance.navigation.type] || '';
         }
-      } catch (e) {
-        var t2 = document.getElementById('dln-status');
-        if (t2) t2.textContent = 'Et øjeblik…';
+      } catch (e) {}
+
+      var t = document.getElementById('dln-status');
+      if (t) {
+        t.textContent =
+          aarsag === 'back_forward' ? 'Går tilbage…' :
+          aarsag === 'reload'       ? 'Opdaterer…'   :
+          !foersteStart             ? 'Et øjeblik…'  :
+                                      'Starter…';
       }
 
       var fjernet = false;

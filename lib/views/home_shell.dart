@@ -912,6 +912,7 @@ class _NotificationsBellState extends State<_NotificationsBell> {
       case 'boedeforslag': return Icons.lightbulb_outline;
       case 'training_svar': return Icons.how_to_reg;
       case 'boede_selvmeldt': return Icons.payments_outlined;
+      case 'training_kommentar': return Icons.chat_bubble_outline;
       case 'poll_oprettet':    return Icons.how_to_vote;
       case 'poll_rykker':      return Icons.how_to_vote_outlined;
       case 'boede':            return Icons.gavel;

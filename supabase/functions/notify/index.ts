@@ -241,6 +241,25 @@ Deno.serve(async (req) => {
       });
       break;
     }
+    case "training_kommentar": {
+      // Navngiven modtagerliste (admins + holdets trænere og kaptajner).
+      const ids = ((rec._modtagere as unknown[]) ?? []).map(String).filter(
+        Boolean,
+      );
+      if (ids.length === 0) return new Response("no recipients", { status: 200 });
+      const navn = (rec._navn as string) ?? "En spiller";
+      const titel = (rec.titel as string) ?? "en begivenhed";
+      const uddrag = (rec._uddrag as string) ?? "";
+      result = await sendPush({
+        include_aliases: { external_id: ids },
+        headings: {
+          en: `${navn} skrev på ${titel} 💬`,
+          da: `${navn} skrev på ${titel} 💬`,
+        },
+        contents: { en: uddrag, da: uddrag },
+      });
+      break;
+    }
     case "fines": {
       const userId = rec.user_id ? String(rec.user_id) : "";
       if (!userId) return new Response("no user_id", { status: 200 });

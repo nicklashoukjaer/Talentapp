@@ -75,9 +75,19 @@ class _OversigtTabState extends State<OversigtTab>
     reload();
   }
 
-  Future<void> reload({bool? includeHistory}) async {
+  /// [stille] springer skelet-skærmen over.
+  ///
+  /// Uden den satte en tilmelding `_loading = true`, og så erstattede `build`
+  /// hele listen med skelettet. Listen blev dermed revet ud af widget-træet,
+  /// og scroll-positionen fandtes ikke længere når den kom tilbage — man
+  /// røg til toppen og skulle scrolle ned igen. Ved en handling MIDT i
+  /// listen beholder vi derfor det der står på skærmen og skifter bare
+  /// indholdet ud under fødderne på brugeren.
+  Future<void> reload({bool? includeHistory, bool stille = false}) async {
     final withHistory = includeHistory ?? _historyLoaded;
-    setState(() { _loading = true; _error = null; });
+    if (!stille) {
+      setState(() { _loading = true; _error = null; });
+    }
     try {
       final userId = supabase.auth.currentUser!.id;
       // Lazy loading: ved opstart hentes KUN aktive (fra 24t tilbage).
@@ -338,6 +348,14 @@ class _OversigtTabState extends State<OversigtTab>
         _loading = false;
       });
     } catch (e) {
+      if (!mounted) return;
+      // Ved en stille genindlæsning står der allerede en brugbar liste på
+      // skærmen. En kortvarig netværksfejl må ikke bytte den ud med en
+      // fejlskærm — handlingen viser selv sin egen besked.
+      if (stille) {
+        setState(() => _loading = false);
+        return;
+      }
       setState(() { _loading = false; _error = e.toString(); });
     }
   }
@@ -350,7 +368,7 @@ class _OversigtTabState extends State<OversigtTab>
       _snack(context,
           status == 'tilmeldt' ? 'Du er tilmeldt' : 'Du er på venteliste',
           status == 'tilmeldt' ? Colors.green.shade400 : Colors.orange.shade400);
-      await reload();
+      await reload(stille: true);
     } on PostgrestException catch (e) {
       if (mounted) _snack(context, e.message, Colors.red.shade400);
     }
@@ -405,7 +423,7 @@ class _OversigtTabState extends State<OversigtTab>
                 ? 'Afbud sendt — bøde på ${_fmtKr((oere).toInt())} tilføjet'
                 : 'Afbud sendt',
             fined ? _gold : _textSecondary);
-        await reload();
+        await reload(stille: true);
       } on PostgrestException catch (e) {
         if (mounted) _snack(context, e.message, Colors.red.shade400);
       }
@@ -420,7 +438,7 @@ class _OversigtTabState extends State<OversigtTab>
       }, onConflict: 'training_id,user_id');
       if (!mounted) return;
       _snack(context, 'Afbud sendt', _textSecondary);
-      await reload();
+      await reload(stille: true);
     } on PostgrestException catch (e) {
       if (mounted) _snack(context, e.message, Colors.red.shade400);
     }
@@ -463,10 +481,10 @@ class _OversigtTabState extends State<OversigtTab>
             : 'Begivenhed slettet',
         (deleted).isEmpty ? _danger : _textSecondary,
       );
-      await reload();
+      await reload(stille: true);
     } on PostgrestException catch (e) {
       if (mounted) _snack(context, e.message, _danger);
-      await reload();
+      await reload(stille: true);
     }
   }
 
@@ -511,7 +529,7 @@ class _OversigtTabState extends State<OversigtTab>
             : 'Udgivet — nu synlig for spillerne',
         (updated).isEmpty ? _danger : _success,
       );
-      await reload();
+      await reload(stille: true);
     } on PostgrestException catch (e) {
       if (mounted) _snack(context, e.message, _danger);
     }
@@ -537,10 +555,10 @@ class _OversigtTabState extends State<OversigtTab>
             : 'Afstemning slettet',
         (deleted).isEmpty ? _danger : _textSecondary,
       );
-      await reload();
+      await reload(stille: true);
     } on PostgrestException catch (e) {
       if (mounted) _snack(context, e.message, _danger);
-      await reload();
+      await reload(stille: true);
     }
   }
 
@@ -568,7 +586,7 @@ class _OversigtTabState extends State<OversigtTab>
         'svar':           svar,
       }, onConflict: 'poll_option_id,user_id');
       // Reload for at få voter-lister opdateret
-      await reload();
+      await reload(stille: true);
     } on PostgrestException catch (e) {
       // Rul tilbage
       setState(() {
@@ -1105,7 +1123,9 @@ class _OversigtTabState extends State<OversigtTab>
     }
 
     return RefreshIndicator(
-      onRefresh: reload,
+      // RefreshIndicator viser sin egen spinner; skelettet ville bare
+      // smide scroll-positionen væk.
+      onRefresh: () => reload(stille: true),
       child: ListView(
         padding: pc
             ? const EdgeInsets.fromLTRB(22, 18, 22, 40)
@@ -1227,7 +1247,7 @@ class _OversigtTabState extends State<OversigtTab>
                                     (visible.first as _TrainingFeedItem).training),
                               ),
                             ),
-                          ).then((_) => reload()),
+                          ).then((_) => reload(stille: true)),
                           child: _NextUpHero(
                             item: visible.first as _TrainingFeedItem,
                             isAdmin: widget.isAdmin,

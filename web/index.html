@@ -122,18 +122,42 @@
       font-size: 13px; font-weight: 800; letter-spacing: 4px; color: #E8622C;
       margin-top: -14px;
     }
-    #dln-splash .ring {
-      width: 26px; height: 26px; border-radius: 50%;
-      border: 2.5px solid rgba(255,255,255,.14);
-      border-top-color: #E8622C;
-      animation: dln-snurr .8s linear infinite;
+    /* Opstarten lægger beslag på hovedtråden, mens wasm pakkes ud. En
+       almindelig spinner fryser derfor midt i bevægelsen og ser ud som om
+       appen er gået i stå.
+
+       To ting gør den robust:
+         1. Kun transform animeres, og laget tvinges over på GPU'en med
+            translateZ + will-change. Så kører bevægelsen videre selvom
+            hovedtråden er optaget.
+         2. Der står "Starter…" ved siden af. Fryser bevægelsen alligevel —
+            fx hvis Safari viser et stillbillede under selve swipet — er der
+            stadig ord der fortæller hvad der foregår. En tekst kan ikke se
+            gået i stå. */
+    #dln-splash .bjaelke {
+      width: 132px; height: 3px; border-radius: 999px;
+      background: rgba(255,255,255,.10);
+      overflow: hidden;
     }
-    @keyframes dln-snurr { to { transform: rotate(360deg); } }
+    #dln-splash .bjaelke i {
+      display: block; width: 40%; height: 100%; border-radius: 999px;
+      background: #E8622C;
+      will-change: transform;
+      animation: dln-glid 1.15s ease-in-out infinite;
+    }
+    @keyframes dln-glid {
+      0%   { transform: translateZ(0) translateX(-110%); }
+      100% { transform: translateZ(0) translateX(360%); }
+    }
+    #dln-splash .status {
+      font-size: 12.5px; letter-spacing: .3px; color: #8B8079;
+    }
   </style>
   <div id="dln-splash">
     <div class="navn">DE TALENTLØSE</div>
     <div class="by">HJØRRING</div>
-    <div class="ring"></div>
+    <div class="bjaelke"><i></i></div>
+    <div class="status">Starter…</div>
   </div>
   <script>
     (function () {

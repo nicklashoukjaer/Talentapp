@@ -631,12 +631,16 @@ class _EditPollSheetState extends State<_EditPollSheet> {
     final l = widget.poll['lukket_at'] as String?;
     if (l != null) _frist = DateTime.parse(l).toLocal();
     _loadGroups();
+    _loadOptioner();
   }
 
   @override
   void dispose() {
     _titel.dispose();
     _beskr.dispose();
+    for (final t in _tekster) {
+      t.ctrl.dispose();
+    }
     super.dispose();
   }
 
@@ -650,6 +654,282 @@ class _EditPollSheetState extends State<_EditPollSheet> {
         setState(() => _groups = List<Map<String, dynamic>>.from(rows as List));
       }
     } catch (_) {}
+  }
+
+  // ── Svarmulighederne ─────────────────────────────────────────────────────
+  //
+  // De kunne ikke redigeres før; man måtte slette afstemningen og lave en ny,
+  // og dermed miste alle afgivne stemmer. Nu kan datoer flyttes, tekster
+  // rettes og muligheder tilføjes eller fjernes.
+  //
+  // Sletning er den farlige: poll_responses hænger på muligheden med CASCADE,
+  // så stemmerne forsvinder med den. Derfor tælles de, og der spørges først.
+
+  /// Mulighederne som de så ud da arket blev åbnet — bruges til at finde ud
+  /// af hvad der reelt er ændret, så uberørte rækker ikke skrives igen.
+  Map<String, Map<String, dynamic>> _oprindelige = {};
+
+  /// Rækkerne man redigerer i. Nye har et id der starter med 'ny:'.
+  List<_PollDateRow> _datoer = [];
+  List<({String id, TextEditingController ctrl})> _tekster = [];
+
+  /// option_id → antal der har stemt (uanset ja/nej), så en sletning kan
+  /// fortælle hvad den koster.
+  Map<String, int> _stemmerPaa = {};
+
+  bool _optionerHentet = false;
+  bool get _erTekst => widget.poll['type'] == 'tekst';
+
+  Future<void> _loadOptioner() async {
+    try {
+      final rows = await supabase
+          .from('poll_options')
+          .select('id, option_tid, beskrivelse, heldags')
+          .eq('poll_id', widget.poll['id'])
+          .order('option_tid', ascending: true);
+      final liste = List<Map<String, dynamic>>.from(rows as List);
+
+      final svar = await supabase
+          .from('poll_responses')
+          .select('poll_option_id')
+          .inFilter('poll_option_id',
+              [for (final o in liste) o['id'] as String]);
+      final tal = <String, int>{};
+      for (final r in List<Map<String, dynamic>>.from(svar as List)) {
+        final id = r['poll_option_id'] as String;
+        tal[id] = (tal[id] ?? 0) + 1;
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _oprindelige = {for (final o in liste) o['id'] as String: o};
+        _stemmerPaa = tal;
+        if (_erTekst) {
+          _tekster = [
+            for (final o in liste)
+              (
+                id: o['id'] as String,
+                ctrl: TextEditingController(
+                    text: o['beskrivelse'] as String? ?? '')
+              )
+          ];
+        } else {
+          _datoer = [
+            for (final o in liste)
+              _PollDateRow(
+                o['id'] as String,
+                // Heldags er gemt som 00:00; uden tid bliver rækken heldags.
+                o['heldags'] == true
+                    ? DateTime.parse(o['option_tid'] as String).toLocal()
+                    : DateTime.parse(o['option_tid'] as String).toLocal(),
+              )..tid = o['heldags'] == true
+                  ? null
+                  : TimeOfDay(
+                      hour: DateTime.parse(o['option_tid'] as String)
+                          .toLocal()
+                          .hour,
+                      minute: DateTime.parse(o['option_tid'] as String)
+                          .toLocal()
+                          .minute),
+          ];
+        }
+        _optionerHentet = true;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _optionerHentet = true);
+    }
+  }
+
+  int _nyTaeller = 0;
+  String _nytId() => 'ny:${_nyTaeller++}';
+
+  Future<void> _fjernMulighed(String id, String hvad) async {
+    final stemmer = _stemmerPaa[id] ?? 0;
+    if (stemmer > 0) {
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Fjern svarmulighed?'),
+          content: Text(
+              '$stemmer ${stemmer == 1 ? "person har" : "personer har"} '
+              'stemt på "$hvad".\n\n'
+              'Fjerner du den, forsvinder deres svar og kan ikke hentes '
+              'tilbage.'),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Behold')),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              style: FilledButton.styleFrom(backgroundColor: _danger),
+              child: const Text('Fjern alligevel'),
+            ),
+          ],
+        ),
+      );
+      if (ok != true) return;
+    }
+    setState(() {
+      _datoer.removeWhere((d) => d.id == id);
+      _tekster.removeWhere((t) => t.id == id);
+    });
+  }
+
+  /// Gemmer mulighederne: nye indsættes, ændrede opdateres, fjernede slettes.
+  /// Uberørte rækker skrives ikke igen.
+  Future<void> _gemOptioner() async {
+    final beholdte = _erTekst
+        ? _tekster.map((t) => t.id).toSet()
+        : _datoer.map((d) => d.id).toSet();
+
+    final slettes = _oprindelige.keys.where((id) => !beholdte.contains(id));
+    for (final id in slettes) {
+      await supabase.from('poll_options').delete().eq('id', id);
+    }
+
+    if (_erTekst) {
+      for (final t in _tekster) {
+        final tekst = t.ctrl.text.trim();
+        if (tekst.isEmpty) continue;
+        if (t.id.startsWith('ny:')) {
+          await supabase.from('poll_options').insert({
+            'poll_id': widget.poll['id'],
+            'beskrivelse': tekst,
+          });
+        } else if (_oprindelige[t.id]?['beskrivelse'] != tekst) {
+          await supabase
+              .from('poll_options')
+              .update({'beskrivelse': tekst}).eq('id', t.id);
+        }
+      }
+      return;
+    }
+
+    for (final d in _datoer) {
+      if (!d.udfyldt) continue;
+      final tid = d.value.toUtc().toIso8601String();
+      if (d.id.startsWith('ny:')) {
+        await supabase.from('poll_options').insert({
+          'poll_id': widget.poll['id'],
+          'option_tid': tid,
+          'heldags': d.heldags,
+        });
+      } else {
+        final foer = _oprindelige[d.id];
+        final uaendret = foer != null &&
+            DateTime.parse(foer['option_tid'] as String)
+                    .toUtc()
+                    .toIso8601String() ==
+                tid &&
+            (foer['heldags'] == true) == d.heldags;
+        if (uaendret) continue;
+        await supabase.from('poll_options').update({
+          'option_tid': tid,
+          'heldags': d.heldags,
+        }).eq('id', d.id);
+      }
+    }
+  }
+
+  Widget _optionerFelt() {
+    if (!_optionerHentet) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 20),
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    final raekker = <Widget>[];
+    if (_erTekst) {
+      for (final t in _tekster) {
+        final stemmer = _stemmerPaa[t.id] ?? 0;
+        raekker.add(Padding(
+          padding: const EdgeInsets.only(bottom: 10),
+          child: Row(children: [
+            Expanded(
+              child: TextField(
+                controller: t.ctrl,
+                decoration: InputDecoration(
+                  labelText: 'Svarmulighed',
+                  helperText: stemmer > 0
+                      ? '$stemmer har stemt på denne'
+                      : null,
+                ),
+              ),
+            ),
+            IconButton(
+              onPressed: () => _fjernMulighed(
+                  t.id, t.ctrl.text.trim().isEmpty ? 'denne' : t.ctrl.text.trim()),
+              icon: const Icon(Icons.delete_outline, size: 20),
+              color: _textMuted,
+              tooltip: 'Fjern',
+            ),
+          ]),
+        ));
+      }
+    } else {
+      for (final d in _datoer) {
+        final stemmer = _stemmerPaa[d.id] ?? 0;
+        raekker.add(Padding(
+          padding: const EdgeInsets.only(bottom: 10),
+          child: Row(children: [
+            Expanded(
+              child: _PollDateField(
+                key: ValueKey(d.id),
+                row: d,
+                onChanged: () => setState(() {}),
+              ),
+            ),
+            IconButton(
+              onPressed: () => _fjernMulighed(
+                  d.id,
+                  d.udfyldt
+                      ? _fmtOption(d.value, heldags: d.heldags)
+                      : 'denne dato'),
+              icon: const Icon(Icons.delete_outline, size: 20),
+              color: _textMuted,
+              tooltip: 'Fjern',
+            ),
+          ]),
+        ));
+        if (stemmer > 0) {
+          raekker.add(Padding(
+            padding: const EdgeInsets.only(left: 2, bottom: 10),
+            child: Text('$stemmer har stemt på denne dato',
+                style: _body(size: 11, color: _textMuted)),
+          ));
+        }
+      }
+    }
+
+    // Tegnes ALTID — også når der ingen muligheder er — så det ikke ligner
+    // at afstemningen ikke har nogen.
+    if (raekker.isEmpty) {
+      raekker.add(Padding(
+        padding: const EdgeInsets.only(bottom: 10),
+        child: Text('Ingen svarmuligheder endnu',
+            style: _body(size: 12.5, color: _textSecondary)),
+      ));
+    }
+
+    raekker.add(Align(
+      alignment: Alignment.centerLeft,
+      child: TextButton.icon(
+        onPressed: () => setState(() {
+          if (_erTekst) {
+            _tekster.add((id: _nytId(), ctrl: TextEditingController()));
+          } else {
+            _datoer.add(_PollDateRow(_nytId(), null));
+          }
+        }),
+        icon: const Icon(Icons.add, size: 18),
+        label: Text(_erTekst ? 'Tilføj svarmulighed' : 'Tilføj dato'),
+        style: TextButton.styleFrom(foregroundColor: _neon),
+      ),
+    ));
+
+    return _fieldGroup(
+        _erTekst ? 'SVARMULIGHEDER' : 'DATOER', raekker);
   }
 
   Future<void> _save() async {
@@ -667,6 +947,7 @@ class _EditPollSheetState extends State<_EditPollSheet> {
         'group_id': _groupIds.length == 1 ? _groupIds.first : null,
         'lukket_at': _frist?.toUtc().toIso8601String(),
       }).eq('id', widget.poll['id']);
+      await _gemOptioner();
       if (!mounted) return;
       _snack(context, 'Afstemning opdateret', _success);
       Navigator.of(context).pop(true);
@@ -785,6 +1066,8 @@ class _EditPollSheetState extends State<_EditPollSheet> {
                         ),
                       ),
                     ]),
+                    const SizedBox(height: 20),
+                    _optionerFelt(),
                   ],
                 ),
               ),

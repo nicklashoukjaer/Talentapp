@@ -200,9 +200,6 @@ ja. Der er et banner i Oversigt, som har fordoblet tilslutningen fra 5 til 12.
 links. Et link sendt for et år siden virker stadig, hvis ingen har brugt det,
 og det kan ikke trækkes tilbage.
 
-**Sletning af en gæst sker uden bekræftelse** (`oversigt_view.dart`,
-`_deleteGuest`). Det er den eneste sletning i appen uden dialog foran.
-
 **Ingen sæsonarkivering i bødekassen.** Ranglisten viser hele historikken.
 Periodeopgørelsen dækker delvist behovet, men bøder nulstilles aldrig.
 

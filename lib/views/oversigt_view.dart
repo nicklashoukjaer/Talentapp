@@ -3441,7 +3441,27 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
     }
   }
 
-  Future<void> _deleteGuest(String id) async {
+  /// Fjerner en afløser. Var den eneste sletning i appen uden bekræftelse —
+  /// ét fejlklik på et lille kryds, og gæsten var væk uden varsel.
+  Future<void> _deleteGuest(String id, String navn) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Fjern afløser?'),
+        content: Text('$navn fjernes fra begivenheden.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Behold')),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(backgroundColor: _danger),
+            child: const Text('Fjern'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
     try {
       await supabase.from('training_guests').delete().eq('id', id);
       await _load();
@@ -3497,7 +3517,7 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
         ),
         if (widget.canManage)
           IconButton(
-            onPressed: () => _deleteGuest(g['id'] as String),
+            onPressed: () => _deleteGuest(g['id'] as String, navn),
             icon: const Icon(Icons.close, size: 18, color: _textMuted),
             tooltip: 'Fjern afløser',
             visualDensity: VisualDensity.compact,

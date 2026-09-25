@@ -20,6 +20,50 @@
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
   <!-- Korrekt skalering på mobil + safe-area-insets til iOS standalone-PWA -->
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <!-- ── iOS auto-zoom på tekstfelter ────────────────────────────────────────
+       iOS Safari zoomer ind når man sætter fokus i et inputfelt med skrift
+       under 16px, og den ignorerer bevidst både user-scalable=no og
+       maximum-scale af hensyn til tilgængelighed. Skriftstørrelsen er derfor
+       den eneste vej.
+
+       Der lå i forvejen en CSS-regel i <body>, men den virkede ikke længere:
+       Flutter lægger sit skjulte indtastningsfelt i en shadow-rod, og CSS fra
+       dokumentet kan ikke nå derind.
+
+       attachShadow ombrydes derfor her — FØR Flutter starter — så hver ny
+       shadow-rod får reglen med fra fødslen. Feltet er usynligt (Flutter
+       tegner selv teksten på sit canvas), så 16px ændrer intet i designet;
+       det fortæller kun Safari at der ikke er noget at zoome ind på. -->
+  <script>
+    (function () {
+      var CSS = 'input,textarea,[contenteditable="true"]' +
+                '{font-size:16px !important;}';
+      function indsaet(rod) {
+        if (!rod || rod.__dlnZoomFix) return;
+        rod.__dlnZoomFix = true;
+        try {
+          var st = document.createElement('style');
+          st.textContent = CSS;
+          rod.appendChild(st);
+        } catch (e) {}
+      }
+      if (Element.prototype.attachShadow) {
+        var oprindelig = Element.prototype.attachShadow;
+        Element.prototype.attachShadow = function (init) {
+          var rod = oprindelig.call(this, init);
+          indsaet(rod);
+          return rod;
+        };
+      }
+      // Sikkerhedsnet: shadow-rødder der allerede fandtes da scriptet kørte.
+      document.addEventListener('DOMContentLoaded', function () {
+        document.querySelectorAll('*').forEach(function (el) {
+          if (el.shadowRoot) indsaet(el.shadowRoot);
+        });
+      });
+    })();
+  </script>
+
   <!-- Flutters engine overskriver viewport-metaen og fjerner viewport-fit=cover.
        Denne observer gen-påfører det, så iOS-safe-area-insets forbliver aktive. -->
   <script>
@@ -217,7 +261,10 @@
 
   <!-- Auto-opdatering: viser et banner når en ny version er deployet -->
   <style>
-    /* iOS Safari zoomer automatisk ind når man sætter fokus i et inputfelt
+    /* Samme regel for felter der ligger frit i dokumentet. Felter inde i
+       Flutters shadow-rod dækkes af scriptet i <head>.
+
+       iOS Safari zoomer automatisk ind når man sætter fokus i et inputfelt
        med skriftstørrelse under 16px — og ignorerer bevidst user-scalable=no.
        Resultatet var at halvdelen af skærmen forsvandt når man skulle skrive
        en titel.

@@ -309,6 +309,16 @@ class _HomeShellState extends State<HomeShell> {
       keywords: ['foreslå', 'forslag', 'bøde', 'ide', 'idé', 'suggest'],
       run: _openSuggestFineTypeDialog,
     ),
+    if (_isStaff || _isCaptain)
+      AppCommand(
+        label: 'Par-overblik',
+        hint:  'Hvem spiller sammen · sider · god kemi',
+        icon:  Icons.handshake_outlined,
+        keywords: ['par', 'makker', 'kemi', 'rotation', 'tavle'],
+        run: () => Navigator.of(context).push(MaterialPageRoute(
+              builder: (_) => const ParOverblikScreen(),
+            )),
+      ),
     AppCommand(
       label: 'Log ud',
       icon: Icons.logout,

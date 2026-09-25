@@ -3804,6 +3804,27 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                                 ),
                               ),
                             ],
+                            // Tavlen giver kun mening på træninger — en kamp
+                            // har faste par fra holdopstillingen.
+                            if (widget.canManage &&
+                                _showInTrainingTab(
+                                    widget.training['titel'] as String)) ...[
+                              const SizedBox(height: 20),
+                              SizedBox(
+                                width: double.infinity,
+                                child: FilledButton.icon(
+                                  onPressed: _busy ? null : _aabnTavle,
+                                  icon: const Icon(Icons.grid_view_rounded,
+                                      size: 18),
+                                  label: const Text('Tavle / Runder'),
+                                  style: FilledButton.styleFrom(
+                                    backgroundColor: _neon,
+                                    padding: const EdgeInsets.symmetric(
+                                        vertical: 13),
+                                  ),
+                                ),
+                              ),
+                            ],
                             if (widget.canManage) ...[
                               const SizedBox(height: 20),
                               SizedBox(
@@ -3850,6 +3871,46 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
   /// For staff kan man trykke på prikken for at ændre svaret.
   /// Banehalvdel som lille mærkat. Staff/kaptajn kan trykke og sætte den for
   /// dem der ikke selv har udfyldt den.
+  /// Åbner roteringstavlen med de tilmeldte, som allerede er hentet her.
+  /// Afløsere kommer med på banerne, men kan ikke stjernemarkeres — der er
+  /// ingen profil at knytte kemien til.
+  Future<void> _aabnTavle() async {
+    final spillere = <_TavleSpiller>[
+      for (final p in _tilmeldt)
+        _TavleSpiller(id: p.id, navn: p.navn, side: p.side),
+      for (final g in _guests)
+        _TavleSpiller(
+            id: g['id'] as String,
+            navn: (g['navn'] as String? ?? 'Gæst'),
+            erGaest: true),
+    ];
+
+    // Hvem hører til hvilket hold — bruges af "Opdelt efter hold".
+    final holdAf = <String, String>{};
+    final gids = _trainingGroupIds(widget.training);
+    if (gids.isNotEmpty) {
+      try {
+        final rows = await supabase
+            .from('group_members')
+            .select('user_id, groups!inner(navn)')
+            .inFilter('group_id', gids);
+        for (final r in List<Map<String, dynamic>>.from(rows as List)) {
+          final g = r['groups'] as Map<String, dynamic>?;
+          if (g != null) holdAf[r['user_id'] as String] = g['navn'] as String;
+        }
+      } catch (_) {}
+    }
+
+    if (!mounted) return;
+    await Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => RotationScreen(
+        training: widget.training,
+        spillere: spillere,
+        holdAf: holdAf,
+      ),
+    ));
+  }
+
   Widget _sideBadge(_AttPerson p) {
     final info = _sideInfo(p.side);
     final badge = Container(

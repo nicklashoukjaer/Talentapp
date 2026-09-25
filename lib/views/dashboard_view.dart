@@ -172,6 +172,11 @@ class DashboardTabState extends State<DashboardTab> {
                 _menuCard(Icons.groups_outlined, 'Medlemmer & hold',
                     'Sæt på hold · roller · kaptajn · slet',
                     () => setState(() => _openSection = 'members')),
+                _menuCard(Icons.handshake_outlined, 'Par-overblik',
+                    'Hvem spiller sammen · sider · god kemi',
+                    () => Navigator.of(context).push(MaterialPageRoute(
+                          builder: (_) => const ParOverblikScreen(),
+                        ))),
                 _menuCard(Icons.layers_outlined, 'Holdgrupper',
                     'Saml hold der deler bødekasse og bødetyper',
                     () => Navigator.of(context).push(MaterialPageRoute(

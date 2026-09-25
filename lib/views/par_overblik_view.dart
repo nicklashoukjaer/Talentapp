@@ -29,7 +29,13 @@ class _ParOverblikScreenState extends State<ParOverblikScreen> {
   List<Map<String, dynamic>> _grupper = const [];
 
   String? _filterHold;        // null = alle hold
+  String? _filterSpiller;     // null = alle spillere
   bool _kunKemi = false;      // vis kun stjernemarkerede
+
+  /// Par uden stjerne og med kun én runde er som regel tilfældige møder.
+  /// De skjules som udgangspunkt, så listen ikke drukner i støj.
+  bool _visAlle = false;
+  bool _busy = false;
 
   @override
   void initState() {
@@ -80,6 +86,16 @@ class _ParOverblikScreenState extends State<ParOverblikScreen> {
   List<Map<String, dynamic>> get _synlige {
     var liste = _par.where((p) {
       if (_kunKemi && p['god_kemi'] != true) return false;
+      if (!_visAlle &&
+          p['god_kemi'] != true &&
+          ((p['runder_sammen'] as num?) ?? 0) <= 1) {
+        return false;
+      }
+      if (_filterSpiller != null &&
+          p['spiller_lav'] != _filterSpiller &&
+          p['spiller_hoej'] != _filterSpiller) {
+        return false;
+      }
       if (_filterHold == null) return true;
       final a = _holdAf[p['spiller_lav'] as String] ?? const <String>{};
       final b = _holdAf[p['spiller_hoej'] as String] ?? const <String>{};
@@ -93,6 +109,166 @@ class _ParOverblikScreenState extends State<ParOverblikScreen> {
           .compareTo((x['runder_sammen'] as num?) ?? 0);
     });
     return liste;
+  }
+
+  /// Hvor mange par er skjult af støjfilteret lige nu? Vises, så det aldrig
+  /// er usynligt at listen er beskåret.
+  int get _skjulte {
+    if (_visAlle) return 0;
+    return _par.where((p) {
+      if (p['god_kemi'] == true) return false;
+      if (((p['runder_sammen'] as num?) ?? 0) > 1) return false;
+      if (_filterSpiller != null &&
+          p['spiller_lav'] != _filterSpiller &&
+          p['spiller_hoej'] != _filterSpiller) {
+        return false;
+      }
+      if (_filterHold != null) {
+        final a = _holdAf[p['spiller_lav'] as String] ?? const <String>{};
+        final b = _holdAf[p['spiller_hoej'] as String] ?? const <String>{};
+        if (!a.contains(_filterHold) || !b.contains(_filterHold)) return false;
+      }
+      return true;
+    }).length;
+  }
+
+  /// Rydder et pars historik. Den fjerner BÅDE stjernen OG de to spillere
+  /// fra de runder hvor de stod sammen — de runder bliver ufuldstændige.
+  /// Derfor spørges der med tallene først.
+  Future<void> _sletPar(Map<String, dynamic> p) async {
+    final a = _profiler[p['spiller_lav'] as String];
+    final b = _profiler[p['spiller_hoej'] as String];
+    if (a == null || b == null) return;
+    final runder = ((p['runder_sammen'] as num?) ?? 0).toInt();
+    final kemi = p['god_kemi'] == true;
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Ryd op i parret?'),
+        content: Text(
+            '${a['navn']} + ${b['navn']}\n\n'
+            'Det fjerner '
+            '${runder > 0 ? "$runder ${runder == 1 ? "runde" : "runder"}" : "ingen runder"}'
+            '${kemi ? " og stjernen" : ""}.\n\n'
+            'De to spillere tages ud af de runder hvor de stod sammen, så '
+            'de runder bliver ufuldstændige. Det kan ikke fortrydes.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Behold')),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(backgroundColor: _danger),
+            child: const Text('Ryd op'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+
+    setState(() => _busy = true);
+    try {
+      final rows = await supabase.rpc('slet_par_historik', params: {
+        'p_a': a['id'],
+        'p_b': b['id'],
+      });
+      final liste = List<Map<String, dynamic>>.from(rows as List);
+      final ryddet =
+          liste.isEmpty ? 0 : (liste.first['runder_ryddet'] as num).toInt();
+      if (!mounted) return;
+      _snack(
+          context,
+          ryddet == 0
+              ? 'Stjernen er fjernet'
+              : 'Ryddet: $ryddet ${ryddet == 1 ? "runde" : "runder"}',
+          _success);
+      await _load();
+    } on PostgrestException catch (e) {
+      if (mounted) _snack(context, e.message, _danger);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _vaelgSpiller() async {
+    // Kun dem der faktisk optræder i et par — ellers en liste med alle 22
+    // hvoraf de fleste giver et tomt resultat.
+    final ids = <String>{};
+    for (final p in _par) {
+      ids.add(p['spiller_lav'] as String);
+      ids.add(p['spiller_hoej'] as String);
+    }
+    final navne = ids
+        .map((id) => _profiler[id])
+        .whereType<Map<String, dynamic>>()
+        .toList()
+      ..sort((a, b) =>
+          (a['navn'] as String).compareTo(b['navn'] as String));
+
+    final valgt = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (ctx) => SafeArea(
+        top: false,
+        child: Container(
+          margin: const EdgeInsets.all(12),
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+          constraints:
+              BoxConstraints(maxHeight: MediaQuery.of(ctx).size.height * 0.8),
+          decoration: BoxDecoration(
+            color: _surfaceDark,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: _borderSubtle),
+          ),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text('VÆLG SPILLER',
+                    style: _cond(size: 20, weight: FontWeight.w800)),
+                const SizedBox(height: 12),
+                _spillerValg(ctx, null, 'Alle spillere'),
+                for (final p in navne)
+                  _spillerValg(ctx, p['id'] as String, p['navn'] as String),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    if (!mounted) return;
+    // '' betyder "Alle spillere" — null ville ikke kunne skelnes fra at
+    // arket blev lukket uden valg.
+    if (valgt != null) {
+      setState(() => _filterSpiller = valgt.isEmpty ? null : valgt);
+    }
+  }
+
+  Widget _spillerValg(BuildContext ctx, String? id, String navn) {
+    final valgt = _filterSpiller == id;
+    return InkWell(
+      onTap: () => Navigator.of(ctx).pop(id ?? ''),
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          color: valgt ? _neon.withValues(alpha: 0.14) : _surfaceElevated,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: valgt ? _neon : _borderSubtle),
+        ),
+        child: Row(children: [
+          Expanded(
+            child: Text(navn,
+                style: _body(size: 14, weight: FontWeight.w600)),
+          ),
+          if (valgt) const Icon(Icons.check, size: 18, color: _neon),
+        ]),
+      ),
+    );
   }
 
   Widget _sideMaerke(String? side) {
@@ -160,7 +336,14 @@ class _ParOverblikScreenState extends State<ParOverblikScreen> {
             ],
           ),
         ),
-        const SizedBox(width: 10),
+        const SizedBox(width: 8),
+        IconButton(
+          onPressed: _busy ? null : () => _sletPar(p),
+          icon: const Icon(Icons.delete_outline, size: 18),
+          color: _textMuted,
+          visualDensity: VisualDensity.compact,
+          tooltip: 'Ryd op i parret',
+        ),
         Column(
           crossAxisAlignment: CrossAxisAlignment.end,
           mainAxisSize: MainAxisSize.min,
@@ -210,6 +393,65 @@ class _ParOverblikScreenState extends State<ParOverblikScreen> {
                                 _filterChip('⭐ Kun god kemi', _kunKemi,
                                     () => setState(() => _kunKemi = !_kunKemi)),
                               ]),
+                              const SizedBox(height: 10),
+                              Row(children: [
+                                Expanded(
+                                  child: InkWell(
+                                    onTap: _vaelgSpiller,
+                                    borderRadius: BorderRadius.circular(11),
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 13, vertical: 11),
+                                      decoration: BoxDecoration(
+                                        color: _surfaceElevated,
+                                        borderRadius: BorderRadius.circular(11),
+                                        border:
+                                            Border.all(color: _borderSubtle),
+                                      ),
+                                      child: Row(children: [
+                                        const Icon(Icons.person_search,
+                                            size: 16, color: _textMuted),
+                                        const SizedBox(width: 9),
+                                        Expanded(
+                                          child: Text(
+                                              _filterSpiller == null
+                                                  ? 'Alle spillere'
+                                                  : (_profiler[_filterSpiller]
+                                                          ?['navn'] as String?) ??
+                                                      'Spiller',
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: _body(
+                                                  size: 13,
+                                                  weight: FontWeight.w600,
+                                                  color: _filterSpiller == null
+                                                      ? _textSecondary
+                                                      : _neon)),
+                                        ),
+                                        const Icon(Icons.expand_more,
+                                            size: 17, color: _textMuted),
+                                      ]),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                _filterChip(
+                                    'Vis alle kombinationer',
+                                    _visAlle,
+                                    () => setState(() => _visAlle = !_visAlle)),
+                              ]),
+                              // Fortæl ALTID hvor mange der er skjult — ellers
+                              // kan man ikke vide at listen er beskåret.
+                              if (_skjulte > 0)
+                                Padding(
+                                  padding:
+                                      const EdgeInsets.only(top: 8, left: 4),
+                                  child: Text(
+                                      '$_skjulte tilfældige par er skjult '
+                                      '(uden stjerne, kun én runde sammen)',
+                                      style: _body(
+                                          size: 11.5, color: _textMuted)),
+                                ),
                               const SizedBox(height: 16),
                               // Tegnes ALTID — også tom — så det ikke ligner
                               // at overblikket mangler.
@@ -232,15 +474,19 @@ class _ParOverblikScreenState extends State<ParOverblikScreen> {
                                           Text(
                                               _kunKemi
                                                   ? 'Ingen par er markeret med god kemi endnu'
-                                                  : 'Ingen par har spillet sammen endnu',
+                                                  : _skjulte > 0
+                                                      ? 'Kun tilfældige par her'
+                                                      : 'Ingen par har spillet sammen endnu',
                                               textAlign: TextAlign.center,
                                               style: _body(
                                                   size: 13,
                                                   color: _textSecondary)),
                                           const SizedBox(height: 4),
                                           Text(
-                                              'Kør en runde på en trænings tavle, '
-                                              'så fyldes listen',
+                                              _skjulte > 0
+                                                  ? 'Slå "Vis alle kombinationer" til for at se dem'
+                                                  : 'Kør en runde på en trænings tavle, '
+                                                      'så fyldes listen',
                                               textAlign: TextAlign.center,
                                               style: _body(
                                                   size: 11.5,

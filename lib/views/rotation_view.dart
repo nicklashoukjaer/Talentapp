@@ -85,6 +85,10 @@ class _RotationScreenState extends State<RotationScreen> {
   /// undgå gentagelser når næste runde dannes.
   final Set<String> _spilletSammen = {};
 
+  /// Låste pladser i den aktuelle runde — nøgle 'bane-par'. Låste spillere
+  /// bliver stående når resten blandes, og føres med over i næste runde.
+  final Set<String> _laaste = {};
+
   /// Stjernemarkerede par (nøgle som _parNoegle). Hentes for hele klubben,
   /// så en markering fra en tidligere træning også vises.
   Set<String> _kemi = {};
@@ -96,6 +100,14 @@ class _RotationScreenState extends State<RotationScreen> {
 
   static String _parNoegle(String a, String b) =>
       a.compareTo(b) < 0 ? '$a|$b' : '$b|$a';
+
+  static String _laasNoegle(int bane, int par) => '$bane-$par';
+
+  bool _erLaast(int bane, int par) =>
+      _laaste.contains(_laasNoegle(bane, par));
+
+  /// Er hele banen låst — altså begge par?
+  bool _baneLaast(_TavleBane b) => _erLaast(b.nr, 1) && _erLaast(b.nr, 2);
 
   @override
   void initState() {
@@ -170,7 +182,7 @@ class _RotationScreenState extends State<RotationScreen> {
     try {
       final rows = await supabase
           .from('training_round_slots')
-          .select('bane, par, user_id, guest_id')
+          .select('bane, par, user_id, guest_id, laast')
           .eq('round_id', id)
           .order('bane', ascending: true);
       final slots = List<Map<String, dynamic>>.from(rows as List);
@@ -184,6 +196,7 @@ class _RotationScreenState extends State<RotationScreen> {
         final b = (s['bane'] as num).toInt();
         final p = (s['par'] as num).toInt();
         ((baner[b] ??= {})[p] ??= []).add(sp);
+        if (s['laast'] == true) _laaste.add(_laasNoegle(b, p));
       }
       if (!mounted) return;
       setState(() {
@@ -201,16 +214,38 @@ class _RotationScreenState extends State<RotationScreen> {
   // har spillet sammen i dag, og fordel jævnt over banerne. Stjernen bruges
   // IKKE her — den er trænerens notat, ikke et input til fordelingen.
 
-  List<_TavleBane> _generer() {
+  /// Fordeler spillerne. [bevarLaaste] holder de låste par på deres plads og
+  /// blander kun resten — det er det "Bland ulåste" gør, og det næste runde
+  /// gør, så en træner kan fastlåse fx seks spillere og lade appen tage de
+  /// øvrige ti hver gang.
+  List<_TavleBane> _generer({bool bevarLaaste = true}) {
+    final fastholdt = <int, Map<int, List<_TavleSpiller>>>{};
+    final bundne = <String>{};
+    if (bevarLaaste) {
+      for (final b in _baneListe) {
+        for (final (i, p) in [b.par1, b.par2].indexed) {
+          if (!_erLaast(b.nr, i + 1) || p.spillere.isEmpty) continue;
+          (fastholdt[b.nr] ??= {})[i + 1] = [...p.spillere];
+          bundne.addAll(p.spillere.map((s) => s.id));
+        }
+      }
+    }
+    final frie =
+        widget.spillere.where((s) => !bundne.contains(s.id)).toList();
+    return _fordel(frie, fastholdt);
+  }
+
+  List<_TavleBane> _fordel(List<_TavleSpiller> frie,
+      Map<int, Map<int, List<_TavleSpiller>>> fastholdt) {
     final puljer = <List<_TavleSpiller>>[];
     if (_tilstand == 'opdelt') {
       final efterHold = <String, List<_TavleSpiller>>{};
-      for (final s in widget.spillere) {
+      for (final s in frie) {
         (efterHold[widget.holdAf[s.id] ?? 'Uden hold'] ??= []).add(s);
       }
       puljer.addAll(efterHold.values);
     } else {
-      puljer.add([...widget.spillere]);
+      puljer.add([...frie]);
     }
 
     final ud = <_TavleBane>[];
@@ -253,7 +288,36 @@ class _RotationScreenState extends State<RotationScreen> {
         ));
       }
     }
-    return ud;
+
+    if (fastholdt.isEmpty) return ud;
+
+    // De låste par skal stå præcis hvor de stod. De nye par fylder de
+    // pladser der er tilbage, i rækkefølge.
+    final nye = <List<_TavleSpiller>>[
+      for (final b in ud) ...[b.par1.spillere, b.par2.spillere]
+    ]..removeWhere((p) => p.isEmpty);
+
+    final maxBane = [
+      ...fastholdt.keys,
+      if (ud.isNotEmpty) ud.length,
+    ].fold<int>(1, (a, b) => a > b ? a : b);
+
+    final samlet = <_TavleBane>[];
+    var k = 0;
+    for (var bane = 1; bane <= maxBane || nye.length > k; bane++) {
+      final pladser = <List<_TavleSpiller>>[];
+      for (var par = 1; par <= 2; par++) {
+        final laast = fastholdt[bane]?[par];
+        if (laast != null) {
+          pladser.add(laast);
+        } else {
+          pladser.add(k < nye.length ? nye[k++] : <_TavleSpiller>[]);
+        }
+      }
+      if (pladser[0].isEmpty && pladser[1].isEmpty) continue;
+      samlet.add(_TavleBane(bane, _TavlePar(pladser[0]), _TavlePar(pladser[1])));
+    }
+    return samlet;
   }
 
   Future<void> _nyRunde() async {
@@ -293,6 +357,7 @@ class _RotationScreenState extends State<RotationScreen> {
               'round_id': rid,
               'bane': b.nr,
               'par': i + 1,
+              'laast': _erLaast(b.nr, i + 1),
               if (s.erGaest) 'guest_id': s.id else 'user_id': s.id,
             });
           }
@@ -374,6 +439,7 @@ class _RotationScreenState extends State<RotationScreen> {
               'round_id': _rundeId,
               'bane': bane.nr,
               'par': i + 1,
+              'laast': _erLaast(bane.nr, i + 1),
               if (s.erGaest) 'guest_id': s.id else 'user_id': s.id,
             });
           }
@@ -385,6 +451,72 @@ class _RotationScreenState extends State<RotationScreen> {
     } on PostgrestException catch (e) {
       if (mounted) _snack(context, e.message, _danger);
     }
+  }
+
+  /// Genblander KUN de ulåste. Bruges når træneren har sat et par fast og
+  /// vil have appen til at tage resten.
+  Future<void> _blandUlaaste() async {
+    if (_rundeId == null) return;
+    final laastAntal = _laaste.length;
+    if (laastAntal > 0 && _baneListe.every((b) => _baneLaast(b))) {
+      _snack(context, 'Alt er låst — lås noget op først', _gold);
+      return;
+    }
+    setState(() {
+      _baneListe = _generer();
+      _valgt = null;
+    });
+    await _skrivRunde();
+  }
+
+  /// Skriver den aktuelle opstilling. Hele runden skrives om frem for at
+  /// flytte enkeltrækker — færre kanter at tage fejl af.
+  Future<void> _skrivRunde() async {
+    if (_rundeId == null) return;
+    try {
+      await supabase
+          .from('training_round_slots')
+          .delete()
+          .eq('round_id', _rundeId!);
+      final raekker = <Map<String, dynamic>>[];
+      for (final bane in _baneListe) {
+        for (final (i, p) in [bane.par1, bane.par2].indexed) {
+          for (final s in p.spillere) {
+            raekker.add({
+              'round_id': _rundeId,
+              'bane': bane.nr,
+              'par': i + 1,
+              'laast': _erLaast(bane.nr, i + 1),
+              if (s.erGaest) 'guest_id': s.id else 'user_id': s.id,
+            });
+          }
+        }
+      }
+      if (raekker.isNotEmpty) {
+        await supabase.from('training_round_slots').insert(raekker);
+      }
+    } on PostgrestException catch (e) {
+      if (mounted) _snack(context, e.message, _danger);
+    }
+  }
+
+  Future<void> _toggleLaasPar(int bane, int par) async {
+    setState(() {
+      final n = _laasNoegle(bane, par);
+      _laaste.contains(n) ? _laaste.remove(n) : _laaste.add(n);
+    });
+    await _skrivRunde();
+  }
+
+  Future<void> _toggleLaasBane(_TavleBane b) async {
+    final laas = !_baneLaast(b);
+    setState(() {
+      for (var par = 1; par <= 2; par++) {
+        final n = _laasNoegle(b.nr, par);
+        laas ? _laaste.add(n) : _laaste.remove(n);
+      }
+    });
+    await _skrivRunde();
   }
 
   Future<void> _toggleKemi(_TavlePar par) async {
@@ -549,16 +681,19 @@ class _RotationScreenState extends State<RotationScreen> {
     );
   }
 
-  Widget _parBlok(_TavlePar par) {
+  Widget _parBlok(_TavleBane bane, int parNr, _TavlePar par) {
     final kanMarkeres = par.spillere.length == 2 &&
         !par.spillere[0].erGaest && !par.spillere[1].erGaest;
     final markeret = kanMarkeres &&
         _kemi.contains(_parNoegle(par.spillere[0].id, par.spillere[1].id));
+    final laast = _erLaast(bane.nr, parNr);
     return Container(
       padding: const EdgeInsets.fromLTRB(8, 8, 4, 4),
       decoration: BoxDecoration(
-        color: _surfaceElevated,
+        color: laast ? _gold.withValues(alpha: 0.10) : _surfaceElevated,
         borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+            color: laast ? _gold.withValues(alpha: 0.55) : Colors.transparent),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -572,19 +707,26 @@ class _RotationScreenState extends State<RotationScreen> {
                   textAlign: TextAlign.center,
                   style: _body(size: 12, color: _textMuted)),
             ),
-          // Stjernen tegnes ALTID på et helt par, så det ikke ligner at
-          // funktionen mangler når kemien ikke er markeret endnu.
-          if (par.spillere.length == 2)
-            Align(
-              alignment: Alignment.centerRight,
-              child: IconButton(
-                onPressed: () => _toggleKemi(par),
-                icon: Icon(markeret ? Icons.star : Icons.star_border,
-                    size: 19, color: markeret ? _gold : _textMuted),
+          // Lås og stjerne tegnes ALTID på et par med spillere, så det ikke
+          // ligner at funktionerne mangler før de er taget i brug.
+          if (par.spillere.isNotEmpty)
+            Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+              IconButton(
+                onPressed: () => _toggleLaasPar(bane.nr, parNr),
+                icon: Icon(laast ? Icons.lock : Icons.lock_open_outlined,
+                    size: 18, color: laast ? _gold : _textMuted),
                 visualDensity: VisualDensity.compact,
-                tooltip: markeret ? 'Fjern god kemi' : 'Markér god kemi',
+                tooltip: laast ? 'Lås parret op' : 'Lås parret fast',
               ),
-            ),
+              if (par.spillere.length == 2)
+                IconButton(
+                  onPressed: () => _toggleKemi(par),
+                  icon: Icon(markeret ? Icons.star : Icons.star_border,
+                      size: 19, color: markeret ? _gold : _textMuted),
+                  visualDensity: VisualDensity.compact,
+                  tooltip: markeret ? 'Fjern god kemi' : 'Markér god kemi',
+                ),
+            ]),
         ],
       ),
     );
@@ -603,17 +745,33 @@ class _RotationScreenState extends State<RotationScreen> {
           children: [
             Padding(
               padding: const EdgeInsets.only(bottom: 10, left: 2),
-              child: Text('BANE ${b.nr}',
-                  style: _cond(size: 16, weight: FontWeight.w800)),
+              child: Row(children: [
+                Expanded(
+                  child: Text('BANE ${b.nr}',
+                      style: _cond(size: 16, weight: FontWeight.w800)),
+                ),
+                TextButton.icon(
+                  onPressed: () => _toggleLaasBane(b),
+                  icon: Icon(
+                      _baneLaast(b) ? Icons.lock : Icons.lock_open_outlined,
+                      size: 15),
+                  label: Text(_baneLaast(b) ? 'Banen er låst' : 'Lås banen'),
+                  style: TextButton.styleFrom(
+                    foregroundColor: _baneLaast(b) ? _gold : _textMuted,
+                    textStyle: _body(size: 12, weight: FontWeight.w700),
+                    visualDensity: VisualDensity.compact,
+                  ),
+                ),
+              ]),
             ),
             Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Expanded(child: _parBlok(b.par1)),
+              Expanded(child: _parBlok(b, 1, b.par1)),
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 10),
                 child: Text('mod',
                     style: _body(size: 11, color: _textMuted)),
               ),
-              Expanded(child: _parBlok(b.par2)),
+              Expanded(child: _parBlok(b, 2, b.par2)),
             ]),
           ],
         ),
@@ -671,6 +829,43 @@ class _RotationScreenState extends State<RotationScreen> {
                                           weight: FontWeight.w600,
                                           color: _neon)),
                                 ),
+                              // Tegnes ALTID når en runde er i gang — også
+                              // uden låse, hvor den bare blander alle.
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 14),
+                                child: Row(children: [
+                                  Expanded(
+                                    child: OutlinedButton.icon(
+                                      onPressed:
+                                          _busy ? null : _blandUlaaste,
+                                      icon: const Icon(Icons.shuffle, size: 17),
+                                      label: Text(_laaste.isEmpty
+                                          ? 'Bland alle'
+                                          : 'Bland ulåste'),
+                                      style: OutlinedButton.styleFrom(
+                                        foregroundColor: _neon,
+                                        side: BorderSide(
+                                            color: _neon.withValues(alpha: .5)),
+                                        padding: const EdgeInsets.symmetric(
+                                            vertical: 12),
+                                      ),
+                                    ),
+                                  ),
+                                  if (_laaste.isNotEmpty) ...[
+                                    const SizedBox(width: 10),
+                                    Row(children: [
+                                      const Icon(Icons.lock,
+                                          size: 14, color: _gold),
+                                      const SizedBox(width: 5),
+                                      Text('${_laaste.length} låst',
+                                          style: _body(
+                                              size: 12,
+                                              weight: FontWeight.w700,
+                                              color: _gold)),
+                                    ]),
+                                  ],
+                                ]),
+                              ),
                               for (final b in _baneListe) _baneKort(b),
                               if (_baneListe.isEmpty)
                                 Text('Ingen baner i denne runde',

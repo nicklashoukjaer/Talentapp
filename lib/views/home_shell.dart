@@ -31,6 +31,10 @@ class _HomeShellState extends State<HomeShell> {
     if (uid != null) unawaited(NotificationService.identify(uid));
     // Varm MobilePay Box-config så betalingsknappen i Bødekassen er klar.
     unawaited(ClubConfig.fetchMobilePayBox());
+    // Samme grund for Bookli: linket skal ligge klar i cachen, så knappen
+    // kan åbne det UDEN et await. Åbnes et vindue efter et await, har
+    // browseren mistet brugerens aktivering og blokerer det uden fejl.
+    unawaited(ClubConfig.fetchBookliUrl());
     // Blev profilen oprettet via et invitations-link, men krævede mailen
     // bekræftelse, ligger token'et og venter. Indløs det nu.
     unawaited(_indloesVentendeInvite());

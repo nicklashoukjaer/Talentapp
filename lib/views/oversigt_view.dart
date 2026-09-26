@@ -83,10 +83,152 @@ class _OversigtTabState extends State<OversigtTab>
   /// røg til toppen og skulle scrolle ned igen. Ved en handling MIDT i
   /// listen beholder vi derfor det der står på skærmen og skifter bare
   /// indholdet ud under fødderne på brugeren.
+  /// Dagens træning — en træning der er i gang eller lige om lidt (±3 timer),
+  /// og som man selv må styre. Giver genvejen til tavlen øverst i feedet.
+  _TrainingFeedItem? get _dagensTraening {
+    final nu = DateTime.now();
+    _TrainingFeedItem? bedst;
+    for (final t in _items.whereType<_TrainingFeedItem>()) {
+      if (!_showInTrainingTab(t.training['titel'] as String)) continue;
+      if (!_canManageTraining(t.training)) continue;
+      final start = DateTime.parse(t.training['start_tid'] as String).toLocal();
+      if (start.difference(nu).abs() > const Duration(hours: 3)) continue;
+      if (bedst == null ||
+          start.isBefore(
+              DateTime.parse(bedst.training['start_tid'] as String).toLocal())) {
+        bedst = t;
+      }
+    }
+    return bedst;
+  }
+
+  /// Genvejen. Tegnes kun når der FAKTISK er en træning lige nu — ellers
+  /// ville den stå som en død knap 364 dage om året.
+  Widget _dagensTavleKnap(_TrainingFeedItem t) {
+    final start = DateTime.parse(t.training['start_tid'] as String).toLocal();
+    final igang = DateTime.now().isAfter(start);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: Material(
+        color: _neon.withValues(alpha: 0.14),
+        borderRadius: BorderRadius.circular(14),
+        child: InkWell(
+          onTap: () => _aabnDagensTavle(t),
+          borderRadius: BorderRadius.circular(14),
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(14, 13, 12, 13),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: _neon.withValues(alpha: 0.5)),
+            ),
+            child: Row(children: [
+              const Text('🎯', style: TextStyle(fontSize: 19)),
+              const SizedBox(width: 11),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text('Åbn dagens tavle',
+                        style: _body(size: 13.5, weight: FontWeight.w700)),
+                    Text(
+                        igang
+                            ? 'Træningen er i gang · ${t.signedUpCount} tilmeldte'
+                            : 'Starter ${_fmtTime(start)} · ${t.signedUpCount} tilmeldte',
+                        style: _body(size: 11.5, color: _textSecondary)),
+                  ],
+                ),
+              ),
+              const Icon(Icons.chevron_right, size: 18, color: _neon),
+            ]),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Åbner tavlen direkte fra feedet. Deltagerne hentes her, da feedet kun
+  /// kender antallet — men det er ét opslag, og det sker først ved trykket.
+  Future<void> _aabnDagensTavle(_TrainingFeedItem t) async {
+    final tid = t.training['id'] as String;
+    try {
+      final parts = List<Map<String, dynamic>>.from(await supabase
+          .from('training_participants')
+          .select('user_id, status')
+          .eq('training_id', tid) as List);
+      final tilmeldte = parts
+          .where((p) => p['status'] != 'afmeldt')
+          .map((p) => p['user_id'] as String)
+          .toSet();
+      if (tilmeldte.isEmpty) {
+        if (mounted) _snack(context, 'Ingen er tilmeldt endnu', _gold);
+        return;
+      }
+      final profiler = List<Map<String, dynamic>>.from(await supabase
+          .from('profiles')
+          .select('id, navn, spiller_side')
+          .inFilter('id', tilmeldte.toList()) as List);
+
+      final holdAf = <String, String>{};
+      final gids = _trainingGroupIds(t.training);
+      if (gids.isNotEmpty) {
+        final rows = List<Map<String, dynamic>>.from(await supabase
+            .from('group_members')
+            .select('user_id, groups!inner(navn)')
+            .inFilter('group_id', gids) as List);
+        for (final r in rows) {
+          final g = r['groups'] as Map<String, dynamic>?;
+          if (g != null) holdAf[r['user_id'] as String] = g['navn'] as String;
+        }
+      }
+      if (!mounted) return;
+      await Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => RotationScreen(
+          training: t.training,
+          spillere: [
+            for (final p in profiler)
+              _TavleSpiller(
+                  id: p['id'] as String,
+                  navn: p['navn'] as String? ?? '?',
+                  side: p['spiller_side'] as String?)
+          ],
+          holdAf: holdAf,
+        ),
+      ));
+    } on PostgrestException catch (e) {
+      if (mounted) _snack(context, e.message, _danger);
+    }
+  }
+
+  /// Cachenøgle pr. bruger — feedet indeholder ens eget svar på hver
+  /// begivenhed, så to brugere på samme enhed må ikke se hinandens.
+  String get _feedNoegle => 'feed_${supabase.auth.currentUser?.id ?? "-"}';
+
+  /// Tegner det man så sidst, med det samme. Returnerer true hvis der var
+  /// noget at vise, så skelettet kan springes over.
+  bool _visFraCache() {
+    final raa = CacheService.getList(_feedNoegle);
+    if (raa == null || raa.isEmpty) return false;
+    final items = raa.map(feedItemFraJson).whereType<_FeedItem>().toList();
+    if (items.isEmpty) return false;
+    items.sort((a, b) => a.sortKey.compareTo(b.sortKey));
+    setState(() {
+      _items = items;
+      _loading = false;
+      _error = null;
+    });
+    return true;
+  }
+
   Future<void> reload({bool? includeHistory, bool stille = false}) async {
     final withHistory = includeHistory ?? _historyLoaded;
     if (!stille) {
-      setState(() { _loading = true; _error = null; });
+      // Vis det gamle feed i stedet for et skelet, og hent friske data
+      // bagved. Er der intet cachet, falder vi tilbage til skelettet.
+      final havde = _visFraCache();
+      if (!havde) {
+        setState(() { _loading = true; _error = null; });
+      }
     }
     try {
       final userId = supabase.auth.currentUser!.id;
@@ -338,6 +480,17 @@ class _OversigtTabState extends State<OversigtTab>
       }
 
       items.sort((a, b) => a.sortKey.compareTo(b.sortKey));
+
+      // Kun det almindelige feed caches. Historik-visningen er et andet og
+      // meget større udsnit, og den skal ikke overskrive det man ser først.
+      if (!withHistory) {
+        CacheService.put(
+            _feedNoegle,
+            items
+                .map(feedItemTilJson)
+                .whereType<Map<String, dynamic>>()
+                .toList());
+      }
 
       setState(() {
         _items = items;
@@ -1140,6 +1293,15 @@ class _OversigtTabState extends State<OversigtTab>
                 Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  // Genvej til dagens tavle — kun når der faktisk er en
+                  // træning inden for tre timer, som man må styre.
+                  if (showingTrainings && !_showHistory)
+                    Builder(builder: (_) {
+                      final t = _dagensTraening;
+                      return t == null
+                          ? const SizedBox.shrink()
+                          : _dagensTavleKnap(t);
+                    }),
                   // Push kan ikke slås til for folk — de skal selv trykke ja.
                   // Banneret tegner sig selv væk når de har gjort det.
                   const _PushBanner(),
@@ -3307,9 +3469,12 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
         _mangler = mangler;
         _trainere = trainere;
         _guests = guests;
+
         _commentCount = commentCount;
         _loading = false;
       });
+      // Tavlen er ét tryk væk herfra — hent dens data imens.
+      _forhaandshentParData();
     } catch (e) {
       if (mounted) setState(() { _loading = false; _error = e.toString(); });
     }
@@ -3891,6 +4056,25 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
   /// For staff kan man trykke på prikken for at ændre svaret.
   /// Banehalvdel som lille mærkat. Staff/kaptajn kan trykke og sætte den for
   /// dem der ikke selv har udfyldt den.
+  /// Henter stjernemarkeringerne i baggrunden, så tavlen åbner uden spinner.
+  ///
+  /// Bevidst HER og ikke i feedet: feedet skal ikke bære data det ikke
+  /// bruger. Åbner man en begivenhedsdetalje, er tavlen ét tryk væk, og så
+  /// er det tidsnok. Kaldet er "fire and forget" og kan ikke forsinke
+  /// skærmen — slår det fejl, henter tavlen bare selv.
+  void _forhaandshentParData() {
+    if (!widget.canManage) return;
+    if (!_showInTrainingTab(widget.training['titel'] as String)) return;
+    unawaited(() async {
+      try {
+        final kemi = List<Map<String, dynamic>>.from(await supabase
+            .from('par_kemi')
+            .select('spiller_lav, spiller_hoej') as List);
+        CacheService.put('par_kemi', kemi);
+      } catch (_) {}
+    }());
+  }
+
   /// Åbner roteringstavlen med de tilmeldte, som allerede er hentet her.
   /// Afløsere kommer med på banerne, men kan ikke stjernemarkeres — der er
   /// ingen profil at knytte kemien til.

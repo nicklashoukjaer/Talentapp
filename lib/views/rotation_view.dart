@@ -121,7 +121,22 @@ class _RotationScreenState extends State<RotationScreen> {
     super.dispose();
   }
 
+  static const _kemiNoegle = 'par_kemi';
+
+  /// Fylder stjernemarkeringerne fra cachen med det samme, så tavlen tegner
+  /// uden spinner. Friske data hentes bagefter i _load.
+  void _kemiFraCache() {
+    final raa = CacheService.getList(_kemiNoegle);
+    if (raa == null) return;
+    _kemi = {
+      for (final k in raa)
+        if (k['spiller_lav'] != null && k['spiller_hoej'] != null)
+          _parNoegle(k['spiller_lav'] as String, k['spiller_hoej'] as String)
+    };
+  }
+
   Future<void> _load() async {
+    _kemiFraCache();
     try {
       // Hentes hver for sig: Future.wait over forskellige returtyper kan
       // ikke udlede en fælles type her.
@@ -162,6 +177,7 @@ class _RotationScreenState extends State<RotationScreen> {
         }
       }
 
+      CacheService.put(_kemiNoegle, kemi);
       if (!mounted) return;
       setState(() {
         _kemi = {

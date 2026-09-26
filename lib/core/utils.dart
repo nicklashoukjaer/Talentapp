@@ -258,3 +258,31 @@ class _MissingEnvApp extends StatelessWidget {
     );
   }
 }
+
+/// Hvor meget et ark eller en dialog selv skal løfte sig for tastaturet.
+///
+/// På iOS flytter WebKit SELV hele visningen op når tastaturet kommer frem.
+/// Lagde vi `viewInsets.bottom` oveni, blev der kompenseret to gange, og
+/// arket røg helt op under topbaren med tekstfeltet ude af syne — det var
+/// den rigtige årsag til at gæste-dialogen "forsvandt".
+///
+/// Derfor 0 på iOS, hvor browseren klarer det, og den faktiske højde alle
+/// andre steder, hvor den ikke gør.
+/// Pakker en centreret dialog, så den ikke flytter sig selv for tastaturet
+/// på iOS. Flutters `Dialog` lægger selv `viewInsets` ind som luft, og
+/// oveni WebKits egen forskydning ender dialogen oppe under topbaren.
+///
+/// Uden for iOS returneres dialogen uændret.
+Widget fastDialog(BuildContext context, Widget dialog) {
+  if (!(platformIsWeb() && platformOS() == 'ios')) return dialog;
+  return MediaQuery.removeViewInsets(
+    context: context,
+    removeBottom: true,
+    child: dialog,
+  );
+}
+
+double keyboardLoft(BuildContext context) {
+  if (platformIsWeb() && platformOS() == 'ios') return 0;
+  return MediaQuery.of(context).viewInsets.bottom;
+}

@@ -4692,7 +4692,7 @@ class _AddGuestSheetState extends State<_AddGuestSheet> {
             .toList();
 
     return Padding(
-      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      padding: EdgeInsets.only(bottom: keyboardLoft(context)),
       child: SafeArea(
         top: false,
         child: Container(
@@ -4901,7 +4901,7 @@ class _NoShowSheetState extends State<_NoShowSheet> {
     final theme = Theme.of(context);
     final total = _picked.length * widget.belobOere;
     return Padding(
-      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      padding: EdgeInsets.only(bottom: keyboardLoft(context)),
       child: Container(
         constraints: BoxConstraints(
             maxHeight: MediaQuery.of(context).size.height * 0.85),
@@ -5205,7 +5205,7 @@ class _EditEventSheetState extends State<_EditEventSheet> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Padding(
-      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      padding: EdgeInsets.only(bottom: keyboardLoft(context)),
       child: Container(
         constraints: BoxConstraints(
             maxHeight: MediaQuery.of(context).size.height * 0.92),

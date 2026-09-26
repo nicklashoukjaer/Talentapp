@@ -338,7 +338,9 @@ class _AuthScreenState extends State<AuthScreen> {
     final ctrl = TextEditingController(text: _emailCtrl.text.trim());
     final email = await showDialog<String>(
       context: context,
-      builder: (ctx) => AlertDialog(
+      builder: (ctx) => fastDialog(
+        ctx,
+        AlertDialog(
         title: const Text('Nulstil adgangskode'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
@@ -367,6 +369,7 @@ class _AuthScreenState extends State<AuthScreen> {
             child: const Text('Send link'),
           ),
         ],
+        ),
       ),
     );
     ctrl.dispose();

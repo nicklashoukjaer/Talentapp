@@ -679,7 +679,7 @@ class _HoldGroupSheetState extends State<_HoldGroupSheet> {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      padding: EdgeInsets.only(bottom: keyboardLoft(context)),
       child: SafeArea(
         top: false,
         child: Container(
@@ -823,7 +823,7 @@ class _NewGroupSheetState extends State<_NewGroupSheet> {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      padding: EdgeInsets.only(bottom: keyboardLoft(context)),
       child: SafeArea(
         top: false,
         child: Container(
@@ -1915,7 +1915,7 @@ class _AddToTeamSheetState extends State<_AddToTeamSheet> {
             .toList();
 
     return Padding(
-      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      padding: EdgeInsets.only(bottom: keyboardLoft(context)),
       child: Container(
         constraints: BoxConstraints(
             maxHeight: MediaQuery.of(context).size.height * 0.9),
@@ -2370,7 +2370,7 @@ class _MemberSheetState extends State<_MemberSheet> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Padding(
-      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      padding: EdgeInsets.only(bottom: keyboardLoft(context)),
       child: Container(
         constraints: BoxConstraints(
             maxHeight: MediaQuery.of(context).size.height * 0.92),
@@ -2829,7 +2829,7 @@ class _MobilePayBoxSheetState extends State<_MobilePayBoxSheet> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Padding(
-      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      padding: EdgeInsets.only(bottom: keyboardLoft(context)),
       child: SafeArea(
         top: false,
         child: Container(
@@ -3460,7 +3460,9 @@ class _FineTypeDialogState extends State<_FineTypeDialog> {
   @override
   Widget build(BuildContext context) {
     final isEdit = widget.existing != null;
-    return AlertDialog(
+    return fastDialog(
+      context,
+      AlertDialog(
       title: Text(isEdit ? 'Redigér bødetype' : 'Ny bødetype'),
       content: Column(
         mainAxisSize: MainAxisSize.min,
@@ -3504,6 +3506,7 @@ class _FineTypeDialogState extends State<_FineTypeDialog> {
           child: Text(isEdit ? 'Gem' : 'Opret'),
         ),
       ],
+      ),
     );
   }
 }
@@ -4501,7 +4504,7 @@ class _CreateTrainingDialogState extends State<CreateTrainingDialog> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Padding(
-      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      padding: EdgeInsets.only(bottom: keyboardLoft(context)),
       child: Container(
         constraints: BoxConstraints(
             maxHeight: MediaQuery.of(context).size.height * 0.92),

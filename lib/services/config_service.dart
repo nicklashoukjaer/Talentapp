@@ -35,6 +35,59 @@ class ClubConfig {
   /// efter et `await`, har browseren mistet "user activation" og blokerer
   /// det uden fejlbesked. På iOS Safari sker det hver gang — knappen ser
   /// bare død ud. Derfor skal boksen være kendt før trykket.
+  // ── Bookli ──────────────────────────────────────────────────────────────
+  // Linket til klubbens banebooking. Gemmes i club_config, så det kan rettes
+  // fra Admin uden en ny udrulning. Uden et link peger knappen på bookli.dk,
+  // hvorfra man selv kan finde klubben.
+
+  static const String bookliStandard = 'https://bookli.dk';
+  static String? _cachedBookli;
+
+  /// Sidst kendte Bookli-link. Læses fra cachen med det samme, så knappen
+  /// kan åbne linket UDEN et await — ellers har browseren mistet brugerens
+  /// aktivering og blokerer vinduet. Samme fælde som MobilePay.
+  static String get bookliUrl {
+    if (_cachedBookli != null && _cachedBookli!.isNotEmpty) {
+      return _cachedBookli!;
+    }
+    final c = CacheService.getMap('club_config');
+    final v = c?['bookli_url'] as String?;
+    if (v != null && v.isNotEmpty) {
+      _cachedBookli = v;
+      return v;
+    }
+    return bookliStandard;
+  }
+
+  static Future<String?> fetchBookliUrl() async {
+    try {
+      final row = await supabase
+          .from(_table)
+          .select('bookli_url')
+          .eq('id', _rowId)
+          .maybeSingle();
+      final v = row?['bookli_url'] as String?;
+      _cachedBookli = v;
+      final c = CacheService.getMap('club_config') ?? <String, dynamic>{};
+      c['bookli_url'] = v;
+      CacheService.put('club_config', c);
+      return v;
+    } catch (_) {
+      return _cachedBookli;
+    }
+  }
+
+  static Future<void> saveBookliUrl(String? v) async {
+    final vaerdi = (v == null || v.trim().isEmpty) ? null : v.trim();
+    await supabase
+        .from(_table)
+        .upsert({'id': _rowId, 'bookli_url': vaerdi});
+    _cachedBookli = vaerdi;
+    final c = CacheService.getMap('club_config') ?? <String, dynamic>{};
+    c['bookli_url'] = vaerdi;
+    CacheService.put('club_config', c);
+  }
+
   static Future<void> warmPaymentCache(String userId) async {
     try {
       _cachedTeamBoxes = await teamBoxesForUser(userId);

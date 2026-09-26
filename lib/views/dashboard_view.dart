@@ -4487,12 +4487,23 @@ class _CreateTrainingDialogState extends State<CreateTrainingDialog> {
 
     setState(() => _saving = true);
     try {
-      await supabase.from('trainings').insert(rows);
+      final oprettede = List<Map<String, dynamic>>.from(
+          await supabase.from('trainings').insert(rows).select('id, titel')
+              as List);
       if (!mounted) return;
       if (weeks > 1) {
         _snack(context, '$weeks begivenheder oprettet', Colors.green);
       }
-      Navigator.of(context).pop(true);
+      // Hjemmekampe kræver baner i Bookli, og appen kan ikke se Bookli.
+      // Mind om det med det samme — ved en serie er det den første, så man
+      // ikke skal igennem otte dialoger.
+      final hjemme = oprettede
+          .where((r) => erHjemmekamp(r['titel'] as String? ?? ''))
+          .toList();
+      if (hjemme.isNotEmpty && mounted) {
+        await huskBookliDialog(context, hjemme.first['id'] as String);
+      }
+      if (mounted) Navigator.of(context).pop(true);
     } on PostgrestException catch (e) {
       if (mounted) _snack(context, e.message, Colors.red);
     } finally {

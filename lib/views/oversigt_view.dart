@@ -241,7 +241,7 @@ class _OversigtTabState extends State<OversigtTab>
       final results = await Future.wait([
         // Træninger 90 dage tilbage og frem
         supabase.from('trainings')
-            .select('id, titel, beskrivelse, max_deltagere, start_tid, slut_tid, adresse, tilmeldings_deadline, group_id, group_ids, synlig_fra, created_by, series_id')
+            .select('id, titel, beskrivelse, max_deltagere, start_tid, slut_tid, adresse, tilmeldings_deadline, group_id, group_ids, synlig_fra, created_by, series_id, bane_booket')
             .gte('start_tid', sinceIso).order('start_tid', ascending: true),
         // Polls (alle — lukkede filtreres client-side)
         supabase.from('polls')
@@ -958,6 +958,7 @@ class _OversigtTabState extends State<OversigtTab>
               item: t,
               isAdmin: widget.isAdmin,
               canManage: _canManageTraining(t.training),
+              onBookliOpdateret: () => reload(stille: true),
               groupNames: _groupNamesFor(t.training),
               onSignUp: () => _signUp(t),
               onDecline: () => _decline(t),
@@ -1061,6 +1062,7 @@ class _OversigtTabState extends State<OversigtTab>
           groupNames: _groupNamesFor(item.training),
           foerste: i == 0,
           visMenuKolonne: kanStyre,
+          onBookliOpdateret: () => reload(stille: true),
           onSignUp: () => _signUp(item),
           onDecline: () => _decline(item),
           onDelete: _canManageTraining(item.training)
@@ -1575,6 +1577,178 @@ class _PushBannerState extends State<_PushBanner> {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Bookli — banebooking
+//
+// En flyttet hjemmekamp betyder at banerne skal flyttes i Bookli, og det er
+// præcis det der bliver glemt. Herunder ligger påmindelsen og genvejen.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Er det en hjemmekamp? Kun dem har vi baner til — en udekamp spilles hos
+/// modstanderen, og en træning er en fast ugentlig tid.
+bool erHjemmekamp(String titel) =>
+    titel.toLowerCase().contains('hjemmekamp');
+
+/// Åbner Bookli. SKAL kaldes uden et forudgående await — ellers har
+/// browseren mistet brugerens aktivering og blokerer vinduet uden fejl.
+/// Samme fælde som MobilePay-knappen.
+void aabnBookli(BuildContext context) {
+  final url = ClubConfig.bookliUrl;
+  launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication).then((ok) {
+    if (!ok && context.mounted) {
+      _snack(context, 'Kunne ikke åbne Bookli', _danger);
+    }
+  });
+}
+
+/// Sætter bane_booket på en begivenhed.
+Future<bool> saetBaneBooket(BuildContext context, String trainingId,
+    {required bool booket}) async {
+  try {
+    await supabase
+        .from('trainings')
+        .update({'bane_booket': booket})
+        .eq('id', trainingId);
+    return true;
+  } on PostgrestException catch (e) {
+    if (context.mounted) _snack(context, e.message, _danger);
+    return false;
+  }
+}
+
+/// Påmindelsen efter oprettelse eller flytning af en hjemmekamp.
+///
+/// Returnerer true hvis banerne blev markeret som booket, så kalderen kan
+/// opdatere sin visning.
+Future<bool> huskBookliDialog(BuildContext context, String trainingId) async {
+  final svar = await showDialog<String>(
+    context: context,
+    builder: (ctx) => fastDialog(
+      ctx,
+      AlertDialog(
+        title: const Text('⚠️ Husk banerne'),
+        content: const Text(
+            'Husk at flytte eller booke banerne i Bookli!\n\n'
+            'Appen kan ikke se Bookli, så den ved kun hvad du fortæller den.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, 'senere'),
+            child: const Text('Senere'),
+          ),
+          TextButton.icon(
+            // Lukker IKKE dialogen: man skal kunne åbne Bookli, ordne det,
+            // og komme tilbage og markere det.
+            onPressed: () => aabnBookli(ctx),
+            icon: const Icon(Icons.open_in_new, size: 16),
+            label: const Text('Åbn Bookli'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, 'booket'),
+            style: FilledButton.styleFrom(backgroundColor: _success,
+                foregroundColor: _onSuccess),
+            child: const Text('Markér som booket'),
+          ),
+        ],
+      ),
+    ),
+  );
+  if (svar != 'booket' || !context.mounted) return false;
+  return saetBaneBooket(context, trainingId, booket: true);
+}
+
+/// Det gule mærkat i feedet. Vises kun for dem der kan gøre noget ved det.
+class BookliBadge extends StatelessWidget {
+  final Map<String, dynamic> training;
+  final VoidCallback onOpdateret;
+  const BookliBadge({
+    super.key,
+    required this.training,
+    required this.onOpdateret,
+  });
+
+  Future<void> _menu(BuildContext context) async {
+    final valg = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => SafeArea(
+        top: false,
+        child: Container(
+          margin: const EdgeInsets.all(12),
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+          decoration: BoxDecoration(
+            color: _surfaceDark,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: _borderSubtle),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text('BANER I BOOKLI',
+                  style: _cond(size: 20, weight: FontWeight.w800)),
+              const SizedBox(height: 4),
+              Text(training['titel'] as String? ?? '',
+                  style: _body(size: 12.5, color: _textSecondary)),
+              const SizedBox(height: 14),
+              ListTile(
+                onTap: () {
+                  // Åbnes synkront i trykket, så vinduet ikke blokeres.
+                  aabnBookli(ctx);
+                  Navigator.pop(ctx, 'aabnet');
+                },
+                leading: const Icon(Icons.open_in_new, color: _neon),
+                title: Text('Åbn Bookli',
+                    style: _body(size: 14, weight: FontWeight.w600)),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    side: const BorderSide(color: _borderSubtle)),
+              ),
+              const SizedBox(height: 8),
+              ListTile(
+                onTap: () => Navigator.pop(ctx, 'booket'),
+                leading: const Icon(Icons.check_circle_outline,
+                    color: _success),
+                title: Text('Markér baner som booket',
+                    style: _body(size: 14, weight: FontWeight.w600)),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    side: const BorderSide(color: _borderSubtle)),
+              ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (valg != 'booket' || !context.mounted) return;
+    final ok = await saetBaneBooket(
+        context, training['id'] as String, booket: true);
+    if (ok) onOpdateret();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: () => _menu(context),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+        decoration: BoxDecoration(
+          color: _gold.withValues(alpha: 0.16),
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: _gold.withValues(alpha: 0.55)),
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          const Icon(Icons.warning_amber_rounded, size: 12, color: _gold),
+          const SizedBox(width: 5),
+          Text('Tjek Bookli',
+              style: _body(
+                  size: 10.5, weight: FontWeight.w800, color: _gold)),
+        ]),
+      ),
+    );
+  }
+}
+
 // ─── Træningskort i Oversigt ────────────────────────────────────────────────
 
 const _shortMonths = [
@@ -1612,11 +1786,14 @@ class _FeedTrainingCard extends StatefulWidget {
   final VoidCallback? onPublish;
   final List<String> groupNames;
   final bool canManage; // kaptajn/staff/opretter → må redigere/slette
+  /// Kaldes når banerne er markeret som booket, så feedet kan hente igen.
+  final VoidCallback? onBookliOpdateret;
   const _FeedTrainingCard({
     required this.item,
     required this.isAdmin,
     this.canManage = false,
     this.groupNames = const [],
+    this.onBookliOpdateret,
     required this.onSignUp,
     required this.onDecline,
     this.onDelete,
@@ -1690,6 +1867,20 @@ class _FeedTrainingCardState extends State<_FeedTrainingCard> {
                     Text(subtitle,
                         style: _body(size: 12, color: _textSecondary),
                         maxLines: 1, overflow: TextOverflow.ellipsis),
+                    // Kun for dem der kan gøre noget ved det, og kun på
+                    // hjemmekampe hvor banerne ikke er meldt booket.
+                    if (widget.canManage &&
+                        erHjemmekamp(titel) &&
+                        t['bane_booket'] != true) ...[
+                      const SizedBox(height: 5),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: BookliBadge(
+                          training: t,
+                          onOpdateret: widget.onBookliOpdateret ?? () {},
+                        ),
+                      ),
+                    ],
                     // Fremmøde — samme ordlyd som heroet, så tallet betyder
                     // det samme uanset hvor i feedet man kigger.
                     const SizedBox(height: 3),
@@ -1889,6 +2080,7 @@ class _FeedTrainingRow extends StatelessWidget {
   final VoidCallback onDecline;
   final VoidCallback? onDelete;
   final VoidCallback? onPublish;
+  final VoidCallback? onBookliOpdateret;
   final bool foerste;
 
   /// Reserverer menu-kolonnen på alle linjer, også dem uden menu — ellers
@@ -1906,6 +2098,7 @@ class _FeedTrainingRow extends StatelessWidget {
     required this.visMenuKolonne,
     this.onDelete,
     this.onPublish,
+    this.onBookliOpdateret,
   });
 
   @override
@@ -1976,6 +2169,16 @@ class _FeedTrainingRow extends StatelessWidget {
                     Text(adresse,
                         style: _body(size: 11.5, color: _textMuted),
                         maxLines: 1, overflow: TextOverflow.ellipsis),
+                  if (canManage &&
+                      erHjemmekamp(t['titel'] as String) &&
+                      t['bane_booket'] != true) ...[
+                    const SizedBox(height: 4),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: BookliBadge(
+                          training: t, onOpdateret: onBookliOpdateret ?? () {}),
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -5337,7 +5540,13 @@ class _EditEventSheetState extends State<_EditEventSheet> {
             .eq('id', widget.training['id']);
         if (mounted) {
           _snack(context, 'Begivenhed opdateret', _success);
-          Navigator.pop(context, true);
+          // Flyttes en hjemmekamp, nulstiller databasen bane_booket. Så
+          // skal man mindes om Bookli MENS man står med den i hånden.
+          if (erHjemmekamp(_titel.text)) {
+            await huskBookliDialog(
+                context, widget.training['id'] as String);
+          }
+          if (mounted) Navigator.pop(context, true);
         }
       }
     } on PostgrestException catch (e) {

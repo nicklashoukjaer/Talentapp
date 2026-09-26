@@ -4732,11 +4732,15 @@ class _AddGuestSheetState extends State<_AddGuestSheet> {
                   padding: const EdgeInsets.fromLTRB(18, 0, 18, 0),
                   child: TextField(
                     controller: _navn,
+                    // Eksplicit 16px: under det zoomer iOS ind ved fokus.
+                    style: _body(size: 16),
                     autofocus: true,
                     textCapitalization: TextCapitalization.words,
                     textInputAction: TextInputAction.done,
                     onSubmitted: (_) => _submitNavn(),
                     decoration: const InputDecoration(
+                      contentPadding:
+                          EdgeInsets.symmetric(horizontal: 14, vertical: 14),
                       labelText: 'Navn på afløseren',
                       prefixIcon: Icon(Icons.person_outline),
                     ),

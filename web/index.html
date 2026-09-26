@@ -20,49 +20,12 @@
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
   <!-- Korrekt skalering på mobil + safe-area-insets til iOS standalone-PWA -->
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <!-- ── iOS auto-zoom på tekstfelter ────────────────────────────────────────
-       iOS Safari zoomer ind når man sætter fokus i et inputfelt med skrift
-       under 16px, og den ignorerer bevidst både user-scalable=no og
-       maximum-scale af hensyn til tilgængelighed. Skriftstørrelsen er derfor
-       den eneste vej.
-
-       Der lå i forvejen en CSS-regel i <body>, men den virkede ikke længere:
-       Flutter lægger sit skjulte indtastningsfelt i en shadow-rod, og CSS fra
-       dokumentet kan ikke nå derind.
-
-       attachShadow ombrydes derfor her — FØR Flutter starter — så hver ny
-       shadow-rod får reglen med fra fødslen. Feltet er usynligt (Flutter
-       tegner selv teksten på sit canvas), så 16px ændrer intet i designet;
-       det fortæller kun Safari at der ikke er noget at zoome ind på. -->
-  <script>
-    (function () {
-      var CSS = 'input,textarea,[contenteditable="true"]' +
-                '{font-size:16px !important;}';
-      function indsaet(rod) {
-        if (!rod || rod.__dlnZoomFix) return;
-        rod.__dlnZoomFix = true;
-        try {
-          var st = document.createElement('style');
-          st.textContent = CSS;
-          rod.appendChild(st);
-        } catch (e) {}
-      }
-      if (Element.prototype.attachShadow) {
-        var oprindelig = Element.prototype.attachShadow;
-        Element.prototype.attachShadow = function (init) {
-          var rod = oprindelig.call(this, init);
-          indsaet(rod);
-          return rod;
-        };
-      }
-      // Sikkerhedsnet: shadow-rødder der allerede fandtes da scriptet kørte.
-      document.addEventListener('DOMContentLoaded', function () {
-        document.querySelectorAll('*').forEach(function (el) {
-          if (el.shadowRoot) indsaet(el.shadowRoot);
-        });
-      });
-    })();
-  </script>
+  <!-- iOS auto-zoom løses i Flutter, ikke her.
+       Her lå et forsøg der ombrød attachShadow for at skubbe en
+       16px-regel ind i Flutters shadow-rod. Det virkede ikke — Flutter har
+       sit eget flt-text-editing-stylesheet — og det kostede et ekstra
+       style-element ved hver eneste shadow-rod. Rettelsen ligger nu i
+       theme.dart, hvor skriftstørrelsen kommer fra. -->
 
   <!-- Flutters engine overskriver viewport-metaen og fjerner viewport-fit=cover.
        Denne observer gen-påfører det, så iOS-safe-area-insets forbliver aktive. -->
@@ -339,7 +302,12 @@
         });
         window.addEventListener('pageshow', check);
         window.addEventListener('focus', check);
-        setInterval(check, 30 * 1000);
+        // Var hvert 30. sekund. reg.update() er et netværkskald, så det var
+        // 120 kald i timen på mobildata for at opdage en udrulning der sker
+        // et par gange om ugen. Tjekkene ovenfor — ved opstart, når appen
+        // kommer i forgrunden, og ved fokus — fanger reelt det hele; det her
+        // er kun et sikkerhedsnet for en app der står åben længe.
+        setInterval(check, 15 * 60 * 1000);
       }).catch(function () {});
 
       // Når den nye SW overtager → genindlæs automatisk til frisk version.
@@ -369,7 +337,19 @@
       window.addEventListener('resize', measureSAI);
       window.addEventListener('orientationchange', measureSAI);
       window.addEventListener('flutter-first-frame', measureSAI);
-      setInterval(measureSAI, 2000);
+      document.addEventListener('visibilitychange', function () {
+        if (document.visibilityState === 'visible') measureSAI();
+      });
+      // Kørte før hvert 2. sekund i appens levetid. getComputedStyle tvinger
+      // browseren til at genberegne layout, og på en telefon mærkes det.
+      // Safe-arean ændrer sig kun ved rotation, ved skift af vindue og lige
+      // efter opstart — så vi måler et par gange i starten og derefter kun
+      // når noget faktisk sker.
+      var tidligeTjek = 0;
+      var opstart = setInterval(function () {
+        measureSAI();
+        if (++tidligeTjek >= 5) clearInterval(opstart);
+      }, 600);
     })();
   </script>
 

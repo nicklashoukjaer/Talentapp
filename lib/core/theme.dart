@@ -248,7 +248,12 @@ ThemeData _buildClayCourt() {
       titleMedium:    _cond(size: 17, weight: FontWeight.w700, spacing: 0.2, height: 1.2),
       titleSmall:     _cond(size: 15, weight: FontWeight.w700, spacing: 0.2, height: 1.2),
       // Brødtekst / labels → Barlow
-      bodyLarge:  _body(size: 15, height: 1.45),
+      // 16px, ikke 15. Det er den stil et TextField arver, og Flutter
+      // skriver tallet videre til det skjulte DOM-felt som iOS Safari måler
+      // på — under 16px zoomer den ind ved fokus. At fikse det i CSS virkede
+      // ikke: Flutter har sit eget flt-text-editing-stylesheet, og feltet
+      // ligger ikke hvor dokumentets regler når det. Her rettes kilden.
+      bodyLarge:  _body(size: 16, height: 1.45),
       bodyMedium: _body(size: 14, height: 1.45),
       bodySmall:  _body(size: 13, color: _textSecondary, height: 1.4),
       labelLarge:  _body(size: 14, weight: FontWeight.w600, height: 1.2),

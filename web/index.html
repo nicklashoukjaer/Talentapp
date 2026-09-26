@@ -20,6 +20,42 @@
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
   <!-- Korrekt skalering på mobil + safe-area-insets til iOS standalone-PWA -->
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <!-- ── Ét tryk skal åbne tastaturet på iOS ────────────────────────────────
+       Flutter tegner på canvas. Når man trykker på et tekstfelt, behandler
+       Flutter først trykket og sætter DEREFTER fokus på sit skjulte
+       DOM-felt. På det tidspunkt regner WebKit ikke længere brugerens tryk
+       som aktivt, og nægter at åbne tastaturet — derfor skulle man trykke
+       to gange.
+
+       Her fanges trykket i indfangningsfasen, altså FØR Flutter får det.
+       Ligger Flutters indtastningsfelt allerede under fingeren, får det
+       fokus synkront i selve hændelsen, og så åbner tastaturet på første
+       tryk. Ligger feltet ikke der, sker der ingenting — så kan den ikke
+       komme til at åbne tastaturet på må og få.
+
+       Samme regel som blokerer MobilePay-vinduet hvis det åbnes efter et
+       await. -->
+  <script>
+    (function () {
+      function feltet() {
+        return document.querySelector(
+          'flt-text-editing-host input, flt-text-editing-host textarea, ' +
+          'flt-glass-pane input, flt-glass-pane textarea');
+      }
+      document.addEventListener('pointerdown', function (e) {
+        try {
+          var el = feltet();
+          if (!el || el === document.activeElement) return;
+          var r = el.getBoundingClientRect();
+          if (r.width < 2 || r.height < 2) return;   // parkeret, ikke i brug
+          if (e.clientX < r.left || e.clientX > r.right ||
+              e.clientY < r.top  || e.clientY > r.bottom) return;
+          el.focus({ preventScroll: true });
+        } catch (err) {}
+      }, true);
+    })();
+  </script>
+
   <!-- iOS auto-zoom løses i Flutter, ikke her.
        Her lå et forsøg der ombrød attachShadow for at skubbe en
        16px-regel ind i Flutters shadow-rod. Det virkede ikke — Flutter har

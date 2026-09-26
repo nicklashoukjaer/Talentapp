@@ -4663,12 +4663,25 @@ class _AddGuestSheet extends StatefulWidget {
 
 class _AddGuestSheetState extends State<_AddGuestSheet> {
   final _navn = TextEditingController();
+
+  /// Egen FocusNode, så fokus kan sættes I SELVE trykket på "skriv et navn".
+  ///
+  /// Feltet findes ikke før dét tryk, så `autofocus` havde intet at gribe
+  /// fat i — den fyrede mens arket stadig var ved at flyve ind. Derfor tog
+  /// det første tryk kun fokus, og først det andet åbnede tastaturet.
+  ///
+  /// WebKit åbner kun tastaturet hvis fokus sættes mens brugerens tryk
+  /// stadig gælder. Samme regel som den der får MobilePay-vinduet til at
+  /// blive blokeret hvis man åbner det efter et await.
+  final _navnFokus = FocusNode();
+
   String _sog = '';
   bool _fritekst = false;
 
   @override
   void dispose() {
     _navn.dispose();
+    _navnFokus.dispose();
     super.dispose();
   }
 
@@ -4732,6 +4745,7 @@ class _AddGuestSheetState extends State<_AddGuestSheet> {
                   padding: const EdgeInsets.fromLTRB(18, 0, 18, 0),
                   child: TextField(
                     controller: _navn,
+                    focusNode: _navnFokus,
                     // Eksplicit 16px: under det zoomer iOS ind ved fokus.
                     style: _body(size: 16),
                     autofocus: true,
@@ -4857,7 +4871,12 @@ class _AddGuestSheetState extends State<_AddGuestSheet> {
                   child: Row(children: [
                     Expanded(
                       child: TextButton.icon(
-                        onPressed: () => setState(() => _fritekst = true),
+                        onPressed: () {
+                          setState(() => _fritekst = true);
+                          // Samme frame som trykket: feltet bygges nu, og
+                          // fokus sættes før aktiveringen udløber.
+                          _navnFokus.requestFocus();
+                        },
                         icon: const Icon(Icons.edit_outlined, size: 17),
                         label: const Text('Skriv et navn i stedet'),
                         style: TextButton.styleFrom(foregroundColor: _neon),

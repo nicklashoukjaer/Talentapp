@@ -12,6 +12,7 @@ class _HomeShellState extends State<HomeShell> {
   Map<String, dynamic>? _profile;
   bool   _loading = true;
   bool   _isCaptain = false;   // kaptajn på mindst ét hold → må oprette + styre egne hold
+  bool   _isHoldTraener = false; // træner for mindst ét hold (group_members)
   String? _error;
   int    _selectedIndex = 0;
 
@@ -97,21 +98,27 @@ class _HomeShellState extends State<HomeShell> {
           .eq('id', userId)
           .single();
       CacheService.put('profile_$userId', row);
-      // Kaptajn-status (fra group_members) — påvirker rettigheder.
+      // Kaptajn- og holdtræner-status (fra group_members) — påvirker
+      // rettigheder OG om Holdleder-fanen vises. Holdtræner tæller med:
+      // rollen 'træner' er klub-bred, men man kan være træner for ét hold
+      // uden at have rollen.
       bool captain = false;
+      bool holdTraener = false;
       try {
         final gm = await supabase
             .from('group_members')
-            .select('is_captain')
-            .eq('user_id', userId)
-            .eq('is_captain', true)
-            .limit(1);
-        captain = (gm as List).isNotEmpty;
+            .select('is_captain, is_trainer')
+            .eq('user_id', userId);
+        for (final r in List<Map<String, dynamic>>.from(gm as List)) {
+          if (r['is_captain'] == true) captain = true;
+          if (r['is_trainer'] == true) holdTraener = true;
+        }
       } catch (_) {}
       if (!mounted) return;
       setState(() {
         _profile = row;
         _isCaptain = captain;
+        _isHoldTraener = holdTraener;
         _loading = false;
       });
     } catch (e) {
@@ -123,27 +130,50 @@ class _HomeShellState extends State<HomeShell> {
 
   bool get _isAdmin => _profile?['rolle'] == 'admin';
   bool get _isStaff => _profile?['rolle'] == 'admin' || _profile?['rolle'] == 'træner';
+
+  /// Har et ansvar for mindst ét hold → får Holdleder-fanen som startskærm.
+  bool get _erLeder => _isStaff || _isCaptain || _isHoldTraener;
   // Kaptajn eller staff må oprette begivenheder og afstemninger.
   bool get _canCreate => _isStaff || _isCaptain;
 
-  // Indekser: 0=Oversigt, 1=Bødekassen, 2=Afstemninger, 3=Profil, 4=Dashboard
+  // Faner. Holdleder ligger FØRST for dem med et ansvar, så appen åbner på
+  // overblikket i stedet for feedet. Indekserne herunder gælder listen UDEN
+  // Holdleder-fanen; _idx() lægger ét til når den er med, så resten af
+  // koden kan blive ved med at tale om _tabOversigt osv.
   static const _tabOversigt    = 0;
   static const _tabBoede       = 1;
   static const _tabAfstemning  = 2;
   static const _tabProfil      = 3;
   static const _tabDashboard   = 4;
 
+  /// Oversætter et logisk faneindeks til dets plads i den viste liste.
+  int _idx(int logisk) => _erLeder ? logisk + 1 : logisk;
+
+  /// Holdleder-fanen er indeks 0 når den vises.
+  static const _tabHoldleder = 0;
+
   final GlobalKey<_OversigtTabState> _oversigtKey = GlobalKey<_OversigtTabState>();
+  final GlobalKey<_OversigtTabState> _holdlederKey = GlobalKey<_OversigtTabState>();
   final GlobalKey<_AfstemningerTabState> _afstemningerKey =
       GlobalKey<_AfstemningerTabState>();
 
   Future<void> _logout() async => supabase.auth.signOut();
 
+  /// Skifter til en fane ud fra dens plads i den VISTE liste. Bruges af
+  /// navigationslinjen, som netop kender den plads.
   void _gotoTab(int index) => setState(() => _selectedIndex = index);
+
+  /// Skifter til en fane ud fra dens LOGISKE navn (_tabOversigt osv.).
+  void _gaaTil(int logisk) => _gotoTab(_idx(logisk));
+
+  /// Oversætter den viste plads tilbage til det logiske navn. Holdleder-
+  /// fanen giver -1, som ingen af sammenligningerne matcher — og den har
+  /// hverken tragt eller opret-knap, så det er det rigtige svar.
+  int _logisk(int vist) => _erLeder ? vist - 1 : vist;
 
   Future<void> _openCreateTraining() async {
     if (!_isStaff) return;
-    _gotoTab(_tabDashboard);
+    _gaaTil(_tabDashboard);
     await Future<void>.delayed(const Duration(milliseconds: 40));
     if (!mounted) return;
     final created = await showModalBottomSheet<bool>(
@@ -159,7 +189,7 @@ class _HomeShellState extends State<HomeShell> {
 
   Future<void> _openCreatePoll() async {
     if (!_isStaff) return;
-    _gotoTab(_tabDashboard);
+    _gaaTil(_tabDashboard);
     await Future<void>.delayed(const Duration(milliseconds: 40));
     if (!mounted) return;
     final created = await showModalBottomSheet<bool>(
@@ -175,7 +205,7 @@ class _HomeShellState extends State<HomeShell> {
 
   Future<void> _openGiveFineDialog() async {
     if (!_isAdmin) return;
-    _gotoTab(_tabBoede);
+    _gaaTil(_tabBoede);
     await Future<void>.delayed(const Duration(milliseconds: 40));
     if (!mounted) return;
     final ok = await showDialog<bool>(
@@ -247,32 +277,32 @@ class _HomeShellState extends State<HomeShell> {
       hint:  'Hub med kommende begivenheder og åbne afstemninger',
       icon:  Icons.bolt,
       keywords: ['oversigt', 'hub', 'hjem', 'home', 'feed', 'begivenheder'],
-      run: () => _gotoTab(_tabOversigt),
+      run: () => _gaaTil(_tabOversigt),
     ),
     AppCommand(
       label: 'Gå til Bødekassen',
       icon:  Icons.gavel,
       keywords: ['bøde', 'bødekasse', 'fine', 'kasse', 'leaderboard', 'highscore'],
-      run: () => _gotoTab(_tabBoede),
+      run: () => _gaaTil(_tabBoede),
     ),
     AppCommand(
       label: 'Gå til Afstemninger',
       icon:  Icons.how_to_vote,
       keywords: ['afstemning', 'afstemninger', 'poll', 'stem', 'vote'],
-      run: () => _gotoTab(_tabAfstemning),
+      run: () => _gaaTil(_tabAfstemning),
     ),
     AppCommand(
       label: 'Gå til Min profil',
       icon:  Icons.person,
       keywords: ['profil', 'mig', 'makker', 'profile'],
-      run: () => _gotoTab(_tabProfil),
+      run: () => _gaaTil(_tabProfil),
     ),
     if (_isStaff)
       AppCommand(
         label: 'Gå til Træner Dashboard',
         icon: Icons.dashboard,
         keywords: ['dashboard', 'admin', 'træner', 'staff'],
-        run: () => _gotoTab(_tabDashboard),
+        run: () => _gaaTil(_tabDashboard),
       ),
     if (_isStaff)
       AppCommand(
@@ -280,7 +310,7 @@ class _HomeShellState extends State<HomeShell> {
         hint:  'Åbner dashboardet med alle poll-rapporter',
         icon:  Icons.insights,
         keywords: ['synergi', 'kemi', 'rapport', 'holdbygger', 'par'],
-        run: () => _gotoTab(_tabDashboard),
+        run: () => _gaaTil(_tabDashboard),
       ),
     if (_isStaff)
       AppCommand(
@@ -353,7 +383,8 @@ class _HomeShellState extends State<HomeShell> {
 
   /// Den aktive fanes hold-filter. Faner uden filter giver null, og så
   /// udelader sidebaren afsnittet helt.
-  ValueListenable<HoldFilterModel?>? _holdFilterFor(int idx) => switch (idx) {
+  ValueListenable<HoldFilterModel?>? _holdFilterFor(int vist) =>
+      switch (_logisk(vist)) {
         _tabOversigt => _oversigtKey.currentState?.holdFilterNotifier,
         _tabAfstemning => _afstemningerKey.currentState?.holdFilterNotifier,
         _tabBoede => _bodekasseKey.currentState?.holdFilterNotifier,
@@ -362,7 +393,8 @@ class _HomeShellState extends State<HomeShell> {
 
   /// Fanens egne handlinger yderst i topbaren — samme muligheder som mobilens
   /// FAB, bare placeret hvor man kigger på en PC.
-  List<Widget> _topbarHandlinger(int idx) {
+  List<Widget> _topbarHandlinger(int vist) {
+    final idx = _logisk(vist);
     Widget knap(IconData ikon, String tekst, VoidCallback onTap,
         {bool primaer = true}) {
       return Material(
@@ -416,8 +448,11 @@ class _HomeShellState extends State<HomeShell> {
     // Første frame efter et faneskift findes fanens State endnu ikke, så
     // filteret ville mangle i sidebaren. Ét skub når den er på plads — det
     // stopper af sig selv, fordi betingelsen så ikke længere holder.
+    final logisk = _logisk(idx);
     if (filter == null &&
-        (idx == _tabOversigt || idx == _tabAfstemning || idx == _tabBoede)) {
+        (logisk == _tabOversigt ||
+            logisk == _tabAfstemning ||
+            logisk == _tabBoede)) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) setState(() {});
       });
@@ -428,7 +463,7 @@ class _HomeShellState extends State<HomeShell> {
       onSelect: _gotoTab,
       titel: navItems[idx].label,
       topbarHandlinger: _topbarHandlinger(idx),
-      bell: _NotificationsBell(isStaff: _isStaff, onGotoTab: _gotoTab),
+      bell: _NotificationsBell(isStaff: _isStaff, onGotoTab: _gaaTil),
       onOpenPalette: _openPalette,
       onLogout: _logout,
       holdFilter: filter ?? _intetFilter,
@@ -446,6 +481,8 @@ class _HomeShellState extends State<HomeShell> {
     }
 
     final navItems = <({IconData icon, IconData selectedIcon, String label})>[
+      if (_erLeder)
+        (icon: Icons.speed_outlined, selectedIcon: Icons.speed, label: 'Holdleder'),
       (icon: Icons.bolt_outlined, selectedIcon: Icons.bolt, label: 'Oversigt'),
       (icon: Icons.gavel_outlined, selectedIcon: Icons.gavel, label: 'Bødekassen'),
       (icon: Icons.how_to_vote_outlined, selectedIcon: Icons.how_to_vote, label: 'Afstemninger'),
@@ -455,6 +492,12 @@ class _HomeShellState extends State<HomeShell> {
     ];
 
     final pages = <Widget>[
+      if (_erLeder)
+        OversigtTab(
+            key: _holdlederKey,
+            isAdmin: _isStaff,
+            isFullAdmin: _isAdmin,
+            kunDashboard: true),
       OversigtTab(
           key: _oversigtKey, isAdmin: _isStaff, isFullAdmin: _isAdmin),
       BodekasseTab(
@@ -489,7 +532,7 @@ class _HomeShellState extends State<HomeShell> {
         actions: [
           // Tragt = hold-filter (som prototypens header) på Oversigt, Bøder
           // og Afstemninger.
-          if (_selectedIndex.clamp(0, pages.length - 1) == _tabOversigt ||
+          if (_logisk(_selectedIndex.clamp(0, pages.length - 1)) == _tabOversigt ||
               _selectedIndex.clamp(0, pages.length - 1) == _tabBoede ||
               _selectedIndex.clamp(0, pages.length - 1) == _tabAfstemning)
             IconButton(
@@ -508,7 +551,7 @@ class _HomeShellState extends State<HomeShell> {
             ),
           _NotificationsBell(
             isStaff: _isStaff,
-            onGotoTab: _gotoTab,
+            onGotoTab: _gaaTil,
           ),
           // Ctrl+K kun på brede skærme (desktop/web) — skjult på mobil
           if (MediaQuery.of(context).size.width >= 700) ...[
@@ -563,7 +606,7 @@ class _HomeShellState extends State<HomeShell> {
       //  Oversigt → begivenhed/afstemning · Afstemninger → ny afstemning ·
       //  Bødekasse → uddel bøde (kun admin).
       floatingActionButton: desktop ? null : () {
-        final idx = _selectedIndex.clamp(0, pages.length - 1);
+        final idx = _logisk(_selectedIndex.clamp(0, pages.length - 1));
         if ((idx == _tabOversigt || idx == _tabDashboard) && _canCreate) {
           return _CreateSpeedDial(
             isAdmin: _isAdmin,
@@ -877,6 +920,8 @@ class _NotificationsBellState extends State<_NotificationsBell> {
         ));
       } else if (fineTypeId != null) {
         // Bødeforslag godkendes i admin-sektionen.
+        // 4 = Admin i den LOGISKE nummerering. Kaldet går gennem _gaaTil,
+        // som lægger Holdleder-fanen til hvis den vises.
         widget.onGotoTab(4);
       }
     } catch (e) {

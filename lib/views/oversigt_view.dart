@@ -18,6 +18,10 @@ List<String> _trainingGroupIds(Map<String, dynamic> t) {
 List<String> _pollGroupIds(Map<String, dynamic> p) => _trainingGroupIds(p);
 
 class OversigtTab extends StatefulWidget {
+  /// Kun Holdleder-overblikket, uden feedet nedenunder. Bruges af
+  /// Holdleder-fanen, som er startskærm for dem med et ansvar.
+  final bool kunDashboard;
+
   /// Staff (admin ELLER træner): ser skjulte begivenheder og må administrere.
   final bool isAdmin;
   /// Kun rigtige admins: må slå hold-filteret over på hele klubben.
@@ -27,6 +31,7 @@ class OversigtTab extends StatefulWidget {
     super.key,
     required this.isAdmin,
     this.isFullAdmin = false,
+    this.kunDashboard = false,
   });
   @override
   State<OversigtTab> createState() => _OversigtTabState();
@@ -616,7 +621,12 @@ class _OversigtTabState extends State<OversigtTab>
                       style: _body(size: 9, color: _textMuted)),
                 ]),
               ),
-              for (final (i, t) in kommende.skip(1).take(4).indexed)
+              // I Holdleder-fanen vises HELE sæsonen; i feedet er det et
+              // supplement til listen nedenunder, og dér er fire nok.
+              for (final (i, t) in (widget.kunDashboard
+                      ? kommende.skip(1)
+                      : kommende.skip(1).take(4))
+                  .indexed)
                 _programLinje(t, i == 0),
             ],
           ],
@@ -1811,6 +1821,36 @@ class _OversigtTabState extends State<OversigtTab>
 
     final showingTrainings = _activeView == 0;
     final pc = isDesktop(context);
+
+    // Holdleder-fanen: kun overblikket, ingen feed nedenunder.
+    if (widget.kunDashboard) {
+      return RefreshIndicator(
+        onRefresh: () => reload(stille: true),
+        child: ListView(
+          padding: pc
+              ? const EdgeInsets.fromLTRB(22, 18, 22, 40)
+              : const EdgeInsets.fromLTRB(14, 14, 14, 90),
+          children: [
+            Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 760),
+                child: _harAnsvar
+                    ? _traenerDashboard()
+                    : const Padding(
+                        padding: EdgeInsets.all(40),
+                        child: _EmptyState(
+                          icon: Icons.speed_outlined,
+                          title: 'Intet overblik',
+                          subtitle: 'Du har ikke ansvar for et hold',
+                        ),
+                      ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
     final List<_FeedItem> visible;
     if (showingTrainings) {
       visible = switch (_activitySubview) {

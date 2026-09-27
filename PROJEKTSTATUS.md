@@ -207,52 +207,68 @@ Periodeopgørelsen dækker delvist behovet, men bøder nulstilles aldrig.
 
 ---
 
-## 7b. Automation-broen (på `feature/automation-bridge`)
+## 7b. Automation-broen
 
 En Node-robot i `automation/` der styrer Bookli og RankedIn med Playwright.
-Ligger på egen branch og er **ikke udrullet**.
+**Fase 2 er afsluttet og merget til `main`.**
 
-**Virker og er afprøvet mod de rigtige sider:**
+### Hvad der virker
+
+Alt herunder er aflæst fra de kørende sider, ikke gættet, og afprøvet mod
+de rigtige tjenester.
 
 | | Bookli | RankedIn |
 |---|---|---|
 | Login | ✅ | ✅ |
 | Læsning | ✅ bookinger med dato og bane | ✅ kampe, stilling, pulje, sæson |
-| Banevalidering | ✅ BOOKET / MANGLER_BANE | — |
+| Banevalidering | ✅ `BOOKET` / `MANGLER_BANE` | — |
 | Skrivning | ❌ booking ikke skrevet | ❌ kampflytning ikke skrevet |
 
-Valideringen er bevist begge veje: dagens hjemmekamp gav `BOOKET` med
-banerne D4, D11 og D12, og de seks kommende gav `MANGLER_BANE`.
+Valideringen er bevist **begge veje**: en hjemmekamp med baner gav `BOOKET`
+med D4, D11 og D12, og de otte kommende gav `MANGLER_BANE`. En validator
+der kun kan sige "mangler" ser ens ud udefra, så den positive prøve er den
+vigtige.
 
-Selektorerne er aflæst fra de kørende sider, ikke gættet. RankedIn leverer
-fx for T1: sæson "Lunar Ligaen - Efterår 2026", pulje "Vest -
-Danmarksserien - P", hjemmeklub "Padel Club Hjørring" og syv rækker
-stilling.
+Bookli læses gennem klubbens GraphQL-API, ikke ved at skrabe tekst:
+kalenderkortene viser kun klokkeslæt, hverken dato eller år.
 
-**RankedIn-links ligger i databasen** (`groups.rankedin_url`) og redigeres
-under Admin → Medlemmer & hold → holdet. RankedIn giver nye hold-id'er hver
-sæson, og sådan slipper man for at rette filer på robottens maskine.
+### Sådan tages den i brug
 
-**Broen** (`automation/src/server.js`) lytter kun på 127.0.0.1 bag en delt
-nøgle. Robotten har klubbens logins og en nøgle der går uden om al
-adgangskontrol.
+```bash
+cd automation
+npm install            # første gang
+npx playwright install chromium
+cp .env.example .env   # udfyld logins og SUPABASE_SERVICE_ROLE_KEY
+npm run verificer      # databaselæsning + begge logins
+npm run bro            # lytter på 127.0.0.1:8787
+```
 
-**Appen kan tale med broen.** Under Admin → Automations-bro indtastes
-adresse og nøgle; de gemmes lokalt, for broen kører på én bestemt maskine.
-Er den opsat og i gang, viser Dashboardet Booklis FAKTISKE bane-status på
-hver kommende hjemmekamp — grønt med banenumre, eller gult "Ingen bane".
+Derefter i appen: **Admin → Automations-bro** → indsæt adresse og
+`BRIDGE_TOKEN` fra `.env`. Dashboardet viser nu Booklis faktiske
+bane-status på hver kommende hjemmekamp.
 
-Det er en tilføjelse, ikke en afhængighed: svarer broen ikke, tegner
-Dashboardet præcis som før. **Bane-status virker derfor kun på den maskine
-der kører broen — ikke på telefoner og ikke for de øvrige medlemmer.** Det
-er ikke til at komme udenom så længe broen er en lokal proces.
+**Bane-status virker kun på den maskine der kører broen.** Broen lytter på
+127.0.0.1, så telefoner og øvrige medlemmer når den ikke. Det er en
+tilføjelse, ikke en afhængighed: svarer broen ikke, tegner Dashboardet
+præcis som før — ingen fejlskærm, ingen hængende spinner.
 
-**Mangler:** selve banebookingen i Bookli og skrivning tilbage til
-RankedIn. Ingen af delene er set endnu, og de kaster derfor en tydelig fejl
-frem for at foregive noget. Køerne `pending_bookings` og `rankedin_sync` er
-skrevet, men **ikke kørt** mod produktionen.
+### RankedIn-links skiftes i appen
 
----
+**Admin → Medlemmer & hold → holdet → RankedIn-link.** RankedIn giver nye
+hold-id'er hver sæson; sådan slipper man for at rette filer på robottens
+maskine. Hold uden link springes over, så nye hold følger med uden
+kodeændring.
+
+### Hvad der bevidst IKKE er bygget
+
+**Selve bookingen i Bookli** og **kampflytning på RankedIn**. En booking
+optager en rigtig bane og koster point; en kampflytning kan ramme den
+forkerte kamp. Ingen af fladerne har været set, og de kan ikke afprøves
+uden at udføre handlingen. Begge svarer derfor ærligt at de ikke er
+skrevet, frem for at fejle stille når nogen regner med dem.
+
+Køerne `pending_bookings` og `rankedin_sync` er oprettet i databasen og
+klar den dag de skal bruges.
 
 ## 8. Drøftet, ikke bygget
 

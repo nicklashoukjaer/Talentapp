@@ -161,14 +161,24 @@ class _HomeShellState extends State<HomeShell> {
     return _erLeder && uid != null && Indstillinger.dashboardSomStart(uid);
   }
 
+  /// Sat i build. Sidebaren på PC er lodret og har plads til alle punkter,
+  /// hvor bundmenuen på mobil kun kan bære fem.
+  bool _pc = false;
+
+  /// Skal Dashboard-fanen vises?
+  ///
+  /// På PC altid for ledere: dér er der plads, og indstillingen handler om
+  /// den trange bundmenu på mobil. Derfor gælder den kun dér.
+  bool get _visDashboardFane => _erLeder && (_pc || _dashboardSomStart);
+
   List<int> get _faneRaekkefoelge => [
-        if (_dashboardSomStart) _tabLederDash,
+        if (_visDashboardFane) _tabLederDash,
         _tabOversigt,
         _tabBoede,
         _tabAfstemning,
-        // Min profil bliver i bunden — undtagen når Dashboard er slået til,
-        // hvor den femte plads er optaget og profilen flyttes under Admin.
-        if (!_dashboardSomStart) _tabProfil,
+        // Min profil ryger kun ud når pladsen er knap: mobil OG
+        // Dashboard-fanen tændt. Den ligger da under Admin.
+        if (_pc || !_visDashboardFane) _tabProfil,
         if (_isStaff) _tabDashboard,
       ];
 
@@ -476,7 +486,8 @@ class _HomeShellState extends State<HomeShell> {
       );
     }
 
-    final dashKnap = (_erLeder && !_dashboardSomStart && idx == _tabOversigt)
+    final dashKnap =
+        (_erLeder && _idx(_tabLederDash) < 0 && idx == _tabOversigt)
         ? [knap(Icons.speed_outlined, 'Dashboard', _aabnDashboardSkaerm,
             primaer: false)]
         : <Widget>[];
@@ -531,6 +542,10 @@ class _HomeShellState extends State<HomeShell> {
 
   @override
   Widget build(BuildContext context) {
+    // SKAL sættes før fanerækkefølgen aflæses: både navigationslinjen og
+    // siderne bygges ud fra den længere nede.
+    _pc = isDesktop(context);
+
     if (_loading) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
@@ -594,8 +609,9 @@ class _HomeShellState extends State<HomeShell> {
           _ => DashboardTab(
               key: _dashboardKey,
               isFullAdmin: _isAdmin,
-              onAabnProfil: _dashboardSomStart ? _aabnProfil : null,
-              onAabnDashboard: _erLeder && !_dashboardSomStart
+              // Profilen ligger kun her når den IKKE er i bundmenuen.
+              onAabnProfil: _idx(_tabProfil) < 0 ? _aabnProfil : null,
+              onAabnDashboard: _erLeder && _idx(_tabLederDash) < 0
                   ? _aabnDashboardSkaerm
                   : null),
         };
@@ -644,7 +660,7 @@ class _HomeShellState extends State<HomeShell> {
           // Især for kaptajner: de har ikke Admin-fanen, og kunne ellers
           // kun nå det ved at slå det til som fast startskærm.
           if (_erLeder &&
-              !_dashboardSomStart &&
+              _idx(_tabLederDash) < 0 &&
               _logisk(_selectedIndex.clamp(0, pages.length - 1)) ==
                   _tabOversigt)
             IconButton(

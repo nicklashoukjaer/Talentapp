@@ -190,6 +190,13 @@ class DashboardTabState extends State<DashboardTab> {
                   _menuCard(Icons.person_outline, 'Min profil',
                       'Makkere · banehalvdel · adgangskode',
                       () => widget.onAabnProfil!()),
+                _menuCard(
+                    Icons.hub_outlined,
+                    'Automations-bro',
+                    BridgeService.erOpsat
+                        ? 'Bane-status fra Bookli · opsat'
+                        : 'Ikke opsat — bane-status vises ikke',
+                    _opsaetBro),
                 _menuCard(Icons.handshake_outlined, 'Par-overblik',
                     'Hvem spiller sammen · sider · god kemi',
                     () => Navigator.of(context).push(MaterialPageRoute(
@@ -348,6 +355,77 @@ class DashboardTabState extends State<DashboardTab> {
         ],
       ],
     );
+  }
+
+  /// Opsætning af automations-broen.
+  ///
+  /// Adresse og nøgle gemmes LOKALT, ikke i databasen: broen kører på én
+  /// bestemt maskine, og en anden enhed har enten en anden bro eller ingen.
+  Future<void> _opsaetBro() async {
+    final adresse = TextEditingController(text: BridgeService.adresse);
+    final noegle = TextEditingController(text: BridgeService.noegle);
+    final gem = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => fastDialog(
+        ctx,
+        AlertDialog(
+          title: const Text('Automations-bro'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                  'Broen kører på din egen maskine og henter bane-status fra '
+                  'Bookli. Den virker kun dér hvor den er startet — ikke på '
+                  'telefonen og ikke for de øvrige medlemmer.',
+                  style: _body(size: 12.5, color: _textSecondary)),
+              const SizedBox(height: 14),
+              TextField(
+                controller: adresse,
+                style: _body(size: 16),
+                decoration: const InputDecoration(
+                  labelText: 'Adresse',
+                  contentPadding:
+                      EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: noegle,
+                style: _body(size: 16),
+                decoration: const InputDecoration(
+                  labelText: 'Nøgle',
+                  helperText: 'BRIDGE_TOKEN fra automation/.env',
+                  contentPadding:
+                      EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Annullér')),
+            FilledButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('Gem og test')),
+          ],
+        ),
+      ),
+    );
+    final a = adresse.text, n = noegle.text;
+    adresse.dispose();
+    noegle.dispose();
+    if (gem != true || !mounted) return;
+
+    BridgeService.gem(a, n);
+    final oppe = await BridgeService.tjek();
+    if (!mounted) return;
+    _snack(
+        context,
+        oppe ? 'Broen svarer 🎾' : 'Broen svarer ikke — kører den?',
+        oppe ? _success : _gold);
+    setState(() {});
   }
 
   Widget _buildMembersSection() {

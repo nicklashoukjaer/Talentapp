@@ -14,7 +14,23 @@ import { holdMedRankedIn } from './hold.js';
 const PORT = Number(process.env.BRIDGE_PORT || 8787);
 const TOKEN = process.env.BRIDGE_TOKEN || '';
 
+// Appen kører på https://…vercel.app og broen på http://127.0.0.1.
+// Uden disse svarhoveder blokerer browseren kaldet, og fejlen ses kun i
+// konsollen — appen ville bare stå tavst uden bane-status.
+//
+// Browsere regner 127.0.0.1 som et sikkert ophav, så https → localhost er
+// tilladt; men det kræver CORS, og Chrome kræver desuden
+// Private-Network-Access-hovedet ved kald ind i det lokale net.
+function cors(res) {
+  res.setHeader('access-control-allow-origin', '*');
+  res.setHeader('access-control-allow-headers', 'content-type, x-bridge-token');
+  res.setHeader('access-control-allow-methods', 'GET, POST, OPTIONS');
+  res.setHeader('access-control-allow-private-network', 'true');
+  res.setHeader('access-control-max-age', '86400');
+}
+
 function svar(res, kode, krop) {
+  cors(res);
   res.writeHead(kode, { 'content-type': 'application/json; charset=utf-8' });
   res.end(JSON.stringify(krop, null, 1));
 }
@@ -80,6 +96,14 @@ const ruter = {
 createServer(async (req, res) => {
   const sti = (req.url || '').split('?')[0];
   const noegle = `${req.method} ${sti}`;
+
+  // Browserens forespørgsel om lov. Den bærer ikke nøglen, så den skal
+  // besvares FØR nøglen kontrolleres.
+  if (req.method === 'OPTIONS') {
+    cors(res);
+    res.writeHead(204);
+    return res.end();
+  }
 
   if (TOKEN && req.headers['x-bridge-token'] !== TOKEN) {
     return svar(res, 401, { fejl: 'Forkert eller manglende x-bridge-token' });

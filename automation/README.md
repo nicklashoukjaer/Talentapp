@@ -101,6 +101,23 @@ indhold. `lukSamtykke()` kaldes derfor før alt andet.
 `<table>`; Matches er `div.match-row`. En selektor der virker på den ene
 finder ingenting på den anden.
 
+## Sådan ser appen bane-status
+
+1. Start broen: `npm run bro`
+2. I appen: **Admin → Automations-bro** → indsæt adresse og `BRIDGE_TOKEN`
+3. Åbn Dashboardet. Hver kommende hjemmekamp viser nu Booklis faktiske
+   status — grønt med banenumre, eller gult "Ingen bane".
+
+**Det virker kun på den maskine der kører broen.** Broen lytter på
+127.0.0.1, så telefoner og de øvrige medlemmer når den ikke. Svarer den
+ikke, tegner Dashboardet som før — uden fejl og uden spinner. Appen holder
+desuden to minutters pause efter et mislykket kald, så en slukket bro ikke
+sender et kald afsted ved hver eneste gentegning.
+
+Bemærk at appens eget flag (⚠️ Tjek Bookli) og broens svar er **to
+forskellige ting**: flaget er hvad nogen har krydset af, broens svar er
+hvad der faktisk står i Bookli. Derfor vises de ved siden af hinanden.
+
 ## Ved sæsonstart: opdatér RankedIn-linket
 
 RankedIn giver holdet et **nyt id hver sæson**. Linket ligger derfor i

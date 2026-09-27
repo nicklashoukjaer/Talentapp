@@ -107,6 +107,33 @@ class _OversigtTabState extends State<OversigtTab>
   // farvede mærkater til begge dele ville gøre "T1 + HJEMME" og
   // "T2 + UDE" umulige at skelne.
 
+  /// Bane-status fra automations-broen, training_id → status.
+  ///
+  /// Tom betyder "broen svarede ikke" — ikke "ingen baner". De to må ikke
+  /// forveksles, og derfor vises der INTET når den er tom.
+  Map<String, BaneStatus> _baneStatus = const {};
+  bool _baneHentet = false;
+
+  /// Spørger broen om banerne. Fejler den, sker der ingenting synligt:
+  /// broen kører kun på den maskine den er startet på.
+  Future<void> _hentBaneStatus() async {
+    if (_baneHentet || !BridgeService.erOpsat) return;
+    _baneHentet = true;
+    final hjemme = _items
+        .whereType<_TrainingFeedItem>()
+        .where((t) => erHjemmekamp(t.training['titel'] as String))
+        .where((t) => DateTime.parse(t.training['start_tid'] as String)
+            .isAfter(DateTime.now()))
+        .map((t) => t.training)
+        .toList();
+    if (hjemme.isEmpty) return;
+    final svar = await BridgeService.validerBaner(hjemme);
+    if (!mounted || svar == null) return;
+    setState(() {
+      _baneStatus = {for (final b in svar) b.trainingId: b};
+    });
+  }
+
   /// Dashboardets fane. Kampe er standard: de er det der kræver
   /// forberedelse — baner, opstilling, transport — hvor en træning kører
   /// af sig selv hver uge.
@@ -411,6 +438,14 @@ class _OversigtTabState extends State<OversigtTab>
                     kompakt: true,
                     onOpdateret: () => reload(stille: true)),
               ],
+              // Broens svar, når den er nået. Den ved hvad der FAKTISK er
+              // booket i Bookli, hvor flaget i appen kun er det nogen har
+              // krydset af — derfor vises begge, ikke det ene i stedet for
+              // det andet.
+              if (_baneStatus[tr['id']] != null) ...[
+                const SizedBox(width: 5),
+                _baneMaerke(_baneStatus[tr['id']]!),
+              ],
             ]),
           ),
           const SizedBox(width: 6),
@@ -434,6 +469,28 @@ class _OversigtTabState extends State<OversigtTab>
           ),
         ]),
       ),
+    );
+  }
+
+  /// Bookli-svaret: grønt med banenumre, eller gult når der mangler.
+  Widget _baneMaerke(BaneStatus b) {
+    final f = b.booket ? _success : _gold;
+    final tekst = b.booket
+        ? (b.baner.isEmpty ? 'Baner ok' : b.baner.join(', '))
+        : 'Ingen bane';
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
+      decoration: BoxDecoration(
+        color: f.withValues(alpha: 0.16),
+        borderRadius: BorderRadius.circular(5),
+      ),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        Icon(b.booket ? Icons.sports_tennis : Icons.error_outline,
+            size: 10, color: f),
+        const SizedBox(width: 4),
+        Text(tekst,
+            style: _body(size: 9, weight: FontWeight.w800, color: f)),
+      ]),
     );
   }
 
@@ -518,6 +575,8 @@ class _OversigtTabState extends State<OversigtTab>
   Widget _traenerDashboard() {
     if (!_harAnsvar) return const SizedBox.shrink();
     _sikrStandardHold();
+    // Fire and forget: tegner videre uanset om broen svarer.
+    unawaited(_hentBaneStatus());
     final kommende = _kommendeForMig;
 
     return Container(

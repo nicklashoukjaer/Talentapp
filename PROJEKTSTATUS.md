@@ -237,6 +237,16 @@ sæson, og sådan slipper man for at rette filer på robottens maskine.
 nøgle. Robotten har klubbens logins og en nøgle der går uden om al
 adgangskontrol.
 
+**Appen kan tale med broen.** Under Admin → Automations-bro indtastes
+adresse og nøgle; de gemmes lokalt, for broen kører på én bestemt maskine.
+Er den opsat og i gang, viser Dashboardet Booklis FAKTISKE bane-status på
+hver kommende hjemmekamp — grønt med banenumre, eller gult "Ingen bane".
+
+Det er en tilføjelse, ikke en afhængighed: svarer broen ikke, tegner
+Dashboardet præcis som før. **Bane-status virker derfor kun på den maskine
+der kører broen — ikke på telefoner og ikke for de øvrige medlemmer.** Det
+er ikke til at komme udenom så længe broen er en lokal proces.
+
 **Mangler:** selve banebookingen i Bookli og skrivning tilbage til
 RankedIn. Ingen af delene er set endnu, og de kaster derfor en tydelig fejl
 frem for at foregive noget. Køerne `pending_bookings` og `rankedin_sync` er

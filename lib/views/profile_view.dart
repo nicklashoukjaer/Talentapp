@@ -115,6 +115,9 @@ class _ProfileTabState extends State<ProfileTab> {
     final uid = widget.profile['id'] as String;
     final rolle = widget.profile['rolle'] as String?;
     final staff = rolle == 'admin' || rolle == 'træner';
+    // Rollen alene gør én til leder. Sættes FØR opslaget, så et fejlet
+    // netværkskald ikke kan skjule indstillingerne for en admin.
+    if (staff && mounted) setState(() => _erLeder = true);
     try {
       final gm = List<Map<String, dynamic>>.from(await supabase
           .from('group_members')
@@ -177,24 +180,26 @@ class _ProfileTabState extends State<ProfileTab> {
               setState(() {});
               widget.onIndstillingerAendret?.call();
             },
-            title: Text('Brug Dashboard som startskærm',
+            title: Text('Brug Dashboard som startskærm på mobil',
                 style: _body(size: 14, weight: FontWeight.w600)),
             subtitle: Text(
                 somStart
                     ? 'Appen åbner på Dashboardet'
-                    : 'Appen åbner på Oversigten som hidtil',
+                    : 'Appen åbner på Oversigten som hidtil. '
+                        'På PC vises Dashboardet altid.',
                 style: _body(size: 11.5, color: _textSecondary)),
             activeThumbColor: _neon,
           ),
-          // Holdvalget vises kun når man HAR mere end ét hold — ellers er
-          // der intet at vælge imellem.
-          if (_ansvarsHold.length > 1) ...[
+          // Vises for ALLE ledere, også med ét hold, og uafhængigt af
+          // kontakten ovenfor: holdet gælder Dashboardet uanset hvordan man
+          // er kommet derind — fane, genvej i topbaren eller PC-sidebaren.
+          if (_ansvarsHold.isNotEmpty) ...[
             const Divider(height: 8, color: _borderSubtle),
             ListTile(
               contentPadding: EdgeInsets.zero,
               title: Text('Standard hold på Dashboard',
                   style: _body(size: 14, weight: FontWeight.w600)),
-              subtitle: Text(holdNavn,
+              subtitle: Text('$holdNavn · gælder overalt på Dashboardet',
                   style: _body(size: 11.5, color: _textSecondary)),
               trailing: const Icon(Icons.expand_more, color: _textMuted),
               onTap: _vaelgStandardHold,

@@ -117,18 +117,29 @@ class _OversigtTabState extends State<OversigtTab>
   /// Startværdien kommer fra brugerens egen indstilling, så den der kun
   /// følger ét hold slipper for at vælge det hver gang.
   String? _dashHold;
-  bool _dashHoldSat = false;
 
+  /// Har brugeren selv rørt holdvælgeren i denne omgang? Indtil da følger
+  /// Dashboardet indstillingen fra profilen.
+  bool _dashHoldValgtAfBruger = false;
+
+  /// Henter standardholdet fra profilens indstilling.
+  ///
+  /// Der låses IKKE efter første forsøg. Første build sker typisk før
+  /// holdene er hentet, og så ville et gemt hold blive afvist og aldrig
+  /// prøvet igen — det var grunden til at indstillingen ikke slog igennem.
+  /// Nu gælder den indtil brugeren selv vælger noget andet, hvilket også
+  /// betyder at en ændring i profilen slår igennem med det samme.
   void _sikrStandardHold() {
-    if (_dashHoldSat) return;
-    _dashHoldSat = true;
+    if (_dashHoldValgtAfBruger) return;
     final uid = supabase.auth.currentUser?.id;
     if (uid == null) return;
     final gemt = Indstillinger.dashboardHold(uid);
-    // Kun hvis holdet stadig findes og man stadig har ansvar for det.
-    if (gemt != null && _mineAnsvarsHold.any((g) => g['id'] == gemt)) {
-      _dashHold = gemt;
+    if (gemt == null) {
+      _dashHold = null;
+      return;
     }
+    // Kun hvis holdet stadig findes og man stadig har ansvar for det.
+    if (_mineAnsvarsHold.any((g) => g['id'] == gemt)) _dashHold = gemt;
   }
 
   /// Modstanderen ud fra titlen. "Hjemmekamp: Gug Padel 7" → "Gug Padel 7".
@@ -456,7 +467,10 @@ class _OversigtTabState extends State<OversigtTab>
       return Padding(
         padding: const EdgeInsets.only(right: 6),
         child: GestureDetector(
-          onTap: () => setState(() => _dashHold = id),
+          onTap: () => setState(() {
+            _dashHold = id;
+            _dashHoldValgtAfBruger = true;
+          }),
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
             decoration: BoxDecoration(

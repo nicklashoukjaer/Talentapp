@@ -112,13 +112,23 @@ class _OversigtTabState extends State<OversigtTab>
   /// Tom betyder "broen svarede ikke" — ikke "ingen baner". De to må ikke
   /// forveksles, og derfor vises der INTET når den er tom.
   Map<String, BaneStatus> _baneStatus = const {};
-  bool _baneHentet = false;
+
+  /// Hvilke kampe der sidst BLEV spurgt om, og hvornår vi sidst fejlede.
+  ///
+  /// Et enkelt "er vi færdige"-flag var forkert: det blev sat før listen
+  /// af kampe overhovedet var hentet, så det allerførste kald ramte nul
+  /// kampe og alle senere blev sprunget over. Derfor en signatur i stedet
+  /// — den ændrer sig når kampene gør, og den sættes kun når broen
+  /// faktisk har svaret.
+  String _baneSignatur = '';
+  DateTime? _baneFejlTid;
+  bool _baneIGang = false;
+  bool _broTavs = false;
 
   /// Spørger broen om banerne. Fejler den, sker der ingenting synligt:
   /// broen kører kun på den maskine den er startet på.
   Future<void> _hentBaneStatus() async {
-    if (_baneHentet || !BridgeService.erOpsat) return;
-    _baneHentet = true;
+    if (_baneIGang || !BridgeService.erOpsat) return;
     final hjemme = _items
         .whereType<_TrainingFeedItem>()
         .where((t) => erHjemmekamp(t.training['titel'] as String))
@@ -126,12 +136,42 @@ class _OversigtTabState extends State<OversigtTab>
             .isAfter(DateTime.now()))
         .map((t) => t.training)
         .toList();
+    // Ingen kampe endnu — listen er ikke hentet. Prøv igen ved næste tegn.
     if (hjemme.isEmpty) return;
-    final svar = await BridgeService.validerBaner(hjemme);
-    if (!mounted || svar == null) return;
-    setState(() {
-      _baneStatus = {for (final b in svar) b.trainingId: b};
-    });
+
+    final sig = hjemme.map((t) => t['id']).join(',');
+    if (sig == _baneSignatur) return;
+    // Efter en fejl: vent et minut. Broen er typisk slukket, og et kald
+    // per gentegning ville låse fladen fast i timeouts.
+    final fejl = _baneFejlTid;
+    if (fejl != null && DateTime.now().difference(fejl).inSeconds < 60) return;
+
+    _baneIGang = true;
+    try {
+      final svar = await BridgeService.validerBaner(hjemme);
+      if (!mounted) return;
+      if (svar == null) {
+        _baneFejlTid = DateTime.now();
+        if (!_broTavs) setState(() => _broTavs = true);
+        return;
+      }
+      _baneSignatur = sig;
+      _baneFejlTid = null;
+      setState(() {
+        _broTavs = false;
+        _baneStatus = {for (final b in svar) b.trainingId: b};
+      });
+    } finally {
+      _baneIGang = false;
+    }
+  }
+
+  /// Tvinger et nyt banetjek — bruges når man trykker på linjen.
+  void _genhentBaner() {
+    _baneSignatur = '';
+    _baneFejlTid = null;
+    setState(() => _broTavs = false);
+    unawaited(_hentBaneStatus());
   }
 
   /// Dashboardets fane. Kampe er standard: de er det der kræver
@@ -478,7 +518,19 @@ class _OversigtTabState extends State<OversigtTab>
   /// "0 mangler" fordi broen var slukket ville være den værste slags
   /// beroligelse.
   Widget _baneOverblik() {
-    if (_baneStatus.isEmpty) return const SizedBox.shrink();
+    if (!BridgeService.erOpsat) return const SizedBox.shrink();
+    if (_baneStatus.isEmpty) {
+      // Ingen svar. At tegne INTET var det der forvirrede: så ligner en
+      // slukket bro og "alt er fint" hinanden. Sig det som det er.
+      if (!_broTavs) return const SizedBox.shrink();
+      return _overblikRamme(
+        farve: _textMuted,
+        ikon: Icons.cloud_off_rounded,
+        titel: 'Banetjek utilgængeligt',
+        under: 'Broen svarer ikke — tryk for at prøve igen',
+        onTryk: _genhentBaner,
+      );
+    }
 
     // Kun de hjemmekampe der er med i den viste liste, så tallet passer
     // til det man har for øjnene.
@@ -492,60 +544,81 @@ class _OversigtTabState extends State<OversigtTab>
         .toList();
     final alleOk = mangler.isEmpty;
 
+    return _overblikRamme(
+      farve: alleOk ? _success : _gold,
+      ikon: alleOk ? Icons.check_circle : Icons.warning_amber_rounded,
+      titel: alleOk
+          ? 'Baner i orden på alle ${synlige.length} hjemmekampe'
+          : '${mangler.length} af ${synlige.length} hjemmekampe mangler baner',
+      under: alleOk
+          ? 'Hentet fra Bookli'
+          : '${mangler.take(3).map((t) => _fmtDate(DateTime.parse(
+                  t.training['start_tid'] as String).toLocal())).join(' · ')}'
+              '${mangler.length > 3 ? ' …' : ''}',
+      // Åbnes synkront i trykket, ellers blokerer browseren det.
+      handling: alleOk ? null : 'Åbn Bookli',
+      onHandling: alleOk ? null : () => aabnBookli(context),
+      onTryk: _genhentBaner,
+    );
+  }
+
+  /// Fælles ramme for overbliks-linjen, så "alt er booket", "der mangler"
+  /// og "broen svarer ikke" ser ud som samme sted på skærmen.
+  Widget _overblikRamme({
+    required Color farve,
+    required IconData ikon,
+    required String titel,
+    required String under,
+    String? handling,
+    VoidCallback? onHandling,
+    VoidCallback? onTryk,
+  }) {
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 9),
       decoration: BoxDecoration(
-        color: (alleOk ? _success : _gold).withValues(alpha: 0.12),
+        color: farve.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(11),
-        border: Border.all(
-            color: (alleOk ? _success : _gold).withValues(alpha: 0.45)),
+        border: Border.all(color: farve.withValues(alpha: 0.45)),
       ),
-      child: Row(children: [
-        Icon(alleOk ? Icons.check_circle : Icons.warning_amber_rounded,
-            size: 16, color: alleOk ? _success : _gold),
-        const SizedBox(width: 9),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                  alleOk
-                      ? 'Baner i orden på alle ${synlige.length} hjemmekampe'
-                      : '${mangler.length} af ${synlige.length} hjemmekampe '
-                          'mangler baner',
-                  style: _body(
-                      size: 12.5,
-                      weight: FontWeight.w700,
-                      color: alleOk ? _success : _gold)),
-              Text(
-                  alleOk
-                      ? 'Hentet fra Bookli'
-                      : mangler
-                          .take(3)
-                          .map((t) => _fmtDate(DateTime.parse(
-                              t.training['start_tid'] as String).toLocal()))
-                          .join(' · ') +
-                          (mangler.length > 3 ? ' …' : ''),
-                  style: _body(size: 10.5, color: _textMuted),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis),
-            ],
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTryk,
+          borderRadius: BorderRadius.circular(11),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 9),
+            child: Row(children: [
+              Icon(ikon, size: 16, color: farve),
+              const SizedBox(width: 9),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(titel,
+                        style: _body(
+                            size: 12.5, weight: FontWeight.w700, color: farve)),
+                    Text(under,
+                        style: _body(size: 10.5, color: _textMuted),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis),
+                  ],
+                ),
+              ),
+              if (handling != null)
+                TextButton(
+                  onPressed: onHandling,
+                  style: TextButton.styleFrom(
+                    foregroundColor: farve,
+                    textStyle: _body(size: 11.5, weight: FontWeight.w700),
+                    visualDensity: VisualDensity.compact,
+                  ),
+                  child: Text(handling),
+                ),
+            ]),
           ),
         ),
-        if (!alleOk)
-          TextButton(
-            // Åbnes synkront i trykket, ellers blokerer browseren det.
-            onPressed: () => aabnBookli(context),
-            style: TextButton.styleFrom(
-              foregroundColor: _gold,
-              textStyle: _body(size: 11.5, weight: FontWeight.w700),
-              visualDensity: VisualDensity.compact,
-            ),
-            child: const Text('Åbn Bookli'),
-          ),
-      ]),
+      ),
     );
   }
 

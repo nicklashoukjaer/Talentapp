@@ -472,6 +472,83 @@ class _OversigtTabState extends State<OversigtTab>
     );
   }
 
+  /// Samlet svar på "er der styr på banerne?".
+  ///
+  /// Tegnes kun når broen FAKTISK har svaret. Uden svar vises intet — et
+  /// "0 mangler" fordi broen var slukket ville være den værste slags
+  /// beroligelse.
+  Widget _baneOverblik() {
+    if (_baneStatus.isEmpty) return const SizedBox.shrink();
+
+    // Kun de hjemmekampe der er med i den viste liste, så tallet passer
+    // til det man har for øjnene.
+    final synlige = _kommendeForMig
+        .where((t) => _baneStatus.containsKey(t.training['id']))
+        .toList();
+    if (synlige.isEmpty) return const SizedBox.shrink();
+
+    final mangler = synlige
+        .where((t) => _baneStatus[t.training['id']]!.booket == false)
+        .toList();
+    final alleOk = mangler.isEmpty;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 9),
+      decoration: BoxDecoration(
+        color: (alleOk ? _success : _gold).withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(11),
+        border: Border.all(
+            color: (alleOk ? _success : _gold).withValues(alpha: 0.45)),
+      ),
+      child: Row(children: [
+        Icon(alleOk ? Icons.check_circle : Icons.warning_amber_rounded,
+            size: 16, color: alleOk ? _success : _gold),
+        const SizedBox(width: 9),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                  alleOk
+                      ? 'Baner i orden på alle ${synlige.length} hjemmekampe'
+                      : '${mangler.length} af ${synlige.length} hjemmekampe '
+                          'mangler baner',
+                  style: _body(
+                      size: 12.5,
+                      weight: FontWeight.w700,
+                      color: alleOk ? _success : _gold)),
+              Text(
+                  alleOk
+                      ? 'Hentet fra Bookli'
+                      : mangler
+                          .take(3)
+                          .map((t) => _fmtDate(DateTime.parse(
+                              t.training['start_tid'] as String).toLocal()))
+                          .join(' · ') +
+                          (mangler.length > 3 ? ' …' : ''),
+                  style: _body(size: 10.5, color: _textMuted),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis),
+            ],
+          ),
+        ),
+        if (!alleOk)
+          TextButton(
+            // Åbnes synkront i trykket, ellers blokerer browseren det.
+            onPressed: () => aabnBookli(context),
+            style: TextButton.styleFrom(
+              foregroundColor: _gold,
+              textStyle: _body(size: 11.5, weight: FontWeight.w700),
+              visualDensity: VisualDensity.compact,
+            ),
+            child: const Text('Åbn Bookli'),
+          ),
+      ]),
+    );
+  }
+
   /// Bookli-svaret: grønt med banenumre, eller gult når der mangler.
   Widget _baneMaerke(BaneStatus b) {
     final f = b.booket ? _success : _gold;
@@ -602,6 +679,8 @@ class _OversigtTabState extends State<OversigtTab>
           ]),
           const SizedBox(height: 10),
           _holdVaelger(),
+          // Samlet bane-status, når broen har svaret.
+          _baneOverblik(),
           // Tegnes ALTID — også når der ingenting er — så det ikke ligner at
           // dashboardet er gået i stykker.
           if (kommende.isEmpty)

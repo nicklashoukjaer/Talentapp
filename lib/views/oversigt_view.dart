@@ -96,6 +96,21 @@ class _OversigtTabState extends State<OversigtTab>
   // Et kompakt overblik øverst i Oversigten for dem der har et ansvar. En
   // almindelig spiller ser det ikke — deres feed skal være enkelt.
 
+  /// Dashboardets fane. Kampe er standard: de er det der kræver
+  /// forberedelse — baner, opstilling, transport — hvor en træning kører
+  /// af sig selv hver uge.
+  bool _dashKampe = true;
+
+  /// Modstanderen ud fra titlen. "Hjemmekamp: Gug Padel 7" → "Gug Padel 7".
+  /// Uden kolon bruges hele titlen.
+  static String _modstander(String titel) {
+    final i = titel.indexOf(':');
+    if (i < 0 || i + 1 >= titel.length) return titel.trim();
+    return titel.substring(i + 1).trim();
+  }
+
+  static bool _erKamp(String titel) => _classifyEvent(titel).kamp;
+
   /// Har jeg et ansvar et sted? Admin og klub-træner gælder overalt;
   /// holdtræner og kaptajn kun på deres egne hold.
   bool get _harAnsvar =>
@@ -128,7 +143,11 @@ class _OversigtTabState extends State<OversigtTab>
     );
   }
 
-  /// Begivenhederne jeg har ansvar for, fra nu og 14 dage frem.
+  /// Begivenhederne jeg har ansvar for, i den valgte fane.
+  ///
+  /// Kampe får INTET tidsvindue. De ligger spredt over hele sæsonen — der er
+  /// 2 inden for 14 dage, men 14 fremover — så et vindue ville skjule de
+  /// fleste. Træninger kører derimod hver uge, og dér giver 14 dage mening.
   List<_TrainingFeedItem> get _kommendeForMig {
     final nu = DateTime.now();
     final graense = nu.add(const Duration(days: 14));
@@ -136,8 +155,13 @@ class _OversigtTabState extends State<OversigtTab>
         .whereType<_TrainingFeedItem>()
         .where((t) => _minBegivenhed(t.training))
         .where((t) {
+          final titel = t.training['titel'] as String;
+          return _dashKampe ? _erKamp(titel) : _showInTrainingTab(titel);
+        })
+        .where((t) {
           final s = DateTime.parse(t.training['start_tid'] as String).toLocal();
-          return s.isAfter(nu) && s.isBefore(graense);
+          if (!s.isAfter(nu)) return false;
+          return _dashKampe || s.isBefore(graense);
         })
         .toList();
     ud.sort((a, b) => a.sortKey.compareTo(b.sortKey));
@@ -181,6 +205,7 @@ class _OversigtTabState extends State<OversigtTab>
         ? _success
         : (s.mangler > 0 ? _danger : _gold);
     final hjemme = erHjemmekamp(tr['titel'] as String);
+    final erKamp = _erKamp(tr['titel'] as String);
     final baneOk = tr['bane_booket'] == true;
 
     return Container(
@@ -202,9 +227,36 @@ class _OversigtTabState extends State<OversigtTab>
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text((tr['titel'] as String).toUpperCase(),
-                      style: _cond(size: 16, weight: FontWeight.w800),
-                      maxLines: 1, overflow: TextOverflow.ellipsis),
+                  // På en kamp er MODSTANDEREN det man leder efter, ikke
+                  // ordet "hjemmekamp". Hjemme/ude siges med et mærkat.
+                  Row(children: [
+                    Flexible(
+                      child: Text(
+                          (erKamp
+                                  ? _modstander(tr['titel'] as String)
+                                  : tr['titel'] as String)
+                              .toUpperCase(),
+                          style: _cond(size: 16, weight: FontWeight.w800),
+                          maxLines: 1, overflow: TextOverflow.ellipsis),
+                    ),
+                    if (erKamp) ...[
+                      const SizedBox(width: 7),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 7, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: (hjemme ? _neon : _info)
+                              .withValues(alpha: 0.18),
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: Text(hjemme ? 'HJEMME' : 'UDE',
+                            style: _body(
+                                size: 9.5,
+                                weight: FontWeight.w800,
+                                color: hjemme ? _neon : _info)),
+                      ),
+                    ],
+                  ]),
                   Text(
                       '${_fmtDatoMedUgedag(start)} · ${_fmtTime(start)}',
                       style: _body(size: 11.5, color: _textSecondary)),
@@ -304,8 +356,23 @@ class _OversigtTabState extends State<OversigtTab>
           ),
           Expanded(
             child: Row(children: [
+              if (_erKamp(tr['titel'] as String))
+                Padding(
+                  padding: const EdgeInsets.only(right: 6),
+                  child: Icon(
+                      erHjemmekamp(tr['titel'] as String)
+                          ? Icons.home_outlined
+                          : Icons.directions_car_outlined,
+                      size: 13,
+                      color: erHjemmekamp(tr['titel'] as String)
+                          ? _neon
+                          : _info),
+                ),
               Flexible(
-                child: Text(tr['titel'] as String,
+                child: Text(
+                    _erKamp(tr['titel'] as String)
+                        ? _modstander(tr['titel'] as String)
+                        : tr['titel'] as String,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: _body(size: 12.5, weight: FontWeight.w600)),
@@ -335,6 +402,26 @@ class _OversigtTabState extends State<OversigtTab>
     );
   }
 
+  Widget _dashFane(String tekst, bool kampe) {
+    final aktiv = _dashKampe == kampe;
+    return GestureDetector(
+      onTap: () => setState(() => _dashKampe = kampe),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 7),
+        decoration: BoxDecoration(
+          color: aktiv ? _neon : Colors.transparent,
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: aktiv ? _neon : _borderSubtle),
+        ),
+        child: Text(tekst,
+            style: _body(
+                size: 12,
+                weight: FontWeight.w700,
+                color: aktiv ? Colors.white : _textSecondary)),
+      ),
+    );
+  }
+
   /// Hele dashboardet. Returnerer tomt for dem uden ansvar.
   Widget _traenerDashboard() {
     if (!_harAnsvar) return const SizedBox.shrink();
@@ -359,10 +446,9 @@ class _OversigtTabState extends State<OversigtTab>
           Row(children: [
             const Icon(Icons.speed_outlined, size: 17, color: _neon),
             const SizedBox(width: 9),
-            Expanded(
-              child: Text('DIT OVERBLIK',
-                  style: _cond(size: 17, weight: FontWeight.w800)),
-            ),
+            Text('DIT OVERBLIK',
+                style: _cond(size: 17, weight: FontWeight.w800)),
+            const Spacer(),
             if (udenBane > 0)
               TextButton.icon(
                 // Åbnes synkront i trykket, ellers blokerer browseren det.
@@ -376,6 +462,14 @@ class _OversigtTabState extends State<OversigtTab>
                 ),
               ),
           ]),
+          const SizedBox(height: 11),
+          // Kampe står først: de kræver forberedelse, hvor en træning kører
+          // af sig selv hver uge.
+          Row(children: [
+            _dashFane('🏆  Kampe', true),
+            const SizedBox(width: 8),
+            _dashFane('🏋️  Træninger', false),
+          ]),
           const SizedBox(height: 12),
           // Tegnes ALTID — også når der ingenting er — så det ikke ligner at
           // dashboardet er gået i stykker.
@@ -383,7 +477,9 @@ class _OversigtTabState extends State<OversigtTab>
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 14),
               child: Text(
-                  'Ingen begivenheder på dine hold de næste 14 dage',
+                  _dashKampe
+                      ? 'Ingen kommende kampe på dine hold'
+                      : 'Ingen træninger på dine hold de næste 14 dage',
                   textAlign: TextAlign.center,
                   style: _body(size: 12.5, color: _textSecondary)),
             )
@@ -394,7 +490,8 @@ class _OversigtTabState extends State<OversigtTab>
                 padding: const EdgeInsets.only(top: 4, bottom: 2, left: 2),
                 child: Row(children: [
                   Expanded(
-                    child: Text('DE NÆSTE 14 DAGE',
+                    child: Text(
+                        _dashKampe ? 'KOMMENDE KAMPE' : 'DE NÆSTE 14 DAGE',
                         style: _body(
                             size: 10,
                             weight: FontWeight.w700,

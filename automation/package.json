@@ -9,7 +9,9 @@
     "worker:once": "node src/index.js --once",
     "worker:dry": "node src/index.js --once --dry-run",
     "bro": "node src/server.js",
-    "test:login": "node src/test-login.js"
+    "test:login": "node src/test-login.js",
+    "test:db": "node src/test-db.js",
+    "verificer": "node src/test-db.js && node src/test-login.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",

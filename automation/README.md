@@ -106,9 +106,15 @@ Robotten springer hold uden link over. Damerne kommer altså med i samme
 ## Broen
 
 ```bash
+npm run verificer    # databaselæsning + begge logins
+npm run test:db      # kan service-nøglen læse holdenes links?
+npm run test:login   # virker Bookli og RankedIn?
 npm run bro          # lytter på 127.0.0.1:8787
-npm run test:login   # afprøver begge logins
 ```
+
+`test:db` er sin egen test med vilje. Det er service-nøglen der afgør om
+holdene kan læses, og `test:login` rører slet ikke databasen — grønne
+logins siger altså intet om den del.
 
 Kun `127.0.0.1`, og bag `x-bridge-token` fra `.env`. Robotten har klubbens
 logins og en service-nøgle der går uden om row level security — den må

@@ -80,9 +80,28 @@ vælger den ikke selv: det er en varig ændring på brugerens konto, og den
 kan ikke gætte hvilken klub der er den rigtige. Vælg lokationen én gang
 manuelt, så kan resten skrives.
 
-**RankedIn mangler en holdadresse.** `hentKampe` tager stien udefra, fx
-`/da/team/12345`. RankedIn har ingen offentlig grænseflade, og holdets id
-kender vi ikke på forhånd.
+## Ved sæsonstart: opdatér RankedIn-linket
+
+RankedIn giver holdet et **nyt id hver sæson**. Linket ligger derfor i
+databasen på holdet, ikke i en fil — så en admin retter det i appen, og
+robotten følger med af sig selv ved næste kørsel.
+
+**Admin → Medlemmer & hold → vælg holdet → RankedIn-link.**
+
+Indsæt adressen fra holdets side på RankedIn, fx
+`https://www.rankedin.com/en/team/homepage/3281091`. Det er alt. Ingen
+`.env` skal røres, og intet skal udrulles.
+
+Nuværende sæson (Lunar Ligaen · Efterår 2026):
+
+| Hold | Link |
+|---|---|
+| Talentløse 1 | `…/team/homepage/3281091` |
+| Talentløse 2 | `…/team/homePage/3280677` |
+| Talentløse Damer | ikke angivet — skriv den ind i appen når de ønsker det |
+
+Robotten springer hold uden link over. Damerne kommer altså med i samme
+øjeblik nogen skriver deres adresse ind — der skal ikke ændres kode.
 
 ## Broen
 

@@ -1000,7 +1000,7 @@ class _MembersAdminViewState extends State<_MembersAdminView> {
     setState(() => _loading = true);
     try {
       final res = await Future.wait([
-        supabase.from('groups').select('id, navn, type, farve, sort').order('sort', ascending: true),
+        supabase.from('groups').select('id, navn, type, farve, sort, rankedin_url').order('sort', ascending: true),
         supabase.from('profiles').select('id, navn, rolle, email').order('navn', ascending: true),
         supabase.from('group_members')
             .select('group_id, user_id, is_captain, is_trainer'),
@@ -1588,6 +1588,120 @@ class _MembersAdminViewState extends State<_MembersAdminView> {
     }
   }
 
+  /// RankedIn-linket for holdet.
+  ///
+  /// RankedIn opretter nye hold-id'er hver sæson, så linket skal kunne
+  /// rettes her — ikke i en fil på den maskine der kører robotten.
+  Future<void> _redigerRankedIn(Map<String, dynamic> g) async {
+    final ctrl =
+        TextEditingController(text: g['rankedin_url'] as String? ?? '');
+    final gemt = await showDialog<String>(
+      context: context,
+      builder: (ctx) => fastDialog(
+        ctx,
+        AlertDialog(
+          title: const Text('RankedIn-link'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Holdets side på RankedIn i denne sæson. Ved sæsonstart '
+                  'får holdet et nyt id — indsæt det nye link her, så '
+                  'følger automatikken med.',
+                  style: _body(size: 12.5, color: _textSecondary)),
+              const SizedBox(height: 14),
+              TextField(
+                controller: ctrl,
+                autofocus: true,
+                style: _body(size: 16),
+                keyboardType: TextInputType.url,
+                decoration: const InputDecoration(
+                  labelText: 'Adresse',
+                  hintText: 'https://www.rankedin.com/en/team/homepage/…',
+                  contentPadding:
+                      EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Annullér')),
+            FilledButton(
+                onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
+                child: const Text('Gem')),
+          ],
+        ),
+      ),
+    );
+    ctrl.dispose();
+    if (gemt == null || !mounted) return;
+
+    // Tom = fjern linket igen.
+    final vaerdi = gemt.isEmpty ? null : gemt;
+    if (vaerdi != null &&
+        !RegExp(r'^https?://', caseSensitive: false).hasMatch(vaerdi)) {
+      _snack(context, 'Adressen skal starte med http', _gold);
+      return;
+    }
+    try {
+      await supabase
+          .from('groups')
+          .update({'rankedin_url': vaerdi}).eq('id', g['id']);
+      if (mounted) _snack(context, 'RankedIn-link gemt', _success);
+      await _load();
+    } on PostgrestException catch (e) {
+      if (mounted) _snack(context, e.message, _danger);
+    }
+  }
+
+  /// Rækken i holddetaljen. Tegnes ALTID — også uden link — så det ikke
+  /// ligner at muligheden mangler.
+  Widget _rankedInKnap(String gid) {
+    final g = _groups.firstWhere((x) => x['id'] == gid,
+        orElse: () => const <String, dynamic>{});
+    final url = g['rankedin_url'] as String?;
+    final harLink = url != null && url.isNotEmpty;
+    return InkWell(
+      onTap: () => _redigerRankedIn(g),
+      borderRadius: BorderRadius.circular(13),
+      child: Container(
+        padding: const EdgeInsets.all(13),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(13),
+          border: Border.all(color: _borderSubtle),
+        ),
+        child: Row(children: [
+          Icon(Icons.link,
+              size: 17, color: harLink ? _success : _textSecondary),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text('RankedIn-link',
+                    style: _body(size: 13.5, weight: FontWeight.w700)),
+                Text(
+                    harLink
+                        ? url.replaceFirst(
+                            RegExp(r'^https?://(www\.)?'), '')
+                        : 'Ikke angivet — skiftes ved sæsonstart',
+                    style: _body(
+                        size: 11.5,
+                        color: harLink ? _textSecondary : _gold),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis),
+              ],
+            ),
+          ),
+          const Icon(Icons.chevron_right, size: 16, color: _textMuted),
+        ]),
+      ),
+    );
+  }
+
   /// Knappen i holddetaljen. Tegnes ALTID — også når ingen er valgt — så det
   /// ikke ligner at funktionen mangler.
   Widget _tilmeldingsAbonKnap(String gid) {
@@ -1703,6 +1817,8 @@ class _MembersAdminViewState extends State<_MembersAdminView> {
           _addToTeamButton(_teamOpen!),
           const SizedBox(height: 8),
           _tilmeldingsAbonKnap(_teamOpen!),
+          const SizedBox(height: 8),
+          _rankedInKnap(_teamOpen!),
           const SizedBox(height: 8),
           InkWell(
             onTap: () => _inviterTilHold(_teamOpen!),
@@ -4306,7 +4422,7 @@ class _CreateTrainingDialogState extends State<CreateTrainingDialog> {
     try {
       final userId = supabase.auth.currentUser!.id;
       final results = await Future.wait([
-        supabase.from('groups').select('id, navn, type, farve, sort').order('sort', ascending: true),
+        supabase.from('groups').select('id, navn, type, farve, sort, rankedin_url').order('sort', ascending: true),
         supabase.from('group_members').select('group_id').eq('user_id', userId),
       ]);
       if (!mounted) return;

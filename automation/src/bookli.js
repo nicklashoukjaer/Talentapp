@@ -23,19 +23,60 @@ export async function logInd(side) {
 
   const tekst = await side.innerText('body').catch(() => '');
 
-  // Kontoen har ingen standard-lokation. Bookli slipper ikke videre før
-  // der er valgt en, og DET valg er en varig ændring på brugerens konto
-  // — robotten gætter ikke på hvilken klub der er den rigtige.
+  // Rækkefølgen betyder noget. Bookli er en enkeltside-app, og login-
+  // formularen bliver liggende SYNLIG bag lokationsvælgeren. Både
+  // "er feltet der endnu" og "står der velkommen-tekst" giver derfor
+  // falsk alarm. Lokationsskærmen er derimod et entydigt tegn på at
+  // login LYKKEDES — så den afgøres først.
   if (/standard lokation|default location/i.test(tekst)) {
-    throw new Error(
-      'Bookli-kontoen har ingen standard-lokation. Vælg klubbens lokation ' +
-      'én gang manuelt i Bookli, så kan robotten komme videre.');
+    const valgt = await vaelgLokation(side, config.bookli.lokation);
+    if (!valgt) {
+      throw new Error(
+        `Fandt ikke "${config.bookli.lokation}" på Booklis lokationsliste. ` +
+        'Login virker. Vælg lokationen én gang manuelt i Bookli, så er ' +
+        'kontoen sat op og robotten kommer videre herefter.');
+    }
+    return true;
   }
 
   if (/Velkommen tilbage|Log ind på din konto/i.test(tekst)) {
     throw new Error('Bookli-login afvist — tjek BOOKLI_EMAIL og BOOKLI_PASSWORD');
   }
+
   return true;
+}
+
+/// Vælger klubbens lokation på Booklis lokationsskærm.
+///
+/// Det er en varig ændring på kontoen, så den sker KUN når Bookli selv
+/// beder om det — ikke som en rutine ved hvert login.
+async function vaelgLokation(side, navn) {
+  // Stederne ligger foldet ind under landet. Fold Danmark ud først —
+  // ellers er "Padel Club Hjørring" slet ikke i DOM'en at finde.
+  const land = side.locator('text=Danmark').first();
+  if (await land.count()) {
+    await land.click().catch(() => {});
+    await side.waitForTimeout(2500);
+  }
+  // Søgefeltet findes ikke altid; er der en liste, klikkes der direkte.
+  const soeg = side.locator('input[type=search], input[placeholder*="øg" i]').first();
+  if (await soeg.count()) {
+    await soeg.fill(navn).catch(() => {});
+    await side.waitForTimeout(1500);
+  }
+  const punkt = side.locator(`text=${navn}`).first();
+  if (!(await punkt.count())) return false;
+  await punkt.click().catch(() => {});
+  await side.waitForTimeout(3000);
+  // Nogle flader kræver en bekræftelse.
+  const ok = side.locator(
+    'button:has-text("Vælg"), button:has-text("Fortsæt"), button:has-text("Gem")').first();
+  if (await ok.count()) {
+    await ok.click().catch(() => {});
+    await side.waitForTimeout(2500);
+  }
+  const tekst = await side.innerText('body').catch(() => '');
+  return !/standard lokation|default location/i.test(tekst);
 }
 
 /// Henter brugerens bookinger som de står i Bookli.

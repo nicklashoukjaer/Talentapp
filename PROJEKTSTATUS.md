@@ -207,6 +207,39 @@ Periodeopgørelsen dækker delvist behovet, men bøder nulstilles aldrig.
 
 ---
 
+## 7b. Automation-broen (på `feature/automation-bridge`)
+
+En Node-robot i `automation/` der styrer Bookli og RankedIn med Playwright.
+Ligger på egen branch og er **ikke udrullet**.
+
+**Virker og er afprøvet mod de rigtige sider:**
+
+| | Bookli | RankedIn |
+|---|---|---|
+| Login | ✅ | ✅ |
+| Læsning | lokationsvalg klaret | ✅ stilling, pulje, sæson, hjemmeklub |
+| Skrivning | ❌ ikke skrevet | ❌ ikke skrevet |
+
+Selektorerne er aflæst fra de kørende sider, ikke gættet. RankedIn leverer
+fx for T1: sæson "Lunar Ligaen - Efterår 2026", pulje "Vest -
+Danmarksserien - P", hjemmeklub "Padel Club Hjørring" og syv rækker
+stilling.
+
+**RankedIn-links ligger i databasen** (`groups.rankedin_url`) og redigeres
+under Admin → Medlemmer & hold → holdet. RankedIn giver nye hold-id'er hver
+sæson, og sådan slipper man for at rette filer på robottens maskine.
+
+**Broen** (`automation/src/server.js`) lytter kun på 127.0.0.1 bag en delt
+nøgle. Robotten har klubbens logins og en nøgle der går uden om al
+adgangskontrol.
+
+**Mangler:** selve banebookingen i Bookli og skrivning tilbage til
+RankedIn. Ingen af delene er set endnu, og de kaster derfor en tydelig fejl
+frem for at foregive noget. Køerne `pending_bookings` og `rankedin_sync` er
+skrevet, men **ikke kørt** mod produktionen.
+
+---
+
 ## 8. Drøftet, ikke bygget
 
 - Sæsonarkivering af bødekassen

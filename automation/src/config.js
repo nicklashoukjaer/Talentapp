@@ -15,6 +15,9 @@ export const config = {
     // Login-siden, ikke /u/home: den sender alligevel videre hertil.
     loginUrl: 'https://bookli.app/sign-in',
     hjemUrl: process.env.BOOKLI_URL || 'https://bookli.app/u/home',
+    // Klubben hvor T1 og T2 spiller hjemme. RankedIn oplyser den som
+    // "Padel Club Hjørring" på begge holds sider.
+    lokation: process.env.BOOKLI_LOKATION || 'Padel Club Hjørring',
     get email() { return kraev('BOOKLI_EMAIL'); },
     get kode() { return kraev('BOOKLI_PASSWORD'); },
   },

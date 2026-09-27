@@ -7,9 +7,14 @@ class DashboardTab extends StatefulWidget {
   /// Null for dem der har den som egen fane.
   final Future<void> Function()? onAabnProfil;
 
+  /// Genvej til Dashboardet for ledere der ikke har det som startskærm.
+  /// Null når det allerede er en fane.
+  final Future<void> Function()? onAabnDashboard;
+
   final bool isFullAdmin; // true = admin, false = træner (kun create-handlinger)
   const DashboardTab({
-    this.onAabnProfil,super.key, required this.isFullAdmin});
+    this.onAabnProfil,
+    this.onAabnDashboard,super.key, required this.isFullAdmin});
   @override
   State<DashboardTab> createState() => DashboardTabState();
 }
@@ -177,6 +182,10 @@ class DashboardTabState extends State<DashboardTab> {
                 _menuCard(Icons.groups_outlined, 'Medlemmer & hold',
                     'Sæt på hold · roller · kaptajn · slet',
                     () => setState(() => _openSection = 'members')),
+                if (widget.onAabnDashboard != null)
+                  _menuCard(Icons.speed_outlined, 'Dashboard',
+                      'Kampe · tilmeldinger · banebooking',
+                      () => widget.onAabnDashboard!()),
                 if (widget.onAabnProfil != null)
                   _menuCard(Icons.person_outline, 'Min profil',
                       'Makkere · banehalvdel · adgangskode',

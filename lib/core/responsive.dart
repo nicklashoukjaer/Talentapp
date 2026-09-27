@@ -123,3 +123,31 @@ mixin HoldFilterKilde<T extends StatefulWidget> on State<T> {
     super.dispose();
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Brugerens egne valg
+//
+// Gemmes lokalt pr. bruger. Det er valg om HVORDAN appen ser ud på denne
+// enhed, ikke data om klubben — derfor ikke i databasen.
+// ─────────────────────────────────────────────────────────────────────────────
+
+class Indstillinger {
+  static String _n(String noegle, String uid) => '$noegle\u005f$uid';
+
+  /// Skal appen åbne på Dashboardet i stedet for Oversigten?
+  /// Standard FRA: den vante kalender er hvad folk forventer.
+  static bool dashboardSomStart(String uid) =>
+      platformStorageGet(_n('dash_start', uid)) == '1';
+
+  static void saetDashboardSomStart(String uid, bool til) =>
+      platformStorageSet(_n('dash_start', uid), til ? '1' : '0');
+
+  /// Hvilket hold Dashboardet åbner på. Tom = alle hold.
+  static String? dashboardHold(String uid) {
+    final v = platformStorageGet(_n('dash_hold', uid));
+    return (v == null || v.isEmpty) ? null : v;
+  }
+
+  static void saetDashboardHold(String uid, String? gid) =>
+      platformStorageSet(_n('dash_hold', uid), gid ?? '');
+}

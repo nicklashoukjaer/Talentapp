@@ -154,9 +154,23 @@ class _HomeShellState extends State<HomeShell> {
   /// Tidligere blev der lagt 1 til når lederfanen var med. Det holdt kun så
   /// længe listerne ellers var ens — og det er de ikke længere, for ledere
   /// har ikke Min profil i bunden.
-  List<int> get _faneRaekkefoelge => _erLeder
-      ? const [_tabLederDash, _tabOversigt, _tabBoede, _tabAfstemning, _tabDashboard]
-      : const [_tabOversigt, _tabBoede, _tabAfstemning, _tabProfil];
+  /// Er Dashboard valgt som startskærm? Kun ledere kan slå det til, og det
+  /// er FRA som udgangspunkt — den vante kalender er hvad folk forventer.
+  bool get _dashboardSomStart {
+    final uid = _profile?['id'] as String?;
+    return _erLeder && uid != null && Indstillinger.dashboardSomStart(uid);
+  }
+
+  List<int> get _faneRaekkefoelge => [
+        if (_dashboardSomStart) _tabLederDash,
+        _tabOversigt,
+        _tabBoede,
+        _tabAfstemning,
+        // Min profil bliver i bunden — undtagen når Dashboard er slået til,
+        // hvor den femte plads er optaget og profilen flyttes under Admin.
+        if (!_dashboardSomStart) _tabProfil,
+        if (_isStaff) _tabDashboard,
+      ];
 
   /// Logisk navn → plads i den viste liste. -1 hvis fanen ikke vises for
   /// denne rolle.
@@ -169,6 +183,18 @@ class _HomeShellState extends State<HomeShell> {
 
   Future<void> _logout() async => supabase.auth.signOut();
 
+  /// Åbner Dashboardet som en skærm. Bruges af ledere der IKKE har valgt
+  /// det som startskærm — så er det stadig ét tryk væk.
+  Future<void> _aabnDashboardSkaerm() async {
+    await Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => Scaffold(
+        appBar: AppBar(title: const Text('DASHBOARD')),
+        body: OversigtTab(
+            isAdmin: _isStaff, isFullAdmin: _isAdmin, kunDashboard: true),
+      ),
+    ));
+  }
+
   /// Ledere har ikke Min profil i bunden — den ligger under Admin og
   /// åbnes som en skærm derfra.
   Future<void> _aabnProfil() async {
@@ -176,7 +202,10 @@ class _HomeShellState extends State<HomeShell> {
     await Navigator.of(context).push(MaterialPageRoute(
       builder: (_) => Scaffold(
         appBar: AppBar(title: const Text('MIN PROFIL')),
-        body: ProfileTab(profile: _profile!, onProfileUpdated: _loadProfile),
+        body: ProfileTab(
+            profile: _profile!,
+            onProfileUpdated: _loadProfile,
+            onIndstillingerAendret: () => setState(() {})),
       ),
     ));
   }
@@ -318,7 +347,7 @@ class _HomeShellState extends State<HomeShell> {
       icon:  Icons.person,
       keywords: ['profil', 'mig', 'makker', 'profile'],
       run: () =>
-          _erLeder ? _aabnProfil() : _gaaTil(_tabProfil),
+          _idx(_tabProfil) >= 0 ? _gaaTil(_tabProfil) : _aabnProfil(),
     ),
     if (_isStaff)
       AppCommand(
@@ -552,12 +581,17 @@ class _HomeShellState extends State<HomeShell> {
               currentUserId: _profile!['id'] as String),
           _tabAfstemning => AfstemningerTab(
               key: _afstemningerKey, isStaff: _isStaff, isAdmin: _isAdmin),
-          _tabProfil =>
-            ProfileTab(profile: _profile!, onProfileUpdated: _loadProfile),
+          _tabProfil => ProfileTab(
+              profile: _profile!,
+              onProfileUpdated: _loadProfile,
+              onIndstillingerAendret: () => setState(() {})),
           _ => DashboardTab(
               key: _dashboardKey,
               isFullAdmin: _isAdmin,
-              onAabnProfil: _aabnProfil),
+              onAabnProfil: _dashboardSomStart ? _aabnProfil : null,
+              onAabnDashboard: _erLeder && !_dashboardSomStart
+                  ? _aabnDashboardSkaerm
+                  : null),
         };
     final pages = [for (final t in _faneRaekkefoelge) sideFor(t)];
 

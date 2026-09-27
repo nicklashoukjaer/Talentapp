@@ -5,13 +5,28 @@ part of '../main.dart';
 class ProfileTab extends StatefulWidget {
   final Map<String, dynamic> profile;
   final Future<void> Function() onProfileUpdated;
-  const ProfileTab({super.key, required this.profile, required this.onProfileUpdated});
+
+  /// Kaldes når en indstilling der påvirker navigationen er ændret, så
+  /// stellet kan bygge bundmenuen om.
+  final VoidCallback? onIndstillingerAendret;
+
+  const ProfileTab({
+    super.key,
+    required this.profile,
+    required this.onProfileUpdated,
+    this.onIndstillingerAendret,
+  });
   @override
   State<ProfileTab> createState() => _ProfileTabState();
 }
 
 class _ProfileTabState extends State<ProfileTab> {
   List<Map<String, dynamic>> _otherMembers = const [];
+
+  /// De hold brugeren har et ansvar for. Tom = ikke leder, og så vises
+  /// indstillingerne slet ikke.
+  List<Map<String, dynamic>> _ansvarsHold = const [];
+  bool _erLeder = false;
   String? _selectedP1;
   String? _selectedP2;
   bool _loadingMembers = true;
@@ -23,6 +38,7 @@ class _ProfileTabState extends State<ProfileTab> {
     _selectedP1 = widget.profile['makker_prio_1'] as String?;
     _selectedP2 = widget.profile['makker_prio_2'] as String?;
     _loadMembers();
+    _hentAnsvar();
   }
 
   Future<void> _loadMembers() async {
@@ -93,6 +109,179 @@ class _ProfileTabState extends State<ProfileTab> {
   }
 
   @override
+  /// Hvilke hold har jeg ansvar for? Admin ser alle; øvrige kun de hold
+  /// hvor de er kaptajn eller træner.
+  Future<void> _hentAnsvar() async {
+    final uid = widget.profile['id'] as String;
+    final rolle = widget.profile['rolle'] as String?;
+    final staff = rolle == 'admin' || rolle == 'træner';
+    try {
+      final gm = List<Map<String, dynamic>>.from(await supabase
+          .from('group_members')
+          .select('group_id, is_captain, is_trainer')
+          .eq('user_id', uid) as List);
+      final mine = <String>{
+        for (final r in gm)
+          if (r['is_captain'] == true || r['is_trainer'] == true)
+            r['group_id'] as String
+      };
+      if (!staff && mine.isEmpty) return;
+
+      final grupper = List<Map<String, dynamic>>.from(await supabase
+          .from('groups')
+          .select('id, navn, farve, sort')
+          .order('sort', ascending: true) as List);
+      if (!mounted) return;
+      setState(() {
+        _erLeder = staff || mine.isNotEmpty;
+        _ansvarsHold = staff
+            ? grupper
+            : grupper.where((g) => mine.contains(g['id'])).toList();
+      });
+    } catch (_) {}
+  }
+
+  @override
+  Widget _indstillingerKort() {
+    final uid = widget.profile['id'] as String;
+    final somStart = Indstillinger.dashboardSomStart(uid);
+    final valgtHold = Indstillinger.dashboardHold(uid);
+    final holdNavn = valgtHold == null
+        ? 'Alle hold'
+        : (_ansvarsHold.firstWhere((g) => g['id'] == valgtHold,
+                orElse: () => const {})['navn'] as String?) ??
+            'Alle hold';
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
+      decoration: BoxDecoration(
+        color: _surfaceDark,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: _borderSubtle),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(children: [
+            const Icon(Icons.speed_outlined, size: 17, color: _neon),
+            const SizedBox(width: 9),
+            Text('DASHBOARD',
+                style: _cond(size: 17, weight: FontWeight.w800)),
+          ]),
+          const SizedBox(height: 6),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            value: somStart,
+            onChanged: (v) {
+              Indstillinger.saetDashboardSomStart(uid, v);
+              setState(() {});
+              widget.onIndstillingerAendret?.call();
+            },
+            title: Text('Brug Dashboard som startskærm',
+                style: _body(size: 14, weight: FontWeight.w600)),
+            subtitle: Text(
+                somStart
+                    ? 'Appen åbner på Dashboardet'
+                    : 'Appen åbner på Oversigten som hidtil',
+                style: _body(size: 11.5, color: _textSecondary)),
+            activeThumbColor: _neon,
+          ),
+          // Holdvalget vises kun når man HAR mere end ét hold — ellers er
+          // der intet at vælge imellem.
+          if (_ansvarsHold.length > 1) ...[
+            const Divider(height: 8, color: _borderSubtle),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text('Standard hold på Dashboard',
+                  style: _body(size: 14, weight: FontWeight.w600)),
+              subtitle: Text(holdNavn,
+                  style: _body(size: 11.5, color: _textSecondary)),
+              trailing: const Icon(Icons.expand_more, color: _textMuted),
+              onTap: _vaelgStandardHold,
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Future<void> _vaelgStandardHold() async {
+    final uid = widget.profile['id'] as String;
+    final nu = Indstillinger.dashboardHold(uid);
+    final valgt = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        Widget punkt(String? id, String navn, Color farve) {
+          final aktiv = nu == id;
+          return InkWell(
+            onTap: () => Navigator.of(ctx).pop(id ?? ''),
+            borderRadius: BorderRadius.circular(12),
+            child: Container(
+              margin: const EdgeInsets.only(bottom: 8),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+              decoration: BoxDecoration(
+                color: aktiv ? _neon.withValues(alpha: 0.14) : _surfaceElevated,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: aktiv ? _neon : _borderSubtle),
+              ),
+              child: Row(children: [
+                Container(
+                  width: 11,
+                  height: 11,
+                  decoration:
+                      BoxDecoration(color: farve, shape: BoxShape.circle),
+                ),
+                const SizedBox(width: 11),
+                Expanded(
+                  child: Text(navn,
+                      style: _body(size: 14, weight: FontWeight.w600)),
+                ),
+                if (aktiv) const Icon(Icons.check, size: 18, color: _neon),
+              ]),
+            ),
+          );
+        }
+
+        return SafeArea(
+          top: false,
+          child: Container(
+            margin: const EdgeInsets.all(12),
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+            decoration: BoxDecoration(
+              color: _surfaceDark,
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: _borderSubtle),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text('STANDARD HOLD',
+                    style: _cond(size: 20, weight: FontWeight.w800)),
+                const SizedBox(height: 4),
+                Text('Hvilket hold Dashboardet åbner på',
+                    style: _body(size: 12.5, color: _textSecondary)),
+                const SizedBox(height: 14),
+                punkt(null, 'Alle hold', _neon),
+                for (final g in _ansvarsHold)
+                  punkt(g['id'] as String, g['navn'] as String,
+                      holdFarve(g['farve'])),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+    if (valgt == null || !mounted) return;
+    // '' betyder "Alle hold"; null ville ikke kunne skelnes fra at arket
+    // blev lukket uden valg.
+    Indstillinger.saetDashboardHold(uid, valgt.isEmpty ? null : valgt);
+    setState(() {});
+  }
+
+  @override
   Widget build(BuildContext context) {
     return ListView(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
@@ -104,6 +293,10 @@ class _ProfileTabState extends State<ProfileTab> {
               children: [
                 _ProfileCard(profile: widget.profile),
                 const SizedBox(height: 16),
+                if (_erLeder) ...[
+                  _indstillingerKort(),
+                  const SizedBox(height: 16),
+                ],
                 if (_loadingMembers)
                   const Center(child: Padding(
                     padding: EdgeInsets.all(32),

@@ -113,7 +113,23 @@ class _OversigtTabState extends State<OversigtTab>
   bool _dashKampe = true;
 
   /// Valgt hold i dashboardet. null = alle.
+  ///
+  /// Startværdien kommer fra brugerens egen indstilling, så den der kun
+  /// følger ét hold slipper for at vælge det hver gang.
   String? _dashHold;
+  bool _dashHoldSat = false;
+
+  void _sikrStandardHold() {
+    if (_dashHoldSat) return;
+    _dashHoldSat = true;
+    final uid = supabase.auth.currentUser?.id;
+    if (uid == null) return;
+    final gemt = Indstillinger.dashboardHold(uid);
+    // Kun hvis holdet stadig findes og man stadig har ansvar for det.
+    if (gemt != null && _mineAnsvarsHold.any((g) => g['id'] == gemt)) {
+      _dashHold = gemt;
+    }
+  }
 
   /// Modstanderen ud fra titlen. "Hjemmekamp: Gug Padel 7" → "Gug Padel 7".
   /// Uden kolon bruges hele titlen.
@@ -565,6 +581,7 @@ class _OversigtTabState extends State<OversigtTab>
   /// Hele dashboardet. Returnerer tomt for dem uden ansvar.
   Widget _traenerDashboard() {
     if (!_harAnsvar) return const SizedBox.shrink();
+    _sikrStandardHold();
     final kommende = _kommendeForMig;
 
     return Container(

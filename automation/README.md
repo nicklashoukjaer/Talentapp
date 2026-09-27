@@ -3,8 +3,10 @@
 Headless robot der booker baner i Bookli og skubber data til RankedIn.
 Kører **adskilt fra Flutter-appen** og udrulles ikke sammen med den.
 
-> **Status: fase 1 — fundament.** Køer, datamodel og arbejdsgang står.
-> Selve klikkene i Bookli og RankedIn er ikke skrevet. Driverne kaster en
+> **Status: fase 2.** Login til begge tjenester er skrevet mod de faktiske
+> sider og afprøvet. RankedIn logger ind og læser. Bookli accepterer
+> kodeordet, men kontoen mangler en standard-lokation — se herunder.
+> Det der endnu ikke er set, er heller ikke skrevet: driverne kaster en
 > tydelig fejl frem for at lade som om de har booket noget.
 
 ## Hvorfor sådan her
@@ -54,9 +56,50 @@ afstemning lukkes
 | `src/config.js` | Læser `.env`, ingen hemmeligheder i koden |
 | `src/supabase.js` | Databaseklient med service-nøglen |
 | `src/queue.js` | Hent arbejde, tag det, skriv resultatet tilbage |
-| `src/bookli.js` | Playwright-driver — **fase 2** |
-| `src/rankedin.js` | Playwright-driver — **fase 2** |
+| `src/browser.js` | Fælles browser-opsætning |
+| `src/bookli.js` | Login ✅ · banevalidering ⚠️ · booking ❌ |
+| `src/rankedin.js` | Login ✅ · læsning af kampe ✅ · skrivning ❌ |
+| `src/server.js` | Broen appen kalder (kun 127.0.0.1) |
+| `src/test-login.js` | Afprøver begge logins |
 | `src/index.js` | Løkken |
+
+## Hvad der virker, og hvad der ikke gør
+
+Selektorerne er **aflæst fra de kørende sider**, ikke gættet:
+
+| | Bookli | RankedIn |
+|---|---|---|
+| Login-adresse | `/sign-in` | `/en/account/login` (`/da/login` giver 404) |
+| Brugerfelt | `#signin-email` | `input[name=UserName]` |
+| Kodefelt | `#signin-password` | `input[name=Password]` |
+| Afprøvet | ✅ accepteret | ✅ logger ind |
+
+**Bookli er blokeret af et lokationsvalg.** Kontoen har ingen standard-
+lokation, og Bookli slipper ikke videre før der er valgt en. Robotten
+vælger den ikke selv: det er en varig ændring på brugerens konto, og den
+kan ikke gætte hvilken klub der er den rigtige. Vælg lokationen én gang
+manuelt, så kan resten skrives.
+
+**RankedIn mangler en holdadresse.** `hentKampe` tager stien udefra, fx
+`/da/team/12345`. RankedIn har ingen offentlig grænseflade, og holdets id
+kender vi ikke på forhånd.
+
+## Broen
+
+```bash
+npm run bro          # lytter på 127.0.0.1:8787
+npm run test:login   # afprøver begge logins
+```
+
+Kun `127.0.0.1`, og bag `x-bridge-token` fra `.env`. Robotten har klubbens
+logins og en service-nøgle der går uden om row level security — den må
+hverken kunne nås udefra eller af en tilfældig proces på maskinen.
+
+| Rute | Gør |
+|---|---|
+| `GET /status` | Er broen i live, og er der logins |
+| `POST /bookli/valider` | Sammenholder hjemmekampe med Bookli |
+| `POST /rankedin/kampe` | Henter kampoversigt fra en RankedIn-side |
 
 ## Databasen
 

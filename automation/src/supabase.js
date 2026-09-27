@@ -1,11 +1,18 @@
 // Databaseklient til robotten.
 //
-// Bruger service-nøglen og går dermed UDEN OM row level security. Den må
-// kun findes på den maskine der kører robotten — aldrig i Flutter-appen og
-// aldrig i git.
+// Oprettes DOVENT. Før lå den som en konstant, og så væltede hele broen
+// ved import hvis SUPABASE_SERVICE_ROLE_KEY ikke var sat — også når man
+// bare ville afprøve Bookli eller RankedIn, som intet har med den at gøre.
 import { createClient } from '@supabase/supabase-js';
-import { config } from './config.js';
+import { config, kraevSupabase } from './config.js';
 
-export const db = createClient(config.supabaseUrl, config.serviceKey, {
-  auth: { persistSession: false, autoRefreshToken: false },
-});
+let _klient = null;
+
+export function db() {
+  if (_klient) return _klient;
+  kraevSupabase();
+  _klient = createClient(config.supabaseUrl, config.serviceKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+  return _klient;
+}

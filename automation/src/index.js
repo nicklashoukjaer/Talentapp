@@ -8,7 +8,8 @@ import {
   naesteBooking, tagBooking, bookingLykkedes, bookingFejlede,
   datoerKlarTilBooking, naesteRankedinOpgave,
 } from './queue.js';
-import { medBrowser, logInd, bookBane } from './bookli.js';
+import { medBrowser } from './browser.js';
+import { logInd, bookBane } from './bookli.js';
 
 const log = (...a) => console.log(new Date().toISOString(), ...a);
 

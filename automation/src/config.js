@@ -1,18 +1,5 @@
-// Opsætning læst fra miljøet. Intet hemmeligt står i koden.
-import { readFileSync } from 'node:fs';
-
-function laesEnvFil() {
-  try {
-    const raw = readFileSync(new URL('../.env', import.meta.url), 'utf8');
-    for (const linje of raw.split('\n')) {
-      const m = linje.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/);
-      if (m && process.env[m[1]] === undefined) process.env[m[1]] = m[2];
-    }
-  } catch {
-    // Ingen .env — så forventes variablerne sat i miljøet.
-  }
-}
-laesEnvFil();
+// Opsætning læst fra .env via dotenv. Intet hemmeligt står i koden.
+import 'dotenv/config';
 
 function kraev(navn) {
   const v = process.env[navn];
@@ -21,21 +8,38 @@ function kraev(navn) {
 }
 
 export const config = {
-  supabaseUrl: kraev('SUPABASE_URL'),
-  serviceKey: kraev('SUPABASE_SERVICE_ROLE_KEY'),
+  supabaseUrl: process.env.SUPABASE_URL || '',
+  serviceKey: process.env.SUPABASE_SERVICE_ROLE_KEY || '',
+
   bookli: {
-    url: process.env.BOOKLI_URL || 'https://bookli.app/u/home',
-    bruger: process.env.BOOKLI_BRUGER || '',
-    kode: process.env.BOOKLI_KODE || '',
+    // Login-siden, ikke /u/home: den sender alligevel videre hertil.
+    loginUrl: 'https://bookli.app/sign-in',
+    hjemUrl: process.env.BOOKLI_URL || 'https://bookli.app/u/home',
+    get email() { return kraev('BOOKLI_EMAIL'); },
+    get kode() { return kraev('BOOKLI_PASSWORD'); },
   },
+
   rankedin: {
-    bruger: process.env.RANKEDIN_BRUGER || '',
-    kode: process.env.RANKEDIN_KODE || '',
+    loginUrl: 'https://www.rankedin.com/en/account/login',
+    rodUrl: process.env.RANKEDIN_URL || 'https://www.rankedin.com',
+    get bruger() { return kraev('RANKEDIN_USERNAME'); },
+    get kode() { return kraev('RANKEDIN_PASSWORD'); },
   },
+
   intervalSekunder: Number(process.env.INTERVAL_SEKUNDER || 120),
   maxForsoeg: Number(process.env.MAX_FORSOEG || 3),
-  // --dry-run: robotten læser og rapporterer, men rører hverken Bookli,
-  // RankedIn eller status i databasen.
+  // HEADLESS=0 åbner et synligt vindue. Uundværligt når selektorer skal
+  // skrives mod en side man ikke kan se.
+  headless: process.env.HEADLESS !== '0',
+
   toerloeb: process.argv.includes('--dry-run'),
   enGang: process.argv.includes('--once'),
 };
+
+/// Kaster hvis Supabase ikke er sat op. Playwright-delen kan køre uden.
+export function kraevSupabase() {
+  if (!config.supabaseUrl || !config.serviceKey) {
+    throw new Error(
+      'SUPABASE_URL og SUPABASE_SERVICE_ROLE_KEY mangler i .env');
+  }
+}

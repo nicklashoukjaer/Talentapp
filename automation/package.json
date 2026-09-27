@@ -7,11 +7,16 @@
   "scripts": {
     "worker": "node src/index.js",
     "worker:once": "node src/index.js --once",
-    "worker:dry": "node src/index.js --once --dry-run"
+    "worker:dry": "node src/index.js --once --dry-run",
+    "bro": "node src/server.js",
+    "test:login": "node src/test-login.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",
-    "playwright": "^1.47.0"
+    "playwright": "^1.47.0",
+    "dotenv": "^16.4.5"
   },
-  "engines": { "node": ">=20" }
+  "engines": {
+    "node": ">=20"
+  }
 }

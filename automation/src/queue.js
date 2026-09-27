@@ -7,8 +7,7 @@ import { config } from './config.js';
 
 /** Næste godkendte booking. Kun godkendte — intet bookes uden et menneske. */
 export async function naesteBooking() {
-  const { data, error } = await db
-    .from('pending_bookings')
+  const { data, error } = await db().from('pending_bookings')
     .select('*')
     .eq('status', 'godkendt')
     .lt('forsoeg', config.maxForsoeg)
@@ -21,8 +20,7 @@ export async function naesteBooking() {
 
 /** Markerer posten i gang. Returnerer false hvis en anden nåede den først. */
 export async function tagBooking(id, forsoeg) {
-  const { data, error } = await db
-    .from('pending_bookings')
+  const { data, error } = await db().from('pending_bookings')
     .update({ status: 'i_gang', forsoeg: forsoeg + 1 })
     .eq('id', id)
     .eq('status', 'godkendt')   // optimistisk lås
@@ -32,8 +30,7 @@ export async function tagBooking(id, forsoeg) {
 }
 
 export async function bookingLykkedes(id, eksternRef) {
-  const { error } = await db
-    .from('pending_bookings')
+  const { error } = await db().from('pending_bookings')
     .update({ status: 'booket', ekstern_ref: eksternRef ?? null, sidste_fejl: null })
     .eq('id', id);
   if (error) throw error;
@@ -46,8 +43,7 @@ export async function bookingLykkedes(id, eksternRef) {
  */
 export async function bookingFejlede(id, forsoeg, fejl) {
   const opgiv = forsoeg + 1 >= config.maxForsoeg;
-  const { error } = await db
-    .from('pending_bookings')
+  const { error } = await db().from('pending_bookings')
     .update({
       status: opgiv ? 'fejlet' : 'godkendt',
       sidste_fejl: String(fejl).slice(0, 1000),
@@ -59,8 +55,7 @@ export async function bookingFejlede(id, forsoeg, fejl) {
 
 /** Afsluttede afstemninger hvis datoer endnu mangler en booking. */
 export async function datoerKlarTilBooking() {
-  const { data, error } = await db
-    .from('afstemninger_klar_til_booking')
+  const { data, error } = await db().from('afstemninger_klar_til_booking')
     .select('*')
     .eq('booking_i_koe', false);
   if (error) throw error;
@@ -68,8 +63,7 @@ export async function datoerKlarTilBooking() {
 }
 
 export async function naesteRankedinOpgave() {
-  const { data, error } = await db
-    .from('rankedin_sync')
+  const { data, error } = await db().from('rankedin_sync')
     .select('*')
     .eq('status', 'afventer')
     .lt('forsoeg', config.maxForsoeg)

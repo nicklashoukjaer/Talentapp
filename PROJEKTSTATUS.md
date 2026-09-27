@@ -207,6 +207,69 @@ Periodeopgørelsen dækker delvist behovet, men bøder nulstilles aldrig.
 
 ---
 
+## 7b. Automation-broen
+
+En Node-robot i `automation/` der styrer Bookli og RankedIn med Playwright.
+**Fase 2 er afsluttet og merget til `main`.**
+
+### Hvad der virker
+
+Alt herunder er aflæst fra de kørende sider, ikke gættet, og afprøvet mod
+de rigtige tjenester.
+
+| | Bookli | RankedIn |
+|---|---|---|
+| Login | ✅ | ✅ |
+| Læsning | ✅ bookinger med dato og bane | ✅ kampe, stilling, pulje, sæson |
+| Banevalidering | ✅ `BOOKET` / `MANGLER_BANE` | — |
+| Skrivning | ❌ booking ikke skrevet | ❌ kampflytning ikke skrevet |
+
+Valideringen er bevist **begge veje**: en hjemmekamp med baner gav `BOOKET`
+med D4, D11 og D12, og de otte kommende gav `MANGLER_BANE`. En validator
+der kun kan sige "mangler" ser ens ud udefra, så den positive prøve er den
+vigtige.
+
+Bookli læses gennem klubbens GraphQL-API, ikke ved at skrabe tekst:
+kalenderkortene viser kun klokkeslæt, hverken dato eller år.
+
+### Sådan tages den i brug
+
+```bash
+cd automation
+npm install            # første gang
+npx playwright install chromium
+cp .env.example .env   # udfyld logins og SUPABASE_SERVICE_ROLE_KEY
+npm run verificer      # databaselæsning + begge logins
+npm run bro            # lytter på 127.0.0.1:8787
+```
+
+Derefter i appen: **Admin → Automations-bro** → indsæt adresse og
+`BRIDGE_TOKEN` fra `.env`. Dashboardet viser nu Booklis faktiske
+bane-status på hver kommende hjemmekamp.
+
+**Bane-status virker kun på den maskine der kører broen.** Broen lytter på
+127.0.0.1, så telefoner og øvrige medlemmer når den ikke. Det er en
+tilføjelse, ikke en afhængighed: svarer broen ikke, tegner Dashboardet
+præcis som før — ingen fejlskærm, ingen hængende spinner.
+
+### RankedIn-links skiftes i appen
+
+**Admin → Medlemmer & hold → holdet → RankedIn-link.** RankedIn giver nye
+hold-id'er hver sæson; sådan slipper man for at rette filer på robottens
+maskine. Hold uden link springes over, så nye hold følger med uden
+kodeændring.
+
+### Hvad der bevidst IKKE er bygget
+
+**Selve bookingen i Bookli** og **kampflytning på RankedIn**. En booking
+optager en rigtig bane og koster point; en kampflytning kan ramme den
+forkerte kamp. Ingen af fladerne har været set, og de kan ikke afprøves
+uden at udføre handlingen. Begge svarer derfor ærligt at de ikke er
+skrevet, frem for at fejle stille når nogen regner med dem.
+
+Køerne `pending_bookings` og `rankedin_sync` er oprettet i databasen og
+klar den dag de skal bruges.
+
 ## 8. Drøftet, ikke bygget
 
 - Sæsonarkivering af bødekassen

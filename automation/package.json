@@ -1,0 +1,24 @@
+{
+  "name": "dln-automation-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Headless bro mellem klub-appen, Bookli og RankedIn. Kører adskilt fra Flutter-appen.",
+  "scripts": {
+    "worker": "node src/index.js",
+    "worker:once": "node src/index.js --once",
+    "worker:dry": "node src/index.js --once --dry-run",
+    "bro": "node src/server.js",
+    "test:login": "node src/test-login.js",
+    "test:db": "node src/test-db.js",
+    "verificer": "node src/test-db.js && node src/test-login.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.0",
+    "playwright": "^1.47.0",
+    "dotenv": "^16.4.5"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

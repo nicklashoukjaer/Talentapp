@@ -247,6 +247,30 @@ npm run bro            # lytter på 127.0.0.1:8787
 indsæt `BRIDGE_TOKEN` under Admin → Automations-bro. Dashboardet viser nu
 Booklis faktiske bane-status på hver kommende hjemmekamp.
 
+### Bane-advarslen styres af Bookli
+
+Der var før et felt `trainings.bane_booket` som en kaptajn krydsede af i
+hånden. Det kunne stå og modsige virkeligheden — advarselstrekant på en
+kamp hvor D10, D12 og D11 var reserveret — og er nu afskaffet som
+betjening:
+
+| Broen siger | Appen viser |
+|---|---|
+| `BOOKET` | grønt mærke med banenumrene |
+| `MANGLER_BANE` | gul advarsel |
+| intet svar | `bane_booket` som hidtil |
+
+Mærket markerer ikke længere noget som booket; et tryk åbner Bookli.
+Afkrydsningen findes kun ét sted endnu: påmindelsen når en hjemmekamp
+oprettes eller flyttes, hvor der ikke er andet at gå efter for dem uden
+bro. Feltet bliver i databasen — det bruges stadig som reserve og sættes
+automatisk når en kamp oprettes fra en afstemningsdato.
+
+**Kendt svaghed:** valideringen spørger om der findes en booking der
+OVERLAPPER kampen, ikke om den dækker hele kampen. Den 13. november
+ligger to hjemmekampe (16.30–19.30 og 19.00–22.00) oven på én booking
+18.00–21.00, og begge meldes `BOOKET`. Se afsnit 7b's mangelliste.
+
 Det skal være dén adresse, ikke vercel-adressen: Chrome spærrer for at et
 offentligt websted rører 127.0.0.1 ("Permission was denied for this
 request to access the loopback address"), og CORS-hoveder er ikke nok.

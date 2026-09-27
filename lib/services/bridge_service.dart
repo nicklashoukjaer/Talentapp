@@ -25,6 +25,28 @@ class BaneStatus {
   });
 }
 
+/// Broens seneste banesvar, delt på tværs af skærme.
+///
+/// Banestatus vises tre steder — dashboardlinjen, feedkortet og
+/// PC-tabellen — men kun dashboardet spørger broen. Uden et fælles sted
+/// ville de to andre blive ved med at vise appens gamle afkrydsningsflag
+/// og modsige Bookli.
+///
+/// Tom betyder "broen har ikke svaret", ALDRIG "ingen baner". De to må
+/// ikke forveksles: det første skal falde tilbage til databasen, det
+/// andet skal give en advarsel.
+class BaneFacit {
+  static final ValueNotifier<Map<String, BaneStatus>> _alle =
+      ValueNotifier(const {});
+
+  static ValueListenable<Map<String, BaneStatus>> get lytter => _alle;
+
+  static void saet(Map<String, BaneStatus> m) => _alle.value = m;
+
+  static BaneStatus? af(Object? trainingId) =>
+      trainingId is String ? _alle.value[trainingId] : null;
+}
+
 class BridgeService {
   /// Adresse og nøgle er maskinspecifikke og gemmes derfor lokalt, ikke i
   /// databasen — en anden enhed har en anden bro, eller ingen.

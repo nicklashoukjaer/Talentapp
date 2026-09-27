@@ -33,7 +33,10 @@ class BridgeService {
   static String get noegle => platformStorageGet('bro_noegle') ?? '';
 
   static void gem(String adresse, String noegle) {
-    platformStorageSet('bro_adresse', adresse.trim());
+    // Uden dette bliver en indsat adresse med skråstreg til sidst til
+    // "…com//status", som broen ikke kender.
+    final a = adresse.trim().replaceAll(RegExp(r'/+$'), '');
+    platformStorageSet('bro_adresse', a);
     platformStorageSet('bro_noegle', noegle.trim());
     _sidstSvigtede = null;
   }

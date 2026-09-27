@@ -133,12 +133,19 @@ async function serverApp(req, res, sti) {
 
 const ruter = {
   // Er broen i live, og kan den logge ind?
+  //
+  // Både GET og POST. Flutter-klienten sender POST til alt, og en 404 her
+  // ligner "broen svarer ikke" i appen — selvom kaldet kom frem og nøglen
+  // var rigtig. Netop dét kostede en fejlsøgning.
   'GET /status': async () => ({
     oppe: true,
     headless: config.headless,
     bookli: Boolean(process.env.BOOKLI_EMAIL),
     rankedin: Boolean(process.env.RANKEDIN_USERNAME),
   }),
+
+  // Samme svar på POST, se ovenfor.
+  'POST /status': async () => ruter['GET /status'](),
 
   // Tjekker om der er baner i Bookli til de hjemmekampe appen sender med.
   'POST /bookli/valider': async (b) => {
@@ -212,17 +219,21 @@ createServer(async (req, res) => {
     return svar(res, 401, { fejl: 'Forkert eller manglende x-bridge-token' });
   }
   forsoeg.delete(ip);
-  log(req, ip, 'ok');
   const rute = ruter[noegle];
-  if (!rute) return svar(res, 404, { fejl: `Ukendt rute: ${noegle}` });
+  if (!rute) {
+    log(req, ip, 'UKENDT RUTE');
+    return svar(res, 404, { fejl: `Ukendt rute: ${noegle}` });
+  }
 
   try {
     svar(res, 200, await rute(await krop(req)));
+    log(req, ip, 'ok');
   } catch (e) {
     // Fejlen sendes videre som den er: beskeden fortæller hvad der mangler,
     // fx at booking-fladen ikke er skrevet, eller at Bookli venter på et
     // lokationsvalg. En generisk "noget gik galt" ville skjule netop det
     // der gør fejlen brugbar.
+    log(req, ip, 'FEJL: ' + e.message.split('\n')[0].slice(0, 70));
     svar(res, 500, { fejl: e.message, status: 'FEJL' });
   }
 }).listen(PORT, '127.0.0.1', () => {

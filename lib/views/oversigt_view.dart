@@ -1880,9 +1880,6 @@ class _OversigtTabState extends State<OversigtTab>
                 Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  // Overblik for dem med et ansvar. Almindelige spillere
-                  // ser det ikke — deres feed skal være enkelt.
-                  if (showingTrainings && !_showHistory) _traenerDashboard(),
                   // Genvej til dagens tavle — kun når der faktisk er en
                   // træning inden for tre timer, som man må styre.
                   if (showingTrainings && !_showHistory)

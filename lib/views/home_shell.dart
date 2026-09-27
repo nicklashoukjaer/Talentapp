@@ -99,7 +99,7 @@ class _HomeShellState extends State<HomeShell> {
           .single();
       CacheService.put('profile_$userId', row);
       // Kaptajn- og holdtræner-status (fra group_members) — påvirker
-      // rettigheder OG om Holdleder-fanen vises. Holdtræner tæller med:
+      // rettigheder OG om Dashboard-fanen vises. Holdtræner tæller med:
       // rollen 'træner' er klub-bred, men man kan være træner for ét hold
       // uden at have rollen.
       bool captain = false;
@@ -131,26 +131,36 @@ class _HomeShellState extends State<HomeShell> {
   bool get _isAdmin => _profile?['rolle'] == 'admin';
   bool get _isStaff => _profile?['rolle'] == 'admin' || _profile?['rolle'] == 'træner';
 
-  /// Har et ansvar for mindst ét hold → får Holdleder-fanen som startskærm.
+  /// Har et ansvar for mindst ét hold → får Dashboard som startskærm.
   bool get _erLeder => _isStaff || _isCaptain || _isHoldTraener;
   // Kaptajn eller staff må oprette begivenheder og afstemninger.
   bool get _canCreate => _isStaff || _isCaptain;
 
-  // Faner. Holdleder ligger FØRST for dem med et ansvar, så appen åbner på
-  // overblikket i stedet for feedet. Indekserne herunder gælder listen UDEN
-  // Holdleder-fanen; _idx() lægger ét til når den er med, så resten af
-  // koden kan blive ved med at tale om _tabOversigt osv.
+  // Faner. Dashboard ligger FØRST for dem med et ansvar, så appen åbner på
+  // overblikket i stedet for feedet. Konstanterne herunder er LOGISKE navne
+  // — hvor fanen står i bunden afgøres af _faneRaekkefoelge.
   static const _tabOversigt    = 0;
   static const _tabBoede       = 1;
   static const _tabAfstemning  = 2;
   static const _tabProfil      = 3;
   static const _tabDashboard   = 4;
 
-  /// Oversætter et logisk faneindeks til dets plads i den viste liste.
-  int _idx(int logisk) => _erLeder ? logisk + 1 : logisk;
+  /// Dashboard-fanen (kun ledere).
+  static const _tabLederDash = 5;
 
-  /// Holdleder-fanen er indeks 0 når den vises.
-  static const _tabHoldleder = 0;
+  /// Fanerne i den rækkefølge de VISES, pr. rolle. Én kilde til sandhed:
+  /// både navigationslinjen, siderne og oversættelsen bygger på den.
+  ///
+  /// Tidligere blev der lagt 1 til når lederfanen var med. Det holdt kun så
+  /// længe listerne ellers var ens — og det er de ikke længere, for ledere
+  /// har ikke Min profil i bunden.
+  List<int> get _faneRaekkefoelge => _erLeder
+      ? const [_tabLederDash, _tabOversigt, _tabBoede, _tabAfstemning, _tabDashboard]
+      : const [_tabOversigt, _tabBoede, _tabAfstemning, _tabProfil];
+
+  /// Logisk navn → plads i den viste liste. -1 hvis fanen ikke vises for
+  /// denne rolle.
+  int _idx(int logisk) => _faneRaekkefoelge.indexOf(logisk);
 
   final GlobalKey<_OversigtTabState> _oversigtKey = GlobalKey<_OversigtTabState>();
   final GlobalKey<_OversigtTabState> _holdlederKey = GlobalKey<_OversigtTabState>();
@@ -159,6 +169,18 @@ class _HomeShellState extends State<HomeShell> {
 
   Future<void> _logout() async => supabase.auth.signOut();
 
+  /// Ledere har ikke Min profil i bunden — den ligger under Admin og
+  /// åbnes som en skærm derfra.
+  Future<void> _aabnProfil() async {
+    if (_profile == null) return;
+    await Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => Scaffold(
+        appBar: AppBar(title: const Text('MIN PROFIL')),
+        body: ProfileTab(profile: _profile!, onProfileUpdated: _loadProfile),
+      ),
+    ));
+  }
+
   /// Skifter til en fane ud fra dens plads i den VISTE liste. Bruges af
   /// navigationslinjen, som netop kender den plads.
   void _gotoTab(int index) => setState(() => _selectedIndex = index);
@@ -166,10 +188,10 @@ class _HomeShellState extends State<HomeShell> {
   /// Skifter til en fane ud fra dens LOGISKE navn (_tabOversigt osv.).
   void _gaaTil(int logisk) => _gotoTab(_idx(logisk));
 
-  /// Oversætter den viste plads tilbage til det logiske navn. Holdleder-
-  /// fanen giver -1, som ingen af sammenligningerne matcher — og den har
-  /// hverken tragt eller opret-knap, så det er det rigtige svar.
-  int _logisk(int vist) => _erLeder ? vist - 1 : vist;
+  /// Vist plads → logisk navn.
+  int _logisk(int vist) => (vist >= 0 && vist < _faneRaekkefoelge.length)
+      ? _faneRaekkefoelge[vist]
+      : -1;
 
   Future<void> _openCreateTraining() async {
     if (!_isStaff) return;
@@ -295,7 +317,8 @@ class _HomeShellState extends State<HomeShell> {
       label: 'Gå til Min profil',
       icon:  Icons.person,
       keywords: ['profil', 'mig', 'makker', 'profile'],
-      run: () => _gaaTil(_tabProfil),
+      run: () =>
+          _erLeder ? _aabnProfil() : _gaaTil(_tabProfil),
     ),
     if (_isStaff)
       AppCommand(
@@ -480,35 +503,63 @@ class _HomeShellState extends State<HomeShell> {
       return Scaffold(body: _ErrorView(error: _error!, onRetry: _loadProfile));
     }
 
-    final navItems = <({IconData icon, IconData selectedIcon, String label})>[
-      if (_erLeder)
-        (icon: Icons.speed_outlined, selectedIcon: Icons.speed, label: 'Holdleder'),
-      (icon: Icons.bolt_outlined, selectedIcon: Icons.bolt, label: 'Oversigt'),
-      (icon: Icons.gavel_outlined, selectedIcon: Icons.gavel, label: 'Bødekassen'),
-      (icon: Icons.how_to_vote_outlined, selectedIcon: Icons.how_to_vote, label: 'Afstemninger'),
-      (icon: Icons.person_outline, selectedIcon: Icons.person, label: 'Min profil'),
-      if (_isStaff)
-        (icon: Icons.settings_outlined, selectedIcon: Icons.settings, label: 'Admin'),
-    ];
+    ({IconData icon, IconData selectedIcon, String label}) navFor(int t) =>
+        switch (t) {
+          _tabLederDash => (
+              icon: Icons.speed_outlined,
+              selectedIcon: Icons.speed,
+              label: 'Dashboard'
+            ),
+          _tabOversigt => (
+              icon: Icons.bolt_outlined,
+              selectedIcon: Icons.bolt,
+              label: 'Oversigt'
+            ),
+          _tabBoede => (
+              icon: Icons.gavel_outlined,
+              selectedIcon: Icons.gavel,
+              label: 'Bødekassen'
+            ),
+          _tabAfstemning => (
+              icon: Icons.how_to_vote_outlined,
+              selectedIcon: Icons.how_to_vote,
+              label: 'Afstemninger'
+            ),
+          _tabProfil => (
+              icon: Icons.person_outline,
+              selectedIcon: Icons.person,
+              label: 'Min profil'
+            ),
+          _ => (
+              icon: Icons.settings_outlined,
+              selectedIcon: Icons.settings,
+              label: 'Admin'
+            ),
+        };
+    final navItems = [for (final t in _faneRaekkefoelge) navFor(t)];
 
-    final pages = <Widget>[
-      if (_erLeder)
-        OversigtTab(
-            key: _holdlederKey,
-            isAdmin: _isStaff,
-            isFullAdmin: _isAdmin,
-            kunDashboard: true),
-      OversigtTab(
-          key: _oversigtKey, isAdmin: _isStaff, isFullAdmin: _isAdmin),
-      BodekasseTab(
-        key: _bodekasseKey,
-        isAdmin: _isAdmin,
-        currentUserId: _profile!['id'] as String,
-      ),
-      AfstemningerTab(key: _afstemningerKey, isStaff: _isStaff, isAdmin: _isAdmin),
-      ProfileTab(profile: _profile!, onProfileUpdated: _loadProfile),
-      if (_isStaff) DashboardTab(key: _dashboardKey, isFullAdmin: _isAdmin),
-    ];
+    Widget sideFor(int t) => switch (t) {
+          _tabLederDash => OversigtTab(
+              key: _holdlederKey,
+              isAdmin: _isStaff,
+              isFullAdmin: _isAdmin,
+              kunDashboard: true),
+          _tabOversigt => OversigtTab(
+              key: _oversigtKey, isAdmin: _isStaff, isFullAdmin: _isAdmin),
+          _tabBoede => BodekasseTab(
+              key: _bodekasseKey,
+              isAdmin: _isAdmin,
+              currentUserId: _profile!['id'] as String),
+          _tabAfstemning => AfstemningerTab(
+              key: _afstemningerKey, isStaff: _isStaff, isAdmin: _isAdmin),
+          _tabProfil =>
+            ProfileTab(profile: _profile!, onProfileUpdated: _loadProfile),
+          _ => DashboardTab(
+              key: _dashboardKey,
+              isFullAdmin: _isAdmin,
+              onAabnProfil: _aabnProfil),
+        };
+    final pages = [for (final t in _faneRaekkefoelge) sideFor(t)];
 
     // PC-visning fra 1100 px og op. Under grænsen er alt herunder uændret —
     // både mobilen og den eksisterende NavigationRail fra 700 px.
@@ -921,7 +972,7 @@ class _NotificationsBellState extends State<_NotificationsBell> {
       } else if (fineTypeId != null) {
         // Bødeforslag godkendes i admin-sektionen.
         // 4 = Admin i den LOGISKE nummerering. Kaldet går gennem _gaaTil,
-        // som lægger Holdleder-fanen til hvis den vises.
+        // som slår op hvor Admin står for den aktuelle rolle.
         widget.onGotoTab(4);
       }
     } catch (e) {

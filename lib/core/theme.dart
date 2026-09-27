@@ -130,12 +130,15 @@ ThemeData _buildClayCourt() {
       indicatorColor: _neon.withValues(alpha: 0.15),
       elevation: 0,
       height: 64,
+      // 10.5 px og ellipsis: med fem punkter i bundmenuen brød
+      // "Afstemninger" før om til "Afstemninge-r". NavigationDestination
+      // tager kun en tekststreng, så overløbet skal styres her i stilen.
       labelTextStyle: WidgetStateProperty.resolveWith((states) => _body(
-            size: 11,
+            size: 10.5,
             weight: FontWeight.w600,
-            spacing: 0.2,
+            spacing: 0.1,
             color: states.contains(WidgetState.selected) ? _neon : _textMuted,
-          )),
+          ).copyWith(overflow: TextOverflow.ellipsis)),
       iconTheme: WidgetStateProperty.resolveWith((states) => IconThemeData(
             size: 22,
             color: states.contains(WidgetState.selected) ? _neon : _textMuted,

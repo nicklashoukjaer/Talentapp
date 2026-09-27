@@ -3,8 +3,13 @@
 part of '../main.dart';
 
 class DashboardTab extends StatefulWidget {
+  /// Ledere har ikke Min profil i bundmenuen — den åbnes herfra i stedet.
+  /// Null for dem der har den som egen fane.
+  final Future<void> Function()? onAabnProfil;
+
   final bool isFullAdmin; // true = admin, false = træner (kun create-handlinger)
-  const DashboardTab({super.key, required this.isFullAdmin});
+  const DashboardTab({
+    this.onAabnProfil,super.key, required this.isFullAdmin});
   @override
   State<DashboardTab> createState() => DashboardTabState();
 }
@@ -172,6 +177,10 @@ class DashboardTabState extends State<DashboardTab> {
                 _menuCard(Icons.groups_outlined, 'Medlemmer & hold',
                     'Sæt på hold · roller · kaptajn · slet',
                     () => setState(() => _openSection = 'members')),
+                if (widget.onAabnProfil != null)
+                  _menuCard(Icons.person_outline, 'Min profil',
+                      'Makkere · banehalvdel · adgangskode',
+                      () => widget.onAabnProfil!()),
                 _menuCard(Icons.handshake_outlined, 'Par-overblik',
                     'Hvem spiller sammen · sider · god kemi',
                     () => Navigator.of(context).push(MaterialPageRoute(

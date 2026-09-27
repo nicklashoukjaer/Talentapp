@@ -64,6 +64,14 @@ class _OversigtTabState extends State<OversigtTab>
   bool _historyLoaded = false; // lazy: historik (90 dage) hentes først ved behov
   List<Map<String, dynamic>> _groups = const []; // grupper brugeren er på
   Set<String> _myGroupIds = {};   // brugerens gruppe-id'er
+
+  /// Hold hvor jeg selv er træner. Adskilt fra rollen 'træner', som er
+  /// klub-bred — her handler det om det enkelte hold.
+  Set<String> _myTrainerGroupIds = {};
+
+  /// gid → spillere på holdet (trænere ikke talt med). Bruges til at regne
+  /// ud hvor mange der mangler at svare.
+  Map<String, Set<String>> _playersPerGroup = const {};
   Set<String> _myStatusIds = {};  // begivenheder jeg selv er sat på
   Set<String> _myCaptainGroupIds = {}; // hold hvor brugeren er kaptajn
   String? _switcherGroupId;       // valgt hold i switcheren (null = alle mine)
@@ -83,6 +91,329 @@ class _OversigtTabState extends State<OversigtTab>
   /// røg til toppen og skulle scrolle ned igen. Ved en handling MIDT i
   /// listen beholder vi derfor det der står på skærmen og skifter bare
   /// indholdet ud under fødderne på brugeren.
+  // ── Træner-dashboard ─────────────────────────────────────────────────────
+  //
+  // Et kompakt overblik øverst i Oversigten for dem der har et ansvar. En
+  // almindelig spiller ser det ikke — deres feed skal være enkelt.
+
+  /// Har jeg et ansvar et sted? Admin og klub-træner gælder overalt;
+  /// holdtræner og kaptajn kun på deres egne hold.
+  bool get _harAnsvar =>
+      widget.isAdmin ||
+      _myTrainerGroupIds.isNotEmpty ||
+      _myCaptainGroupIds.isNotEmpty;
+
+  /// Må jeg se tal for denne begivenhed? Samme regel som at måtte styre den.
+  bool _minBegivenhed(Map<String, dynamic> t) => _canManageTraining(t);
+
+  /// Ja / nej / ikke svaret for en begivenhed.
+  ///
+  /// "Ikke svaret" er holdets spillere minus dem der har svaret. Trænere
+  /// tæller ikke med — de er ikke svar-pligtige.
+  ({int ja, int nej, int mangler, int? pladser}) _svarTal(_TrainingFeedItem t) {
+    final ja = t.tilmeldte.length + t.venteliste.length;
+    final nej = t.afmeldte.length;
+    final gids = _trainingGroupIds(t.training);
+    final spillere = <String>{};
+    for (final g in gids) {
+      spillere.addAll(_playersPerGroup[g] ?? const <String>{});
+    }
+    // Klub-brede begivenheder har intet hold at tælle ud fra.
+    final mangler = spillere.isEmpty ? 0 : (spillere.length - ja - nej);
+    return (
+      ja: ja,
+      nej: nej,
+      mangler: mangler < 0 ? 0 : mangler,
+      pladser: t.training['max_deltagere'] as int?,
+    );
+  }
+
+  /// Begivenhederne jeg har ansvar for, fra nu og 14 dage frem.
+  List<_TrainingFeedItem> get _kommendeForMig {
+    final nu = DateTime.now();
+    final graense = nu.add(const Duration(days: 14));
+    final ud = _items
+        .whereType<_TrainingFeedItem>()
+        .where((t) => _minBegivenhed(t.training))
+        .where((t) {
+          final s = DateTime.parse(t.training['start_tid'] as String).toLocal();
+          return s.isAfter(nu) && s.isBefore(graense);
+        })
+        .toList();
+    ud.sort((a, b) => a.sortKey.compareTo(b.sortKey));
+    return ud;
+  }
+
+  Future<void> _sendRykker(_TrainingFeedItem t) async {
+    try {
+      final antal = await supabase.rpc('send_training_reminders', params: {
+        'p_training_id': t.training['id'],
+        'p_exclude': <String>[],
+      });
+      if (!mounted) return;
+      _snack(
+          context,
+          antal == 0
+              ? 'Alle har svaret — ingen rykker sendt'
+              : 'Rykker sendt til $antal ${antal == 1 ? "spiller" : "spillere"}',
+          antal == 0 ? _gold : _success);
+    } on PostgrestException catch (e) {
+      if (mounted) _snack(context, e.message, _danger);
+    }
+  }
+
+  Widget _tal(String etiket, int v, Color farve) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text('$v',
+              style: _cond(size: 17, weight: FontWeight.w800, color: farve)),
+          Text(etiket, style: _body(size: 9.5, color: _textMuted)),
+        ],
+      );
+
+  /// Det fremhævede kort for den allernæste begivenhed.
+  Widget _naesteKort(_TrainingFeedItem t) {
+    final tr = t.training;
+    final start = DateTime.parse(tr['start_tid'] as String).toLocal();
+    final s = _svarTal(t);
+    final fuldt = s.pladser != null && s.ja >= s.pladser!;
+    final statusFarve = fuldt
+        ? _success
+        : (s.mangler > 0 ? _danger : _gold);
+    final hjemme = erHjemmekamp(tr['titel'] as String);
+    final baneOk = tr['bane_booket'] == true;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: _surfaceElevated,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: _borderSubtle),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(children: [
+            _dateBlock(start),
+            const SizedBox(width: 11),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text((tr['titel'] as String).toUpperCase(),
+                      style: _cond(size: 16, weight: FontWeight.w800),
+                      maxLines: 1, overflow: TextOverflow.ellipsis),
+                  Text(
+                      '${_fmtDatoMedUgedag(start)} · ${_fmtTime(start)}',
+                      style: _body(size: 11.5, color: _textSecondary)),
+                ],
+              ),
+            ),
+          ]),
+          const SizedBox(height: 12),
+          Row(children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(
+                color: statusFarve.withValues(alpha: 0.16),
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: Text(
+                  s.pladser == null
+                      ? '${s.ja} tilmeldt'
+                      : '${s.ja}/${s.pladser} tilmeldt',
+                  style: _body(
+                      size: 12, weight: FontWeight.w800, color: statusFarve)),
+            ),
+            const SizedBox(width: 8),
+            // Banestatus vises ALTID på en hjemmekamp — også når den er i
+            // orden. Ellers kan man ikke se forskel på "booket" og "vi har
+            // ikke spurgt".
+            if (hjemme)
+              baneOk
+                  ? Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 5),
+                      decoration: BoxDecoration(
+                        color: _success.withValues(alpha: 0.16),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Text('Baner booket',
+                          style: _body(
+                              size: 12,
+                              weight: FontWeight.w800,
+                              color: _success)),
+                    )
+                  : BookliBadge(
+                      training: tr,
+                      onOpdateret: () => reload(stille: true),
+                    ),
+          ]),
+          const SizedBox(height: 12),
+          Row(children: [
+            _tal('Ja', s.ja, _success),
+            const SizedBox(width: 18),
+            _tal('Nej', s.nej, _danger),
+            const SizedBox(width: 18),
+            _tal('Mangler', s.mangler, s.mangler > 0 ? _gold : _textMuted),
+            const Spacer(),
+            if (s.mangler > 0)
+              OutlinedButton.icon(
+                onPressed: () => _sendRykker(t),
+                icon: const Icon(Icons.campaign_outlined, size: 16),
+                label: const Text('Ryk'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: _gold,
+                  side: BorderSide(color: _gold.withValues(alpha: 0.5)),
+                  visualDensity: VisualDensity.compact,
+                ),
+              ),
+          ]),
+        ],
+      ),
+    );
+  }
+
+  /// Én linje i "de næste 14 dage".
+  Widget _programLinje(_TrainingFeedItem t, bool foerste) {
+    final tr = t.training;
+    final start = DateTime.parse(tr['start_tid'] as String).toLocal();
+    final s = _svarTal(t);
+    final hjemmeUdenBane =
+        erHjemmekamp(tr['titel'] as String) && tr['bane_booket'] != true;
+    return InkWell(
+      onTap: () => Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => EventDetailScreen(
+            training: tr, isStaff: widget.isAdmin, canManage: true),
+      )).then((_) => reload(stille: true)),
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 10),
+        decoration: BoxDecoration(
+          border: foerste
+              ? null
+              : const Border(top: BorderSide(color: _borderSubtle)),
+        ),
+        child: Row(children: [
+          SizedBox(
+            width: 52,
+            child: Text('${start.day}. ${_shortMonths[start.month - 1]}',
+                style: _body(
+                    size: 11.5, weight: FontWeight.w700, color: _textMuted)),
+          ),
+          Expanded(
+            child: Row(children: [
+              Flexible(
+                child: Text(tr['titel'] as String,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: _body(size: 12.5, weight: FontWeight.w600)),
+              ),
+              if (hjemmeUdenBane) ...[
+                const SizedBox(width: 6),
+                const Icon(Icons.warning_amber_rounded, size: 13, color: _gold),
+              ],
+            ]),
+          ),
+          const SizedBox(width: 8),
+          Text('${s.ja}',
+              style: _body(
+                  size: 12.5, weight: FontWeight.w800, color: _success)),
+          Text(' / ', style: _body(size: 11, color: _textMuted)),
+          Text('${s.nej}',
+              style: _body(
+                  size: 12.5, weight: FontWeight.w800, color: _danger)),
+          Text(' / ', style: _body(size: 11, color: _textMuted)),
+          Text('${s.mangler}',
+              style: _body(
+                  size: 12.5,
+                  weight: FontWeight.w800,
+                  color: s.mangler > 0 ? _gold : _textMuted)),
+        ]),
+      ),
+    );
+  }
+
+  /// Hele dashboardet. Returnerer tomt for dem uden ansvar.
+  Widget _traenerDashboard() {
+    if (!_harAnsvar) return const SizedBox.shrink();
+    final kommende = _kommendeForMig;
+    final udenBane = kommende
+        .where((t) =>
+            erHjemmekamp(t.training['titel'] as String) &&
+            t.training['bane_booket'] != true)
+        .length;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.fromLTRB(14, 13, 14, 12),
+      decoration: BoxDecoration(
+        color: _surfaceDark,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: _borderSubtle),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(children: [
+            const Icon(Icons.speed_outlined, size: 17, color: _neon),
+            const SizedBox(width: 9),
+            Expanded(
+              child: Text('DIT OVERBLIK',
+                  style: _cond(size: 17, weight: FontWeight.w800)),
+            ),
+            if (udenBane > 0)
+              TextButton.icon(
+                // Åbnes synkront i trykket, ellers blokerer browseren det.
+                onPressed: () => aabnBookli(context),
+                icon: const Icon(Icons.open_in_new, size: 15),
+                label: Text('$udenBane mangler baner'),
+                style: TextButton.styleFrom(
+                  foregroundColor: _gold,
+                  textStyle: _body(size: 12, weight: FontWeight.w700),
+                  visualDensity: VisualDensity.compact,
+                ),
+              ),
+          ]),
+          const SizedBox(height: 12),
+          // Tegnes ALTID — også når der ingenting er — så det ikke ligner at
+          // dashboardet er gået i stykker.
+          if (kommende.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 14),
+              child: Text(
+                  'Ingen begivenheder på dine hold de næste 14 dage',
+                  textAlign: TextAlign.center,
+                  style: _body(size: 12.5, color: _textSecondary)),
+            )
+          else ...[
+            _naesteKort(kommende.first),
+            if (kommende.length > 1) ...[
+              Padding(
+                padding: const EdgeInsets.only(top: 4, bottom: 2, left: 2),
+                child: Row(children: [
+                  Expanded(
+                    child: Text('DE NÆSTE 14 DAGE',
+                        style: _body(
+                            size: 10,
+                            weight: FontWeight.w700,
+                            spacing: 0.8,
+                            color: _textMuted)),
+                  ),
+                  Text('ja / nej / mangler',
+                      style: _body(size: 9.5, color: _textMuted)),
+                ]),
+              ),
+              for (final (i, t) in kommende.skip(1).take(4).indexed)
+                _programLinje(t, i == 0),
+            ],
+          ],
+        ],
+      ),
+    );
+  }
+
   /// Dagens træning — en træning der er i gang eller lige om lidt (±3 timer),
   /// og som man selv må styre. Giver genvejen til tavlen øverst i feedet.
   _TrainingFeedItem? get _dagensTraening {
@@ -498,6 +829,8 @@ class _OversigtTabState extends State<OversigtTab>
         _myGroupIds = myGroupIds;
         _myStatusIds = myStatusMap.keys.toSet();
         _myCaptainGroupIds = myCaptainGroupIds;
+        _myTrainerGroupIds = trainerGroupsOf[userId] ?? const {};
+        _playersPerGroup = playersPerGroup;
         _loading = false;
       });
     } catch (e) {
@@ -1295,6 +1628,9 @@ class _OversigtTabState extends State<OversigtTab>
                 Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  // Overblik for dem med et ansvar. Almindelige spillere
+                  // ser det ikke — deres feed skal være enkelt.
+                  if (showingTrainings && !_showHistory) _traenerDashboard(),
                   // Genvej til dagens tavle — kun når der faktisk er en
                   // træning inden for tre timer, som man må styre.
                   if (showingTrainings && !_showHistory)

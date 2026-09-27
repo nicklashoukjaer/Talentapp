@@ -476,8 +476,14 @@ class _HomeShellState extends State<HomeShell> {
       );
     }
 
+    final dashKnap = (_erLeder && !_dashboardSomStart && idx == _tabOversigt)
+        ? [knap(Icons.speed_outlined, 'Dashboard', _aabnDashboardSkaerm,
+            primaer: false)]
+        : <Widget>[];
+
     if ((idx == _tabOversigt || idx == _tabDashboard) && _canCreate) {
       return [
+        ...dashKnap,
         knap(Icons.how_to_vote, 'Ny afstemning', _quickCreatePoll,
             primaer: false),
         knap(Icons.add, 'Opret begivenhed', _quickCreateTraining),
@@ -489,7 +495,7 @@ class _HomeShellState extends State<HomeShell> {
     if (idx == _tabBoede && (_isStaff || _isCaptain)) {
       return [knap(Icons.gavel, 'Uddel bøde', _quickGiveFine)];
     }
-    return const [];
+    return dashKnap;
   }
 
   Widget _desktopBody(
@@ -633,6 +639,18 @@ class _HomeShellState extends State<HomeShell> {
               },
               icon: const Icon(Icons.filter_list, color: _textPrimary),
               tooltip: 'Filtrér på hold',
+            ),
+          // Genvej til Dashboardet for ledere der ikke har det som fane.
+          // Især for kaptajner: de har ikke Admin-fanen, og kunne ellers
+          // kun nå det ved at slå det til som fast startskærm.
+          if (_erLeder &&
+              !_dashboardSomStart &&
+              _logisk(_selectedIndex.clamp(0, pages.length - 1)) ==
+                  _tabOversigt)
+            IconButton(
+              onPressed: _aabnDashboardSkaerm,
+              icon: const Icon(Icons.speed_outlined, color: _textPrimary),
+              tooltip: 'Dashboard',
             ),
           _NotificationsBell(
             isStaff: _isStaff,

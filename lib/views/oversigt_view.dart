@@ -228,6 +228,34 @@ class _OversigtTabState extends State<OversigtTab>
     return ud;
   }
 
+  /// Rykkeren sender rigtige beskeder til rigtige mennesker, så der spørges
+  /// først — knappen sidder tæt på resten i en smal liste.
+  Future<void> _bekraeftRykker(_TrainingFeedItem t) async {
+    final s = _svarTal(t);
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => fastDialog(
+        ctx,
+        AlertDialog(
+          title: const Text('Send rykker?'),
+          content: Text(
+              '${s.mangler} ${s.mangler == 1 ? "spiller" : "spillere"} '
+              'mangler at svare på "${t.training['titel']}".\n\n'
+              'De får en besked i appen, og push hvis de har slået det til.'),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Annullér')),
+            FilledButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('Send')),
+          ],
+        ),
+      ),
+    );
+    if (ok == true && mounted) await _sendRykker(t);
+  }
+
   Future<void> _sendRykker(_TrainingFeedItem t) async {
     try {
       final antal = await supabase.rpc('send_training_reminders', params: {
@@ -300,14 +328,6 @@ class _OversigtTabState extends State<OversigtTab>
     );
   }
 
-  Widget _tal(String etiket, int v, Color farve) => Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text('$v',
-              style: _cond(size: 16, weight: FontWeight.w800, color: farve)),
-          Text(etiket, style: _body(size: 9, color: _textMuted)),
-        ],
-      );
 
   /// Farvestriben i venstre kant — holdets identitet.
   Widget _holdStribe(Map<String, dynamic>? hold, {double hoejde = 34}) =>
@@ -319,127 +339,6 @@ class _OversigtTabState extends State<OversigtTab>
           borderRadius: BorderRadius.circular(999),
         ),
       );
-
-  // ── Det fremhævede kort ──────────────────────────────────────────────────
-
-  Widget _naesteKort(_TrainingFeedItem t) {
-    final tr = t.training;
-    final start = DateTime.parse(tr['start_tid'] as String).toLocal();
-    final s = _svarTal(t);
-    final fuldt = s.pladser != null && s.ja >= s.pladser!;
-    final statusFarve = fuldt ? _success : (s.mangler > 0 ? _danger : _gold);
-    final hjemme = erHjemmekamp(tr['titel'] as String);
-    final erKamp = _erKamp(tr['titel'] as String);
-    final baneOk = tr['bane_booket'] == true;
-    final hold = _holdAf(tr);
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.fromLTRB(10, 10, 10, 10),
-      decoration: BoxDecoration(
-        color: _surfaceElevated,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: _borderSubtle),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
-            _holdStribe(hold, hoejde: 38),
-            const SizedBox(width: 9),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Row(children: [
-                    _holdMaerke(hold),
-                    if (hold != null) const SizedBox(width: 7),
-                    if (erKamp) _hjemmeUdeBadge(hjemme),
-                    const SizedBox(width: 7),
-                    Text(
-                        '${start.day}. ${_shortMonths[start.month - 1]} · '
-                        '${_fmtTime(start)}',
-                        style: _body(size: 10.5, color: _textMuted)),
-                  ]),
-                  const SizedBox(height: 3),
-                  // Modstanderen er det man leder efter på en kamp, ikke
-                  // ordet "hjemmekamp".
-                  Text(
-                      (erKamp
-                              ? _modstander(tr['titel'] as String)
-                              : tr['titel'] as String)
-                          .toUpperCase(),
-                      style: _cond(size: 17, weight: FontWeight.w800),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis),
-                ],
-              ),
-            ),
-            const SizedBox(width: 8),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
-              decoration: BoxDecoration(
-                color: statusFarve.withValues(alpha: 0.16),
-                borderRadius: BorderRadius.circular(999),
-              ),
-              child: Text(
-                  s.pladser == null ? '${s.ja}' : '${s.ja}/${s.pladser}',
-                  style: _body(
-                      size: 12, weight: FontWeight.w800, color: statusFarve)),
-            ),
-          ]),
-          const SizedBox(height: 10),
-          Row(children: [
-            _tal('Ja', s.ja, _success),
-            const SizedBox(width: 16),
-            _tal('Nej', s.nej, _danger),
-            const SizedBox(width: 16),
-            _tal('Mangler', s.mangler, s.mangler > 0 ? _gold : _textMuted),
-            const Spacer(),
-            // Advarslen står HER, ved den kamp den handler om — ikke frit i
-            // toppen hvor man ikke kan se hvilken kamp der mangler baner.
-            if (hjemme && !baneOk)
-              BookliBadge(
-                  training: tr, onOpdateret: () => reload(stille: true))
-            else if (hjemme)
-              Row(children: [
-                const Icon(Icons.check_circle, size: 13, color: _success),
-                const SizedBox(width: 4),
-                Text('Baner booket',
-                    style: _body(
-                        size: 10.5,
-                        weight: FontWeight.w700,
-                        color: _success)),
-              ]),
-            if (s.mangler > 0) ...[
-              const SizedBox(width: 8),
-              InkWell(
-                onTap: () => _sendRykker(t),
-                borderRadius: BorderRadius.circular(999),
-                child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(999),
-                    border: Border.all(color: _gold.withValues(alpha: 0.5)),
-                  ),
-                  child: Row(mainAxisSize: MainAxisSize.min, children: [
-                    const Icon(Icons.campaign_outlined,
-                        size: 13, color: _gold),
-                    const SizedBox(width: 4),
-                    Text('Ryk',
-                        style: _body(
-                            size: 11, weight: FontWeight.w700, color: _gold)),
-                  ]),
-                ),
-              ),
-            ],
-          ]),
-        ],
-      ),
-    );
-  }
 
   // ── Listen ───────────────────────────────────────────────────────────────
 
@@ -466,7 +365,11 @@ class _OversigtTabState extends State<OversigtTab>
         ),
         child: Row(children: [
           _holdStribe(hold, hoejde: 26),
-          const SizedBox(width: 8),
+          const SizedBox(width: 7),
+          SizedBox(
+            width: 22,
+            child: _holdMaerke(hold, lille: true),
+          ),
           SizedBox(
             width: 44,
             child: Text('${start.day}. ${_shortMonths[start.month - 1]}',
@@ -491,14 +394,33 @@ class _OversigtTabState extends State<OversigtTab>
                     style: _body(size: 12.5, weight: FontWeight.w600)),
               ),
               if (manglerBane) ...[
-                const SizedBox(width: 5),
-                const Icon(Icons.warning_amber_rounded,
-                    size: 12, color: _gold),
+                const SizedBox(width: 3),
+                BookliBadge(
+                    training: tr,
+                    kompakt: true,
+                    onOpdateret: () => reload(stille: true)),
               ],
             ]),
           ),
           const SizedBox(width: 6),
           _taelleBlok(s),
+          // Fast plads, også når den er tom, så tallene står på linje ned
+          // gennem hele listen. Rykkeren sad før kun på det fremhævede
+          // topkort — den skal ikke forsvinde med det.
+          SizedBox(
+            width: 26,
+            child: s.mangler > 0
+                ? IconButton(
+                    onPressed: () => _bekraeftRykker(t),
+                    icon: const Icon(Icons.campaign_outlined,
+                        size: 16, color: _gold),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                    visualDensity: VisualDensity.compact,
+                    tooltip: 'Ryk dem der mangler at svare',
+                  )
+                : null,
+          ),
         ]),
       ),
     );
@@ -620,32 +542,26 @@ class _OversigtTabState extends State<OversigtTab>
                   style: _body(size: 12.5, color: _textSecondary)),
             )
           else ...[
-            _naesteKort(kommende.first),
-            if (kommende.length > 1) ...[
-              Padding(
-                padding: const EdgeInsets.only(top: 2, bottom: 1, left: 2),
-                child: Row(children: [
-                  Expanded(
-                    child: Text(
-                        _dashKampe ? 'KOMMENDE KAMPE' : 'DE NÆSTE 14 DAGE',
-                        style: _body(
-                            size: 9.5,
-                            weight: FontWeight.w700,
-                            spacing: 0.8,
-                            color: _textMuted)),
-                  ),
-                  Text('ja / nej / mangler',
-                      style: _body(size: 9, color: _textMuted)),
-                ]),
-              ),
-              // I Holdleder-fanen vises HELE sæsonen; i feedet er det et
-              // supplement til listen nedenunder, og dér er fire nok.
-              for (final (i, t) in (widget.kunDashboard
-                      ? kommende.skip(1)
-                      : kommende.skip(1).take(4))
-                  .indexed)
-                _programLinje(t, i == 0),
-            ],
+            Padding(
+              padding: const EdgeInsets.only(top: 2, bottom: 1, left: 2),
+              child: Row(children: [
+                Expanded(
+                  child: Text(
+                      _dashKampe ? 'KOMMENDE KAMPE' : 'DE NÆSTE 14 DAGE',
+                      style: _body(
+                          size: 9.5,
+                          weight: FontWeight.w700,
+                          spacing: 0.8,
+                          color: _textMuted)),
+                ),
+                Text('ja / nej / mangler',
+                    style: _body(size: 9, color: _textMuted)),
+              ]),
+            ),
+            // ÉN ensartet liste — ingen fremhævet første kamp. Det store
+            // topkort gjorde den næste kamp nemmere at se, men resten
+            // sværere at skimme, og skærmen skal kunne overskues på én gang.
+            for (final (i, t) in kommende.indexed) _programLinje(t, i == 0),
           ],
         ],
       ),
@@ -2262,10 +2178,16 @@ Future<bool> huskBookliDialog(BuildContext context, String trainingId) async {
 class BookliBadge extends StatelessWidget {
   final Map<String, dynamic> training;
   final VoidCallback onOpdateret;
+
+  /// Kun advarselstegnet, uden tekst. Til lister hvor der ikke er bredde
+  /// til "Tjek Bookli" — men hvor advarslen stadig skal kunne trykkes på.
+  final bool kompakt;
+
   const BookliBadge({
     super.key,
     required this.training,
     required this.onOpdateret,
+    this.kompakt = false,
   });
 
   Future<void> _menu(BuildContext context) async {
@@ -2330,6 +2252,16 @@ class BookliBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (kompakt) {
+      return GestureDetector(
+        onTap: () => _menu(context),
+        behavior: HitTestBehavior.opaque,
+        child: const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 3, vertical: 2),
+          child: Icon(Icons.warning_amber_rounded, size: 14, color: _gold),
+        ),
+      );
+    }
     return GestureDetector(
       onTap: () => _menu(context),
       child: Container(

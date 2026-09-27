@@ -62,6 +62,30 @@ class BaneStatus {
   bool get iOrden => booket;
 }
 
+/// En bane i Bookli, som broen melder den.
+class BookliBane {
+  final String navn;   // "D10"
+  final String hal;    // "Home Arena, Bane D8-D12"
+  const BookliBane({required this.navn, required this.hal});
+}
+
+/// Svar på "kan vi få den her bane i det tidsrum".
+class BaneLedig {
+  final String bane;
+  final bool ledig;
+
+  /// Sandt når vi allerede holder banen i tidsrummet. Så skal der ikke
+  /// bookes noget — og "ledig" er sandt netop fordi den er vores.
+  final bool viHarSelv;
+  final String? grund;
+  const BaneLedig({
+    required this.bane,
+    required this.ledig,
+    this.viHarSelv = false,
+    this.grund,
+  });
+}
+
 /// Broens seneste banesvar, delt på tværs af skærme.
 ///
 /// Banestatus vises tre steder — dashboardlinjen, feedkortet og
@@ -190,6 +214,50 @@ class BridgeService {
           banetidTil: _tid(e['banetid'], 'til'),
           kamptidFra: _tid(e['kamptid'], 'fra'),
           kamptidTil: _tid(e['kamptid'], 'til'),
+        )
+    ];
+  }
+
+  /// Banerne Bookli kender, fx D10 i "Home Arena, Bane D8-D12".
+  ///
+  /// Null betyder "broen svarede ikke" — ikke "ingen baner". Bane-vælgeren
+  /// falder da tilbage på klubbens faste liste, så man stadig kan vælge
+  /// uden at broen kører.
+  static Future<List<BookliBane>?> hentBaner() async {
+    final r = await _kald('/bookli/baner');
+    final liste = r?['baner'];
+    if (liste is! List) return null;
+    return [
+      for (final e in liste.whereType<Map>())
+        BookliBane(
+          navn: (e['navn'] ?? '').toString(),
+          hal: (e['hal'] ?? '').toString(),
+        )
+    ];
+  }
+
+  /// Kan vi få banerne i tidsrummet? Vores egne bookinger trækkes fra,
+  /// så en flytning ikke blokeres af den booking der skal flyttes.
+  static Future<List<BaneLedig>?> tjekLedighed({
+    required List<String> baner,
+    required DateTime start,
+    required DateTime slut,
+  }) async {
+    if (baner.isEmpty) return const [];
+    final r = await _kald('/bookli/ledig', krop: {
+      'baner': baner,
+      'start': start.toUtc().toIso8601String(),
+      'slut': slut.toUtc().toIso8601String(),
+    });
+    final liste = r?['ledighed'];
+    if (liste is! List) return null;
+    return [
+      for (final e in liste.whereType<Map>())
+        BaneLedig(
+          bane: (e['bane'] ?? '').toString(),
+          ledig: e['ledig'] == true,
+          viHarSelv: (e['egne'] as List?)?.isNotEmpty ?? false,
+          grund: e['optagetAf']?.toString(),
         )
     ];
   }

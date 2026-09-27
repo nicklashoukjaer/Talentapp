@@ -417,17 +417,298 @@ function huln(fra, til, intervaller) {
   return huller;
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// Ledighed og ombooking
+//
+// Alt herunder er aflæst fra Booklis egen klient, ikke gættet:
+//
+//   query GetResourcesAvailableTimeSchema($resourceType,$location,$date,
+//                                         $durationMinuts)
+//   query GetResourceBookingIsValid($resource,$startDate,$endDate)
+//   mutation ResourceBookingCancel($id,$refundPayment)
+//
+// Lokationen og banehallerne er klubbens egne id'er, hentet fra
+// GetResourceTypes på den kørende side.
+// ─────────────────────────────────────────────────────────────────────────
+
+const LOKATION = 'ckhxfvckh178623qip9zccbebc6';   // Padel Club Hjørring
+
+const Q_SKEMA = `query($t:ID!,$l:ID!,$d:DateTime!,$m:Int!){
+  resourcesAvailableTimeSchema(resourceType:$t,location:$l,date:$d,durationMinuts:$m){
+    times{ startDate endDate availableForBooking availableResources{ id name } }
+  }
+}`;
+
+const Q_TYPER = `query($c:ID!,$l:ID!){
+  resourceTypes(filtering:{resourceCategory:$c,location:$l}){ data{ id name } }
+}`;
+
+const Q_LEDIG = `query($r:ID!,$s:DateTime!,$e:DateTime!){
+  resourceBookingIsValid(resource:$r,startDate:$s,endDate:$e)
+}`;
+
+/// Åbner bookingfladen og giver en genbrugelig GraphQL-kanal.
+///
+/// Kaldene skal gå gennem sidens egen kontekst: Bookli ligger bag
+/// Cloudflare, og et friskt HTTP-kald udefra bliver afvist.
+async function graf(side) {
+  if (side.__graf) return side.__graf;
+  let skabelon = null;
+  const lyt = (req) => {
+    if (!/\/graphql/.test(req.url()) || skabelon) return;
+    try {
+      const krop = JSON.parse(req.postData() || '');
+      if ([].concat(krop)[0]?.operationName) {
+        skabelon = { url: req.url(), headers: req.headers(), krop };
+      }
+    } catch { /* ikke JSON — ikke det kald vi leder efter */ }
+  };
+  side.on('request', lyt);
+  try {
+    await side.goto('https://bookli.app/u/booking/create',
+      { waitUntil: 'networkidle', timeout: 45000 });
+    await side.waitForTimeout(4000);
+  } finally {
+    side.off('request', lyt);
+  }
+  if (!skabelon) {
+    throw new Error('Fandt ikke Booklis GraphQL-kald — er login gået igennem?');
+  }
+  side.__graf = async (doc, variables) => {
+    const [svar] = await send(side, skabelon, { query: doc, variables });
+    if (svar?.errors?.length) {
+      throw new Error('Bookli: ' + svar.errors[0].message);
+    }
+    return svar?.data;
+  };
+  return side.__graf;
+}
+
+/// Alle baner klubben kan bookes på, med Booklis id.
+///
+/// Ledighedsskemaet er den eneste flade der oplyser banerne med id, så
+/// der spørges på et par fremtidige datoer og svarene lægges sammen —
+/// en bane der er optaget hele den ene dag dukker op på den anden.
+export async function hentBaner(side) {
+  const g = await graf(side);
+  const kat = await g(`query{ resourceCategories{ data{ id name } } }`, {})
+      .catch(() => null);
+  const katId = kat?.resourceCategories?.data?.[0]?.id;
+
+  const typer = katId
+      ? (await g(Q_TYPER, { c: katId, l: LOKATION }))?.resourceTypes?.data ?? []
+      : [];
+  if (!typer.length) {
+    throw new Error('Bookli oplyste ingen banehaller for lokationen.');
+  }
+
+  const fundne = new Map();
+  const datoer = [14, 28, 42].map((d) => {
+    const x = new Date();
+    x.setDate(x.getDate() + d);
+    x.setHours(12, 0, 0, 0);
+    return x.toISOString();
+  });
+
+  for (const t of typer) {
+    for (const d of datoer) {
+      const j = await g(Q_SKEMA, { t: t.id, l: LOKATION, d, m: 60 })
+          .catch(() => null);
+      for (const tid of j?.resourcesAvailableTimeSchema?.times ?? []) {
+        for (const r of tid.availableResources ?? []) {
+          // "[D10] Sparekassen Danmark" → kortnavnet er det brugeren kender.
+          const kort = (r.name.match(/^\[([^\]]+)\]/) || [])[1] || r.name;
+          if (!fundne.has(kort)) {
+            fundne.set(kort, {
+              navn: kort,
+              fuldtNavn: r.name,
+              id: r.id,
+              hal: t.name,
+              halId: t.id,
+            });
+          }
+        }
+      }
+    }
+  }
+  return [...fundne.values()].sort((a, b) =>
+      a.navn.localeCompare(b.navn, 'da', { numeric: true }));
+}
+
+/// Er banen fri i hele [start, slut]? Booklis eget svar, uændret.
+async function banenErFri(g, resourceId, start, slut) {
+  const j = await g(Q_LEDIG, {
+    r: resourceId,
+    s: new Date(start).toISOString(),
+    e: new Date(slut).toISOString(),
+  });
+  return j?.resourceBookingIsValid === true;
+}
+
+/// Kan VI få de ønskede baner i det nye tidsrum?
+///
+/// Booklis eget ledighedssvar duer ikke alene til en ombooking. Flytter
+/// man en kamp fra 18–21 til 16.30–19.30, melder Bookli banerne optaget
+/// i overlappet — fordi vi selv sidder på dem. Uden at tage højde for
+/// det ville enhver flytning se umulig ud.
+///
+/// Derfor: vores egne bookinger på banen trækkes ud af det ønskede
+/// tidsrum, og kun de HULLER der bliver tilbage spørges Bookli om. Er
+/// der ingen huller, er banen vores i forvejen.
+///
+/// @returns {Array<{bane, ledig, egne, optagetAf}>}
+export async function tjekLedighed(side, { baner, start, slut }) {
+  const g = await graf(side);
+  const alle = await hentBaner(side);
+  const s = new Date(start).getTime();
+  const e = new Date(slut).getTime();
+  if (!(e > s)) throw new Error('Sluttid skal ligge efter starttid.');
+
+  // Vores egne bookinger i døgnet omkring tidsrummet.
+  const egne = await hentBookinger(side,
+      new Date(s - 86400000), new Date(e + 86400000));
+
+  const ud = [];
+  for (const oensket of baner) {
+    const bane = alle.find((b) => b.navn === oensket);
+    if (!bane) {
+      ud.push({
+        bane: oensket,
+        ledig: false,
+        egne: [],
+        optagetAf: 'Bookli kender ikke en bane der hedder ' + oensket,
+      });
+      continue;
+    }
+
+    // Vores egne stykker på præcis denne bane, klippet til tidsrummet.
+    const mine = egne
+        .filter((b) => b.bane === oensket && b.slut)
+        .map((b) => [new Date(b.start).getTime(), new Date(b.slut).getTime()])
+        .filter(([a, z]) => z > s && a < e);
+
+    const huller = huln(s, e, mine);
+
+    let fri = true;
+    for (const [a, z] of huller) {
+      // eslint-disable-next-line no-await-in-loop
+      if (!(await banenErFri(g, bane.id, a, z))) { fri = false; break; }
+    }
+
+    ud.push({
+      bane: oensket,
+      baneId: bane.id,
+      hal: bane.hal,
+      ledig: fri,
+      // Hvad vi selv allerede holder — så appen kan sige "du har den i
+      // forvejen" frem for at love en booking der ikke skal laves.
+      egne: mine.map(([a, z]) => ({
+        fra: new Date(a).toISOString(),
+        til: new Date(z).toISOString(),
+      })),
+      optagetAf: fri ? null : 'Optaget af en anden booking i Bookli',
+    });
+  }
+  return ud;
+}
+
+/// Ombooking i kontrolleret rækkefølge.
+///
+/// 1. Tjek at de ønskede baner kan skaffes i det nye tidsrum, med vores
+///    egne bookinger trukket fra.
+/// 2. Afbestil de gamle bookinger.
+/// 3. Book de ønskede baner i det nye tidsrum.
+/// 4. Meld tilbage.
+///
+/// Trin 1 er bygget og afprøvet. Trin 2 og 3 stopper med en forklaring:
+/// se `bookBane` og `afbestil` herunder. Rækkefølgen ligger her, så den
+/// ikke skal opfindes igen når de to trin kan skrives — og så et
+/// tørløb kan bruges i dag.
+///
+/// @param {{baner:string[], start, slut, gamleBookingIds?:string[],
+///          bekraeft?:boolean}} plan
+export async function ombook(side, plan) {
+  const { baner = [], start, slut, gamleBookingIds = [], bekraeft } = plan;
+  if (!baner.length) throw new Error('Ingen baner valgt.');
+
+  // ── 1. Ledighed ────────────────────────────────────────────────────
+  const ledighed = await tjekLedighed(side, { baner, start, slut });
+  const mangler = ledighed.filter((b) => !b.ledig);
+
+  const svar = {
+    trin: 'LEDIGHED',
+    ledighed,
+    kanBookes: mangler.length === 0,
+    start,
+    slut,
+  };
+
+  if (mangler.length) {
+    return { ...svar, status: 'OPTAGET',
+      besked: 'Kan ikke ombookes: ' +
+        mangler.map((b) => `${b.bane} (${b.optagetAf})`).join(', ') };
+  }
+
+  // Uden udtrykkelig bekræftelse skrives der ingenting. En ombooking
+  // afbestiller rigtige baner og optager nye — det sker ikke som en
+  // bivirkning af et opslag.
+  if (!bekraeft) {
+    return { ...svar, status: 'KLAR',
+      besked: `${baner.join(', ')} kan skaffes i det nye tidsrum. ` +
+        'Send bekraeft=true for at gennemføre.' };
+  }
+
+  // ── 2. Afbestil ────────────────────────────────────────────────────
+  for (const id of gamleBookingIds) {
+    // eslint-disable-next-line no-await-in-loop
+    await afbestil(side, id);
+  }
+
+  // ── 3. Book ────────────────────────────────────────────────────────
+  const nye = [];
+  for (const b of ledighed) {
+    // eslint-disable-next-line no-await-in-loop
+    nye.push(await bookBane(side, { baneId: b.baneId, start, slut }));
+  }
+
+  return { ...svar, trin: 'BOOKET', status: 'OK', bookinger: nye };
+}
+
+/// Afbestiller en booking.
+///
+/// IKKE gennemført. Mutationen er fundet i Booklis klient:
+///
+///   mutation ResourceBookingCancel($id: ID!, $refundPayment: Boolean)
+///
+/// men bookingkortet i fladen viser "Kan ikke annulleres — tidsfristen
+/// er overskredet", så der gælder en afbestillingsfrist vi ikke kender
+/// reglerne for. En afbestilling der rammer forkert giver klubben en
+/// regning og ingen bane, og den slags skrives ikke på formodning.
+export async function afbestil(_side, _id) {
+  throw new Error(
+    'Afbestilling er ikke gennemført. Mutationen ResourceBookingCancel ' +
+    'er fundet, men Bookli har en afbestillingsfrist hvis regler ikke er ' +
+    'afprøvet — og en fejlramt afbestilling koster en bane og et gebyr.');
+}
+
 /// Booker baner.
 ///
-/// IKKE gennemført. Flowet bag "Opret booking" har jeg ikke haft foran
-/// mig, og en booking optager en rigtig bane og trækker point på kontoen
-/// — den slags skrives ikke på et gæt og afprøves ikke "lige for at se".
+/// IKKE gennemført, og det er ikke en forglemmelse. Booklis klient har
+/// ingen almindelig "opret booking"-mutation: de eneste der findes er
+/// ResourceBookingCreateCompanyReservation (klubadministratorens
+/// reservation, som denne konto ikke har adgang til) og
+/// ResourceBookingRecurringCreate. En spillers booking går gennem
+/// betalingsfladen — kortet på en enkelt bane viste 732,00 kr fordelt
+/// på fire deltagere.
 ///
-/// Valideringen ovenfor dækker det meste af behovet: den fortæller hvilke
-/// hjemmekampe der mangler baner, og så kan et menneske booke dem.
+/// En robot der gennemfører en betaling på klubbens konto uden at nogen
+/// har set flowet, er ikke noget jeg skriver på formodning. Brug
+/// tjekLedighed til at finde ud af HVAD der kan bookes, og book det
+/// selv — det er to klik når man ved at banerne er fri.
 export async function bookBane(_side, _booking) {
   throw new Error(
-    'Selve bookingen er ikke skrevet endnu. Booking-fladen skal ses ' +
-    'først — den optager en bane og koster point, så den skrives ikke ' +
-    'på formodning. Brug validerBaner til at finde hvad der mangler.');
+    'Selve bookingen er ikke gennemført. Bookli har ingen simpel ' +
+    'booking-mutation for en spillerkonto — den går gennem betaling, og ' +
+    'en booking koster rigtige penge. Brug /bookli/ledig til at se hvad ' +
+    'der kan skaffes, og book det i Bookli.');
 }

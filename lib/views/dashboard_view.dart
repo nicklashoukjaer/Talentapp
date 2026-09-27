@@ -4481,10 +4481,41 @@ class _CreateTrainingDialogState extends State<CreateTrainingDialog> {
   // Valgte hold. Tom = alle hold (fælles). Kan indeholde ét eller flere hold.
   final Set<String> _groupIds = {};
 
+  /// Ønskede baner i Bookli. Kun relevant på hjemmekampe.
+  final Set<String> _baner = {};
+
+  /// Booklis egen baneliste, hentet gennem broen. Null = ikke hentet
+  /// (eller broen svarede ikke) — så bruges reservelisten herunder.
+  List<BookliBane>? _bookliBaner;
+  bool _banerHenter = false;
+
+  /// Reserveliste. Klubbens baner som Bookli oplyste dem 28. september
+  /// 2026. Bruges kun når broen ikke svarer, så bane-valget stadig kan
+  /// foretages — broen tjekker alligevel navnet inden der bookes.
+  static const _reserveBaner = <String, String>{
+    'D1': 'RealMæglerne Hjørring Arena', 'D2': 'RealMæglerne Hjørring Arena',
+    'D3': 'RealMæglerne Hjørring Arena', 'D4': 'RealMæglerne Hjørring Arena',
+    'D5': 'EDC Erhverv Poul Erik Bech Arena',
+    'D6': 'EDC Erhverv Poul Erik Bech Arena',
+    'D7': 'EDC Erhverv Poul Erik Bech Arena',
+    'D8': 'Home Arena', 'D9': 'Home Arena', 'D10': 'Home Arena',
+    'D11': 'Home Arena', 'D12': 'Home Arena',
+    'S1': 'RealMæglerne (Single)', 'S2': 'RealMæglerne (Single)',
+  };
+
+  /// Ledighed pr. bane, når broen har svaret. Tom = ikke spurgt.
+  Map<String, BaneLedig> _ledighed = const {};
+  bool _ledighedHenter = false;
+
   @override
   void initState() {
     super.initState();
     _weeksCtrl.addListener(() {
+      if (mounted) setState(() {});
+    });
+    // Bane-vælgeren dukker op når titlen bliver til en hjemmekamp. Uden
+    // denne lytter kom den først ved næste tryk et andet sted.
+    _titel.addListener(() {
       if (mounted) setState(() {});
     });
     if (widget.forudvalgtDato != null) {
@@ -4620,6 +4651,164 @@ class _CreateTrainingDialogState extends State<CreateTrainingDialog> {
     super.dispose();
   }
 
+  // ── Bane-valg ──────────────────────────────────────────────────────────
+
+  /// Henter Booklis baneliste én gang. Svarer broen ikke, bruges
+  /// reservelisten — man skal kunne vælge baner uden at robotten kører.
+  Future<void> _sikrBaner() async {
+    if (_bookliBaner != null || _banerHenter || !BridgeService.erOpsat) return;
+    _banerHenter = true;
+    final svar = await BridgeService.hentBaner();
+    if (!mounted) return;
+    setState(() => _bookliBaner = svar ?? const []);
+  }
+
+  /// Spørger broen om de valgte baner kan skaffes i det valgte tidsrum.
+  ///
+  /// Broen trækker vores EGNE bookinger fra, så en kamp der skal flyttes
+  /// ikke blokeres af den booking der netop skal flyttes.
+  Future<void> _tjekLedighed() async {
+    if (_dato == null || _fra == null || _baner.isEmpty) return;
+    final start = _combine(_dato!, _fra!);
+    final slut = _til != null
+        ? _combine(_dato!, _til!)
+        : start.add(const Duration(minutes: 90));
+    if (!slut.isAfter(start)) return;
+    setState(() => _ledighedHenter = true);
+    final svar = await BridgeService.tjekLedighed(
+        baner: _baner.toList(), start: start, slut: slut);
+    if (!mounted) return;
+    setState(() {
+      _ledighedHenter = false;
+      _ledighed = svar == null
+          ? const {}
+          : {for (final b in svar) b.bane: b};
+    });
+    if (svar == null && mounted) {
+      _snack(context, 'Broen svarer ikke — kunne ikke tjekke ledighed',
+          Colors.orange);
+    }
+  }
+
+  /// Bane-vælgeren. Vises kun på hjemmekampe: en udekamp spilles hos
+  /// modstanderen, og en træning har sin faste tid.
+  Widget _baneVaelger() {
+    if (!erHjemmekamp(_titel.text)) return const SizedBox.shrink();
+    unawaited(_sikrBaner());
+
+    // Booklis liste når den er der, ellers reservelisten.
+    final fra = _bookliBaner;
+    final liste = (fra == null || fra.isEmpty)
+        ? [for (final e in _reserveBaner.entries)
+            BookliBane(navn: e.key, hal: e.value)]
+        : fra;
+
+    // Grupperet pr. hal: D8-D12 ligger i én hal og D1-D4 i en anden, og
+    // man spiller ikke en holdkamp spredt over to haller.
+    final haller = <String, List<BookliBane>>{};
+    for (final b in liste) {
+      haller.putIfAbsent(b.hal, () => []).add(b);
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 16),
+      child: _fieldGroup('BANER I BOOKLI · valgfri', [
+        Text(
+            _baner.isEmpty
+                ? 'Vælg de baner kampen skal spilles på — typisk tre.'
+                : '${_baner.length} valgt: '
+                    '${(_baner.toList()..sort()).join(', ')}',
+            style: _body(size: 11.5, color: _textMuted)),
+        const SizedBox(height: 10),
+        for (final h in haller.entries) ...[
+          Text(h.key.toUpperCase(),
+              style: _body(
+                  size: 10, weight: FontWeight.w700, color: _textMuted)),
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [for (final b in h.value) _baneChip(b.navn)],
+          ),
+          const SizedBox(height: 12),
+        ],
+        if (_baner.isNotEmpty) ...[
+          Row(children: [
+            OutlinedButton.icon(
+              onPressed: _ledighedHenter ? null : _tjekLedighed,
+              icon: _ledighedHenter
+                  ? const SizedBox(
+                      width: 14, height: 14,
+                      child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.event_available_outlined, size: 16),
+              label: const Text('Tjek ledighed'),
+            ),
+            const SizedBox(width: 10),
+            if (!BridgeService.erOpsat)
+              Expanded(
+                child: Text('Kræver automations-broen',
+                    style: _body(size: 10.5, color: _textMuted)),
+              ),
+          ]),
+          for (final b in _ledighed.values) ...[
+            const SizedBox(height: 6),
+            Row(children: [
+              Icon(
+                  b.ledig ? Icons.check_circle : Icons.error_outline,
+                  size: 15,
+                  color: b.ledig ? _success : _gold),
+              const SizedBox(width: 7),
+              Expanded(
+                child: Text(
+                    b.ledig
+                        ? b.viHarSelv
+                            ? '${b.bane} — I har den allerede'
+                            : '${b.bane} — ledig'
+                        : '${b.bane} — ${b.grund ?? "optaget"}',
+                    style: _body(
+                        size: 11.5, color: b.ledig ? _success : _gold)),
+              ),
+            ]),
+          ],
+        ],
+      ]),
+    );
+  }
+
+  Widget _baneChip(String navn) {
+    final valgt = _baner.contains(navn);
+    final svar = _ledighed[navn];
+    // Farven siger ledighed når vi ved det, ellers bare valgt/ikke valgt.
+    final farve = !valgt
+        ? _borderSubtle
+        : svar == null
+            ? _neon
+            : svar.ledig
+                ? _success
+                : _gold;
+    return GestureDetector(
+      onTap: () => setState(() {
+        if (!_baner.remove(navn)) _baner.add(navn);
+        // Ledigheden gælder det forrige valg — smid den, så en gammel
+        // grøn hak ikke står og lover noget om en anden bane.
+        _ledighed = const {};
+      }),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+        decoration: BoxDecoration(
+          color: valgt ? farve.withValues(alpha: 0.18) : Colors.transparent,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: valgt ? farve : _borderSubtle),
+        ),
+        child: Text(navn,
+            style: _cond(
+                size: 17,
+                weight: FontWeight.w800,
+                color: valgt ? farve : _textSecondary)),
+      ),
+    );
+  }
+
   Map<String, dynamic> _buildRow({
     required DateTime start,
     required DateTime slut,
@@ -4646,6 +4835,9 @@ class _CreateTrainingDialogState extends State<CreateTrainingDialog> {
       // ellers null) af hensyn til ældre kode der stadig læser group_id.
       'group_ids':            _groupIds.isEmpty ? null : _groupIds.toList(),
       'group_id':             _groupIds.length == 1 ? _groupIds.first : null,
+      // Kun på hjemmekampe, og kun når der faktisk er valgt noget. Så
+      // rører feltet ikke de begivenheder det ikke angår.
+      if (_baner.isNotEmpty) 'onskede_baner': _baner.toList()..sort(),
     };
   }
 
@@ -4699,9 +4891,29 @@ class _CreateTrainingDialogState extends State<CreateTrainingDialog> {
 
     setState(() => _saving = true);
     try {
-      final oprettede = List<Map<String, dynamic>>.from(
-          await supabase.from('trainings').insert(rows).select('id, titel')
-              as List);
+      // Bane-valget kræver kolonnen onskede_baner. Er migrationen ikke
+      // kørt endnu, må det ikke spærre for at oprette begivenheden —
+      // den er vigtigere end ønsket om bestemte baner.
+      List<Map<String, dynamic>> oprettede;
+      try {
+        oprettede = List<Map<String, dynamic>>.from(
+            await supabase.from('trainings').insert(rows).select('id, titel')
+                as List);
+      } on PostgrestException catch (e) {
+        if (!e.message.contains('onskede_baner')) rethrow;
+        for (final r in rows) {
+          r.remove('onskede_baner');
+        }
+        oprettede = List<Map<String, dynamic>>.from(
+            await supabase.from('trainings').insert(rows).select('id, titel')
+                as List);
+        if (mounted) {
+          _snack(context,
+              'Begivenheden er oprettet, men banevalget blev ikke gemt — '
+              'databasen mangler kolonnen onskede_baner',
+              Colors.orange);
+        }
+      }
       if (!mounted) return;
       if (weeks > 1) {
         _snack(context, '$weeks begivenheder oprettet', Colors.green);
@@ -4852,6 +5064,9 @@ class _CreateTrainingDialogState extends State<CreateTrainingDialog> {
                     Expanded(child: _timeField('Til · valgfri', _til, (t) => setState(() => _til = t))),
                   ]),
                 ]),
+                // Banerne står efter tidspunktet med vilje: ledigheden
+                // afhænger af tiden, og man skal have valgt den først.
+                _baneVaelger(),
                 const SizedBox(height: 16),
                 _fieldGroup('TILMELDINGSFRIST · valgfri', [
                   Wrap(

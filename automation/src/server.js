@@ -156,6 +156,41 @@ const ruter = {
     });
   },
 
+  // Banerne Bookli kender, med hal. Bruges af appens bane-vælger.
+  'POST /bookli/baner': async () =>
+    medBrowser(async (side) => {
+      await bookli.logInd(side);
+      return { baner: await bookli.hentBaner(side) };
+    }),
+
+  // Kan VI få de ønskede baner i tidsrummet? Vores egne bookinger
+  // trækkes fra, så en flytning ikke blokeres af os selv.
+  'POST /bookli/ledig': async (b) =>
+    medBrowser(async (side) => {
+      await bookli.logInd(side);
+      return {
+        ledighed: await bookli.tjekLedighed(side, {
+          baner: b.baner || [],
+          start: b.start,
+          slut: b.slut,
+        }),
+      };
+    }),
+
+  // Ombooking i kontrolleret rækkefølge. Uden bekraeft=true skrives der
+  // ingenting — så kan fladen vise hvad der VILLE ske.
+  'POST /bookli/ombook': async (b) =>
+    medBrowser(async (side) => {
+      await bookli.logInd(side);
+      return await bookli.ombook(side, {
+        baner: b.baner || [],
+        start: b.start,
+        slut: b.slut,
+        gamleBookingIds: b.gamleBookingIds || [],
+        bekraeft: b.bekraeft === true,
+      });
+    }),
+
   // Henter kampprogrammet for ét hold, eller for alle hold med et link.
   'POST /rankedin/kampe': async (b) =>
     medBrowser(async (side) => {

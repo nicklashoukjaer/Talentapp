@@ -222,7 +222,8 @@ de rigtige tjenester.
 | Login | ✅ | ✅ |
 | Læsning | ✅ bookinger med dato og bane | ✅ kampe, stilling, pulje, sæson |
 | Banevalidering | ✅ fuld tidsdækning | — |
-| Skrivning | ❌ booking ikke skrevet | ❌ kampflytning ikke skrevet |
+| Ledighed | ✅ pr. bane, egne bookinger trukket fra | — |
+| Skrivning | ❌ booking og afbestilling ikke skrevet | ❌ kampflytning ikke skrevet |
 
 Valideringen er bevist **begge veje**: en hjemmekamp med baner gav `BOOKET`
 med D4, D11 og D12, og de otte kommende gav `MANGLER_BANE`. En validator
@@ -322,6 +323,62 @@ og adressen skifter ved hver start.
 127.0.0.1, så telefoner og øvrige medlemmer når den ikke. Det er en
 tilføjelse, ikke en afhængighed: svarer broen ikke, tegner Dashboardet
 præcis som før — ingen fejlskærm, ingen hængende spinner.
+
+### Bane-valg og ledighed
+
+Hjemmekampe kan få et **bane-ønske** med: `trainings.onskede_baner`, fx
+`{D10,D11,D12}`, valgt i dialogen når begivenheden oprettes. Vælgeren
+grupperer efter hal — D8-D12 ligger i Home Arena og D1-D4 i RealMæglerne
+Arena, og en holdkamp spilles ikke spredt over to haller.
+
+**Ledighedstjekket trækker vores egne bookinger fra.** Det er hele
+pointen ved en ombooking: flytter man en kamp fra 18-21 til 16.30-19.30,
+melder Bookli banerne optaget i overlappet — fordi vi selv sidder på
+dem. Uden fradraget ville enhver flytning se umulig ud. Vores egne
+stykker klippes derfor ud af tidsrummet, og kun hullerne spørges Bookli
+om.
+
+Afprøvet mod produktion 28. september 2026:
+
+| Tidsrum | Rå Bookli | Med fradrag |
+|---|---|---|
+| 13. nov 18-21 (vores egen booking) | optaget | **ledig** — den er vores |
+| 13. nov 16.30-19.30 | optaget | optaget — hullet 16.30-18.00 har en anden |
+| 16. okt 18-21 | optaget | optaget — alle tre har andre |
+
+Aflæst fra Booklis egen klient, ikke gættet:
+
+```
+query GetResourcesAvailableTimeSchema($resourceType,$location,$date,$durationMinuts)
+query GetResourceBookingIsValid($resource,$startDate,$endDate)
+mutation ResourceBookingCancel($id,$refundPayment)
+```
+
+Ruter: `POST /bookli/baner`, `POST /bookli/ledig`, `POST /bookli/ombook`.
+
+### Hvorfor booking og afbestilling stadig ikke er skrevet
+
+`/bookli/ombook` kører rækkefølgen — tjek ledighed, afbestil, book, meld
+tilbage — men uden `bekraeft: true` skrives der intet, og med den stopper
+den på trin 2 med en forklaring. To ting mangler, og ingen af dem er en
+forglemmelse:
+
+1. **Bookli har ingen almindelig booking-mutation for en spillerkonto.**
+   De eneste der findes i klienten er
+   `ResourceBookingCreateCompanyReservation` (klubadministratorens
+   reservation, som kontoen ikke har adgang til) og
+   `ResourceBookingRecurringCreate`. En spillers booking går gennem
+   betalingsfladen — bookingkortet på én bane viste 732,00 kr fordelt på
+   fire deltagere.
+2. **Afbestilling har en frist.** Bookingkortet skrev "Kan ikke
+   annulleres, da tidsfristen er overskredet". `ResourceBookingCancel`
+   findes, men reglerne er ikke afprøvet, og en fejlramt afbestilling
+   koster klubben en bane og et gebyr.
+
+En robot der gennemfører betalinger på klubbens konto uden at flowet er
+set, skrives ikke på formodning. Ledighedstjekket dækker det praktiske
+behov: det siger hvilke baner der kan skaffes, og så er det to klik at
+booke dem.
 
 ### RankedIn-links skiftes i appen
 

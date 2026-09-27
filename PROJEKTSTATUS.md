@@ -243,9 +243,15 @@ npm run verificer      # databaselæsning + begge logins
 npm run bro            # lytter på 127.0.0.1:8787
 ```
 
-Derefter i appen: **Admin → Automations-bro** → indsæt adresse og
-`BRIDGE_TOKEN` fra `.env`. Dashboardet viser nu Booklis faktiske
-bane-status på hver kommende hjemmekamp.
+Åbn derefter **http://127.0.0.1:8787/app** — broen serverer appen selv — og
+indsæt `BRIDGE_TOKEN` under Admin → Automations-bro. Dashboardet viser nu
+Booklis faktiske bane-status på hver kommende hjemmekamp.
+
+Det skal være dén adresse, ikke vercel-adressen: Chrome spærrer for at et
+offentligt websted rører 127.0.0.1 ("Permission was denied for this
+request to access the loopback address"), og CORS-hoveder er ikke nok.
+Serveres appen af broen, er de samme oprindelse, og spærringen findes
+ikke.
 
 **Bane-status virker kun på den maskine der kører broen.** Broen lytter på
 127.0.0.1, så telefoner og øvrige medlemmer når den ikke. Det er en

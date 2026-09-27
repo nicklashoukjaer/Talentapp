@@ -103,10 +103,21 @@ finder ingenting på den anden.
 
 ## Sådan ser appen bane-status
 
-1. Start broen: `npm run bro`
-2. I appen: **Admin → Automations-bro** → indsæt adresse og `BRIDGE_TOKEN`
-3. Åbn Dashboardet. Hver kommende hjemmekamp viser nu Booklis faktiske
+1. Byg appen én gang: `flutter build web --wasm --release`
+2. Start broen: `npm run bro`
+3. Åbn **http://127.0.0.1:8787/app** — appen serveres af broen selv
+4. **Admin → Automations-bro** → indsæt `BRIDGE_TOKEN` fra `.env`
+5. Åbn Dashboardet. Hver kommende hjemmekamp viser nu Booklis faktiske
    status — grønt med banenumre, eller gult "Ingen bane".
+
+**Brug adressen ovenfor, ikke vercel-adressen.** Chrome spærrer for at et
+offentligt websted rører 127.0.0.1:
+
+> Permission was denied for this request to access the `loopback` address
+
+CORS-hovederne er ikke nok længere — det kræver brugerens udtrykkelige
+tilladelse. Serveres appen derimod af broen, er de to samme oprindelse, og
+hverken CORS, blandet indhold eller loopback-spærringen findes.
 
 **Det virker kun på den maskine der kører broen.** Broen lytter på
 127.0.0.1, så telefoner og de øvrige medlemmer når den ikke. Svarer den

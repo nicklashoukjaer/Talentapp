@@ -388,19 +388,22 @@ class _OversigtTabState extends State<OversigtTab>
 
   /// Tallene i fast bredde, så et langt modstandernavn ikke kan skubbe dem
   /// ud af skærmen. Det var den værste af de gamle fejl på mobil.
-  Widget _taelleBlok(({int ja, int nej, int mangler, int? pladser}) s) {
+  Widget _taelleBlok(({int ja, int nej, int mangler, int? pladser}) s,
+      {bool pc = false}) {
+    final tal = pc ? 19.0 : 15.0;
+    final skraa = pc ? 15.0 : 12.0;
     return SizedBox(
-      width: 84,
+      width: pc ? 106 : 84,
       child: Row(mainAxisAlignment: MainAxisAlignment.end, children: [
         Text('${s.ja}',
-            style: _body(size: 15, weight: FontWeight.w800, color: _success)),
-        Text(' / ', style: _body(size: 12, color: _textMuted)),
+            style: _body(size: tal, weight: FontWeight.w800, color: _success)),
+        Text(' / ', style: _body(size: skraa, color: _textMuted)),
         Text('${s.nej}',
-            style: _body(size: 15, weight: FontWeight.w800, color: _danger)),
-        Text(' / ', style: _body(size: 12, color: _textMuted)),
+            style: _body(size: tal, weight: FontWeight.w800, color: _danger)),
+        Text(' / ', style: _body(size: skraa, color: _textMuted)),
         Text('${s.mangler}',
             style: _body(
-                size: 15,
+                size: tal,
                 weight: FontWeight.w800,
                 color: s.mangler > 0 ? _gold : _textMuted)),
       ]),
@@ -424,6 +427,9 @@ class _OversigtTabState extends State<OversigtTab>
   // ── Listen ───────────────────────────────────────────────────────────────
 
   Widget _programLinje(_TrainingFeedItem t, bool foerste) {
+    // PC har plads. Mobilen er lige blevet stemt af og røres ikke — alt
+    // herunder er enten det mobile mål eller et større PC-mål.
+    final pc = isDesktop(context);
     final tr = t.training;
     final start = DateTime.parse(tr['start_tid'] as String).toLocal();
     final s = _svarTal(t);
@@ -437,7 +443,7 @@ class _OversigtTabState extends State<OversigtTab>
             training: tr, isStaff: widget.isAdmin, canManage: true),
       )).then((_) => reload(stille: true)),
       child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 11),
+        padding: EdgeInsets.symmetric(vertical: pc ? 18 : 11),
         decoration: BoxDecoration(
           border: foerste
               ? null
@@ -448,7 +454,7 @@ class _OversigtTabState extends State<OversigtTab>
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               _holdStribe(hold, hoejde: null),
-              const SizedBox(width: 9),
+              SizedBox(width: pc ? 13 : 9),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -457,21 +463,21 @@ class _OversigtTabState extends State<OversigtTab>
                   children: [
                     Row(children: [
                       SizedBox(
-                        width: 26,
+                        width: pc ? 34 : 26,
                         child: _holdMaerke(hold, lille: true),
                       ),
                       SizedBox(
-                        width: 54,
+                        width: pc ? 70 : 54,
                         child: Text(
                             '${start.day}. ${_shortMonths[start.month - 1]}',
                             style: _body(
-                                size: 13,
+                                size: pc ? 16.5 : 13,
                                 weight: FontWeight.w800,
                                 color: _textMuted)),
                       ),
                       if (erKamp) ...[
-                        _hjemmeUdeBadge(hjemme, lille: true),
-                        const SizedBox(width: 7),
+                        _hjemmeUdeBadge(hjemme, lille: !pc),
+                        SizedBox(width: pc ? 10 : 7),
                       ],
                       // Expanded + ellipsis: et langt holdnavn må aldrig
                       // kunne skubbe tallene ud af skærmen.
@@ -482,21 +488,22 @@ class _OversigtTabState extends State<OversigtTab>
                                 : tr['titel'] as String,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: _body(size: 15, weight: FontWeight.w700)),
+                            style: _body(
+                                size: pc ? 19 : 15, weight: FontWeight.w700)),
                       ),
-                      const SizedBox(width: 8),
-                      _taelleBlok(s),
+                      SizedBox(width: pc ? 12 : 8),
+                      _taelleBlok(s, pc: pc),
                       // Fast plads, også når den er tom, så tallene står
                       // på linje ned gennem hele listen. Rykkeren sad før
                       // kun på det fremhævede topkort — den skal ikke
                       // forsvinde med det.
                       SizedBox(
-                        width: 30,
+                        width: pc ? 38 : 30,
                         child: s.mangler > 0
                             ? IconButton(
                                 onPressed: () => _bekraeftRykker(t),
-                                icon: const Icon(Icons.campaign_outlined,
-                                    size: 19, color: _gold),
+                                icon: Icon(Icons.campaign_outlined,
+                                    size: pc ? 24 : 19, color: _gold),
                                 padding: EdgeInsets.zero,
                                 constraints: const BoxConstraints(),
                                 visualDensity: VisualDensity.compact,
@@ -510,10 +517,10 @@ class _OversigtTabState extends State<OversigtTab>
                     // advarselstegn på en telefon, og så kunne man ikke se
                     // hvad der var galt — kun at noget var det.
                     if (hjemme) ...[
-                      const SizedBox(height: 7),
+                      SizedBox(height: pc ? 10 : 7),
                       Align(
                         alignment: Alignment.centerLeft,
-                        child: BookliBadge(training: tr),
+                        child: BookliBadge(training: tr, stor: pc),
                       ),
                     ],
                   ],
@@ -618,8 +625,9 @@ class _OversigtTabState extends State<OversigtTab>
     VoidCallback? onHandling,
     VoidCallback? onTryk,
   }) {
+    final pc = isDesktop(context);
     return Container(
-      margin: const EdgeInsets.only(bottom: 10),
+      margin: EdgeInsets.only(bottom: pc ? 14 : 10),
       decoration: BoxDecoration(
         color: farve.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(11),
@@ -631,10 +639,11 @@ class _OversigtTabState extends State<OversigtTab>
           onTap: onTryk,
           borderRadius: BorderRadius.circular(11),
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 9),
+            padding: EdgeInsets.symmetric(
+                horizontal: pc ? 15 : 11, vertical: pc ? 13 : 9),
             child: Row(children: [
-              Icon(ikon, size: 16, color: farve),
-              const SizedBox(width: 9),
+              Icon(ikon, size: pc ? 21 : 16, color: farve),
+              SizedBox(width: pc ? 12 : 9),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -642,9 +651,12 @@ class _OversigtTabState extends State<OversigtTab>
                   children: [
                     Text(titel,
                         style: _body(
-                            size: 12.5, weight: FontWeight.w700, color: farve)),
+                            size: pc ? 16 : 12.5,
+                            weight: FontWeight.w700,
+                            color: farve)),
                     Text(under,
-                        style: _body(size: 10.5, color: _textMuted),
+                        style: _body(
+                            size: pc ? 13 : 10.5, color: _textMuted),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis),
                   ],
@@ -655,7 +667,8 @@ class _OversigtTabState extends State<OversigtTab>
                   onPressed: onHandling,
                   style: TextButton.styleFrom(
                     foregroundColor: farve,
-                    textStyle: _body(size: 11.5, weight: FontWeight.w700),
+                    textStyle: _body(
+                        size: pc ? 14 : 11.5, weight: FontWeight.w700),
                     visualDensity: VisualDensity.compact,
                   ),
                   child: Text(handling),
@@ -673,7 +686,9 @@ class _OversigtTabState extends State<OversigtTab>
     return GestureDetector(
       onTap: () => setState(() => _dashKampe = kampe),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        padding: EdgeInsets.symmetric(
+            horizontal: isDesktop(context) ? 16 : 12,
+            vertical: isDesktop(context) ? 9 : 6),
         decoration: BoxDecoration(
           color: aktiv ? _neon : Colors.transparent,
           borderRadius: BorderRadius.circular(999),
@@ -681,7 +696,7 @@ class _OversigtTabState extends State<OversigtTab>
         ),
         child: Text(tekst,
             style: _body(
-                size: 11.5,
+                size: isDesktop(context) ? 14 : 11.5,
                 weight: FontWeight.w700,
                 color: aktiv ? Colors.white : _textSecondary)),
       ),
@@ -703,7 +718,9 @@ class _OversigtTabState extends State<OversigtTab>
             _dashHoldValgtAfBruger = true;
           }),
           child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+            padding: EdgeInsets.symmetric(
+                horizontal: isDesktop(context) ? 14 : 10,
+                vertical: isDesktop(context) ? 8 : 5),
             decoration: BoxDecoration(
               color: aktiv ? farve.withValues(alpha: 0.20) : Colors.transparent,
               borderRadius: BorderRadius.circular(999),
@@ -722,7 +739,7 @@ class _OversigtTabState extends State<OversigtTab>
               ],
               Text(tekst,
                   style: _body(
-                      size: 11,
+                      size: isDesktop(context) ? 13.5 : 11,
                       weight: FontWeight.w700,
                       color: aktiv ? _textPrimary : _textSecondary)),
             ]),
@@ -798,7 +815,7 @@ class _OversigtTabState extends State<OversigtTab>
                   child: Text(
                       _dashKampe ? 'KOMMENDE KAMPE' : 'DE NÆSTE 14 DAGE',
                       style: _body(
-                          size: 11,
+                          size: isDesktop(context) ? 13 : 11,
                           weight: FontWeight.w700,
                           spacing: 0.8,
                           color: _textMuted)),
@@ -806,10 +823,12 @@ class _OversigtTabState extends State<OversigtTab>
                 // Bredden følger _taelleBlok + rykkerknappen, så
                 // overskriften står præcis over de tal den navngiver.
                 SizedBox(
-                  width: 84 + 30,
+                  width: isDesktop(context) ? 106 + 38 : 84 + 30,
                   child: Text('ja / nej / mangler',
                       textAlign: TextAlign.center,
-                      style: _body(size: 10, color: _textMuted)),
+                      style: _body(
+                          size: isDesktop(context) ? 12.5 : 10,
+                          color: _textMuted)),
                 ),
               ]),
             ),
@@ -2484,7 +2503,11 @@ String _hulTekst(List<BaneHul> huller) {
 class BookliBadge extends StatelessWidget {
   final Map<String, dynamic> training;
 
-  const BookliBadge({super.key, required this.training});
+  /// PC-udgave. Store skærme har plads, og bane-linjen er det eneste
+  /// sted banenumrene står — den skal kunne læses på en meters afstand.
+  final bool stor;
+
+  const BookliBadge({super.key, required this.training, this.stor = false});
 
   @override
   Widget build(BuildContext context) {
@@ -2554,15 +2577,17 @@ class BookliBadge extends StatelessWidget {
     List<String> baner = const [],
   }) {
     return Container(
-      padding: const EdgeInsets.fromLTRB(9, 6, 7, 6),
+      padding: stor
+          ? const EdgeInsets.fromLTRB(12, 9, 9, 9)
+          : const EdgeInsets.fromLTRB(9, 6, 7, 6),
       decoration: BoxDecoration(
         color: farve.withValues(alpha: 0.13),
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(stor ? 12 : 10),
         border: Border.all(color: farve.withValues(alpha: 0.5)),
       ),
       child: Row(mainAxisSize: MainAxisSize.min, children: [
-        Icon(ikon, size: 15, color: farve),
-        const SizedBox(width: 7),
+        Icon(ikon, size: stor ? 19 : 15, color: farve),
+        SizedBox(width: stor ? 9 : 7),
         Flexible(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -2570,13 +2595,15 @@ class BookliBadge extends StatelessWidget {
             children: [
               Text(tekst,
                   style: _body(
-                      size: 12, weight: FontWeight.w800, color: farve),
+                      size: stor ? 14.5 : 12,
+                      weight: FontWeight.w800,
+                      color: farve),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis),
               if (under != null)
                 Text(under,
                     style: _body(
-                        size: 11,
+                        size: stor ? 13 : 11,
                         weight: FontWeight.w600,
                         color: farve.withValues(alpha: 0.82)),
                     maxLines: 2,
@@ -2592,14 +2619,16 @@ class BookliBadge extends StatelessWidget {
   }
 
   Widget _baneBrik(String navn, Color farve) => Container(
-        margin: const EdgeInsets.only(left: 5),
-        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+        margin: EdgeInsets.only(left: stor ? 7 : 5),
+        padding: EdgeInsets.symmetric(
+            horizontal: stor ? 10 : 7, vertical: stor ? 5 : 3),
         decoration: BoxDecoration(
           color: farve.withValues(alpha: 0.22),
-          borderRadius: BorderRadius.circular(6),
+          borderRadius: BorderRadius.circular(stor ? 8 : 6),
         ),
         child: Text(navn,
-            style: _cond(size: 15, weight: FontWeight.w800, color: farve)),
+            style: _cond(
+                size: stor ? 21 : 15, weight: FontWeight.w800, color: farve)),
       );
 
 }
@@ -2889,16 +2918,19 @@ class _FeedTrainingCardState extends State<_FeedTrainingCard> {
 // man kan skimme. Samme data og samme handlinger som kortet — kun tættere.
 // Bruges udelukkende på PC; mobilen har kortene som hidtil.
 
-const double _kolDato   = 92;
-const double _kolTid    = 112;
-const double _kolTilm   = 88;
+// Faste kolonner. De voksede med skriften, men kun så meget som der er
+// råd til: BEGIVENHED og HOLD deler resten, og ved 1100 px (hvor
+// PC-visningen begynder) er der kun omkring 150 px tilbage til dem.
+const double _kolDato   = 100;
+const double _kolTid    = 120;
+const double _kolTilm   = 96;
 const double _kolHandl  = 250;
-const double _kolMenu   = 34;
+const double _kolMenu   = 38;
 const double _kolMellem = 14;
 
 Widget _tabelHoved({required bool kanStyre}) => Padding(
       // Flugter med rækkernes vandrette indrykning (10 px) plus kortets kant.
-      padding: const EdgeInsets.fromLTRB(11, 0, 11, 6),
+      padding: const EdgeInsets.fromLTRB(11, 0, 11, 9),
       child: Row(children: [
         SizedBox(width: _kolDato, child: _kolNavn('DATO')),
         const SizedBox(width: _kolMellem),
@@ -2917,7 +2949,7 @@ Widget _tabelHoved({required bool kanStyre}) => Padding(
 
 Widget _kolNavn(String s) => Text(s,
     style: _body(
-        size: 10.5, weight: FontWeight.w700, spacing: 0.9, color: _textMuted));
+        size: 12.5, weight: FontWeight.w700, spacing: 0.9, color: _textMuted));
 
 class _FeedTrainingRow extends StatelessWidget {
   final _TrainingFeedItem item;
@@ -2981,7 +3013,7 @@ class _FeedTrainingRow extends StatelessWidget {
       child: InkWell(
         onTap: openDetail,
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 17),
           decoration: BoxDecoration(
             border: foerste
                 ? null
@@ -2994,10 +3026,11 @@ class _FeedTrainingRow extends StatelessWidget {
               child: Row(children: [
                 Text('${start.day}',
                     style: _cond(
-                        size: 19, weight: FontWeight.w800, color: _neon)),
-                const SizedBox(width: 5),
+                        size: 25, weight: FontWeight.w800, color: _neon)),
+                const SizedBox(width: 6),
                 Text(_shortMonths[start.month - 1],
-                    style: _body(size: 11, color: _textMuted)),
+                    style: _body(
+                        size: 13, weight: FontWeight.w600, color: _textMuted)),
               ]),
             ),
             const SizedBox(width: _kolMellem),
@@ -3009,17 +3042,17 @@ class _FeedTrainingRow extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text((t['titel'] as String).toUpperCase(),
-                      style: _cond(size: 15, weight: FontWeight.w700),
+                      style: _cond(size: 19.5, weight: FontWeight.w700),
                       maxLines: 1, overflow: TextOverflow.ellipsis),
                   if (hasAddr)
                     Text(adresse,
-                        style: _body(size: 11.5, color: _textMuted),
+                        style: _body(size: 13, color: _textMuted),
                         maxLines: 1, overflow: TextOverflow.ellipsis),
                   if (canManage && erHjemmekamp(t['titel'] as String)) ...[
-                    const SizedBox(height: 4),
+                    const SizedBox(height: 7),
                     Align(
                       alignment: Alignment.centerLeft,
-                      child: BookliBadge(training: t),
+                      child: BookliBadge(training: t, stor: true),
                     ),
                   ],
                 ],
@@ -3030,7 +3063,9 @@ class _FeedTrainingRow extends StatelessWidget {
             SizedBox(
               width: _kolTid,
               child: Text('${_fmtTime(start)}–${_fmtTime(slut)}',
-                  style: _body(size: 12.5, color: _textSecondary),
+                  style: _body(
+                      size: 15, weight: FontWeight.w600,
+                      color: _textSecondary),
                   maxLines: 1, overflow: TextOverflow.ellipsis),
             ),
             const SizedBox(width: _kolMellem),
@@ -3038,7 +3073,7 @@ class _FeedTrainingRow extends StatelessWidget {
             Expanded(
               flex: 2,
               child: Text(groupNames.isEmpty ? '—' : groupNames.join(' + '),
-                  style: _body(size: 12.5, color: _textSecondary),
+                  style: _body(size: 15, color: _textSecondary),
                   maxLines: 1, overflow: TextOverflow.ellipsis),
             ),
             const SizedBox(width: _kolMellem),
@@ -3046,21 +3081,21 @@ class _FeedTrainingRow extends StatelessWidget {
             SizedBox(
               width: _kolTilm,
               child: Row(children: [
-                const Icon(Icons.people_outline, size: 13, color: _success),
-                const SizedBox(width: 5),
+                const Icon(Icons.people_outline, size: 17, color: _success),
+                const SizedBox(width: 6),
                 Flexible(
                   child: Text.rich(
                     TextSpan(children: [
                       TextSpan(
                           text: '$cnt',
                           style: _body(
-                              size: 12.5,
-                              weight: FontWeight.w700,
+                              size: 15.5,
+                              weight: FontWeight.w800,
                               color: _success)),
                       if (max != null)
                         TextSpan(
                             text: ' / $max',
-                            style: _body(size: 12, color: _textMuted)),
+                            style: _body(size: 14, color: _textMuted)),
                     ]),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
@@ -3075,11 +3110,11 @@ class _FeedTrainingRow extends StatelessWidget {
               child: staffHidden
                   ? Row(children: [
                       const Icon(Icons.visibility_off_outlined,
-                          size: 14, color: _textMuted),
-                      const SizedBox(width: 6),
+                          size: 17, color: _textMuted),
+                      const SizedBox(width: 7),
                       Expanded(
                         child: Text('Udgives ${_fmtDate(hiddenUntil)}',
-                            style: _body(size: 11.5, color: _textMuted),
+                            style: _body(size: 13.5, color: _textMuted),
                             maxLines: 1, overflow: TextOverflow.ellipsis),
                       ),
                       _MiniKnap(
@@ -3089,12 +3124,12 @@ class _FeedTrainingRow extends StatelessWidget {
                     ])
                   : isSignedUp
                       ? Row(children: [
-                          const Icon(Icons.check, size: 14, color: _success),
-                          const SizedBox(width: 5),
+                          const Icon(Icons.check, size: 17, color: _success),
+                          const SizedBox(width: 6),
                           Expanded(
                             child: Text('Tilmeldt',
                                 style: _body(
-                                    size: 12.5,
+                                    size: 15,
                                     weight: FontWeight.w700,
                                     color: _success),
                                 maxLines: 1),
@@ -3106,12 +3141,12 @@ class _FeedTrainingRow extends StatelessWidget {
                         ])
                       : hasDeclined
                           ? Row(children: [
-                              const Icon(Icons.close, size: 14, color: _danger),
-                              const SizedBox(width: 5),
+                              const Icon(Icons.close, size: 17, color: _danger),
+                              const SizedBox(width: 6),
                               Expanded(
                                 child: Text('Meldt afbud',
                                     style: _body(
-                                        size: 12.5,
+                                        size: 15,
                                         weight: FontWeight.w700,
                                         color: _danger),
                                     maxLines: 1),
@@ -3181,7 +3216,8 @@ class _MiniKnap extends StatelessWidget {
         onTap: onTap,
         borderRadius: BorderRadius.circular(9),
         child: Container(
-          padding: EdgeInsets.symmetric(horizontal: bred ? 8 : 11, vertical: 7),
+          padding:
+              EdgeInsets.symmetric(horizontal: bred ? 10 : 14, vertical: 10),
           alignment: Alignment.center,
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(9),
@@ -3193,7 +3229,7 @@ class _MiniKnap extends StatelessWidget {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: _body(
-                  size: 12,
+                  size: 14,
                   weight: FontWeight.w700,
                   color: fyldt && aktiv ? Colors.white : f)),
         ),

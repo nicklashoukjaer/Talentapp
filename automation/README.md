@@ -110,24 +110,42 @@ finder ingenting på den anden.
 5. Åbn Dashboardet. Hver kommende hjemmekamp viser nu Booklis faktiske
    status — grønt med banenumre, eller gult "Ingen bane".
 
-**Brug adressen ovenfor, ikke vercel-adressen.** Chrome spærrer for at et
-offentligt websted rører 127.0.0.1:
+**Brug adressen ovenfor, ikke vercel-adressen** — med mindre du bruger en
+tunnel, se nedenfor. Chrome spærrer for at et offentligt websted rører
+127.0.0.1:
 
 > Permission was denied for this request to access the `loopback` address
 
-CORS-hovederne er ikke nok længere — det kræver brugerens udtrykkelige
-tilladelse. Serveres appen derimod af broen, er de to samme oprindelse, og
-hverken CORS, blandet indhold eller loopback-spærringen findes.
+CORS-hovederne er ikke nok — det kræver brugerens udtrykkelige tilladelse.
+Serveres appen af broen, er de samme oprindelse, og spærringen findes ikke.
 
-**Det virker kun på den maskine der kører broen.** Broen lytter på
-127.0.0.1, så telefoner og de øvrige medlemmer når den ikke. Svarer den
-ikke, tegner Dashboardet som før — uden fejl og uden spinner. Appen holder
-desuden to minutters pause efter et mislykket kald, så en slukket bro ikke
-sender et kald afsted ved hver eneste gentegning.
+## Tunnel: broen fra vercel-adressen og fra mobilen
 
-Bemærk at appens eget flag (⚠️ Tjek Bookli) og broens svar er **to
-forskellige ting**: flaget er hvad nogen har krydset af, broens svar er
-hvad der faktisk står i Bookli. Derfor vises de ved siden af hinanden.
+```bash
+npm run tunnel      # cloudflared tunnel --url http://127.0.0.1:8787
+```
+
+Adressen skrives ud som `https://…trycloudflare.com`. Indsæt den under
+**Admin → Automations-bro** i stedet for `http://127.0.0.1:8787`. Så virker
+bane-status også på vercel-adressen og på telefonen.
+
+### Det her skal du vide inden du bruger den
+
+**Tunnelen lægger broen på det åbne internet.** Broen har jeres
+Bookli-login, jeres RankedIn-login og en Supabase-nøgle der går uden om al
+adgangskontrol. Det eneste der står imellem er `BRIDGE_TOKEN`.
+
+Derfor er broen hærdet: nøgler sammenlignes tidskonstant, ti forkerte
+forsøg spærrer afsenderen i ti minutter, og **hvert eneste kald logges** i
+terminalen med tidspunkt, afsender og udfald. Kig i den log — uventet
+trafik skal kunne ses, ikke ske i stilhed.
+
+**Adressen skifter hver gang.** En quick tunnel får et nyt navn ved hver
+start, så adressen skal indsættes i appen igen. Det er faktisk en fordel:
+en gammel adresse holder op med at virke af sig selv.
+
+**Luk tunnelen når du er færdig.** Den skal ikke stå åben natten over.
+Broen selv kan blive kørende — den er kun farlig når den er udstillet.
 
 ## Ved sæsonstart: opdatér RankedIn-linket
 

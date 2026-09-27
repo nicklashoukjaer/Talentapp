@@ -11,7 +11,9 @@
     "bro": "node src/server.js",
     "test:login": "node src/test-login.js",
     "test:db": "node src/test-db.js",
-    "verificer": "node src/test-db.js && node src/test-login.js"
+    "verificer": "node src/test-db.js && node src/test-login.js",
+    "tunnel": "cloudflared tunnel --url http://127.0.0.1:8787",
+    "bro:offentlig": "node src/server.js & npm run tunnel"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",

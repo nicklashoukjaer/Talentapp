@@ -8,6 +8,7 @@ import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { timingSafeEqual } from 'node:crypto';
 import { config } from './config.js';
 import { medBrowser } from './browser.js';
 import * as bookli from './bookli.js';
@@ -24,6 +25,46 @@ const TOKEN = process.env.BRIDGE_TOKEN || '';
 // Browsere regner 127.0.0.1 som et sikkert ophav, så https → localhost er
 // tilladt; men det kræver CORS, og Chrome kræver desuden
 // Private-Network-Access-hovedet ved kald ind i det lokale net.
+// ── Når broen står på internettet ────────────────────────────────────────
+//
+// Med en tunnel er broen ikke længere kun din maskine. Nøglen er det
+// eneste der står imellem en fremmed og jeres Bookli-konto, så:
+//   • nøgler sammenlignes tidskonstant, så de ikke kan gættes tegn for tegn
+//   • forkerte forsøg tælles og spærres, så ingen kan prøve sig frem
+//   • hvert kald logges, så misbrug kan SES frem for at ske i stilhed
+
+const forsoeg = new Map();          // ip → { antal, indtil }
+const MAX_FEJL = 10;
+const SPAERRE_MS = 10 * 60 * 1000;
+
+function noegleOk(givet) {
+  if (!TOKEN) return true;          // ingen nøgle sat = ingen spærring
+  const a = Buffer.from(String(givet ?? ''));
+  const b = Buffer.from(TOKEN);
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
+}
+
+function spaerret(ip) {
+  const f = forsoeg.get(ip);
+  if (!f) return false;
+  if (Date.now() > f.indtil) { forsoeg.delete(ip); return false; }
+  return f.antal >= MAX_FEJL;
+}
+
+function taelFejl(ip) {
+  const f = forsoeg.get(ip) ?? { antal: 0, indtil: 0 };
+  f.antal += 1;
+  f.indtil = Date.now() + SPAERRE_MS;
+  forsoeg.set(ip, f);
+}
+
+function log(req, ip, udfald) {
+  const sti = (req.url || '').split('?')[0];
+  console.log(
+    `${new Date().toISOString()}  ${ip.padEnd(15)} ${req.method} ${sti}  ${udfald}`);
+}
+
 function cors(res) {
   res.setHeader('access-control-allow-origin', '*');
   res.setHeader('access-control-allow-headers', 'content-type, x-bridge-token');
@@ -158,9 +199,20 @@ createServer(async (req, res) => {
     return res.end();
   }
 
-  if (TOKEN && req.headers['x-bridge-token'] !== TOKEN) {
+  const ip = (req.headers['cf-connecting-ip']
+      || req.socket.remoteAddress || '?').toString();
+
+  if (spaerret(ip)) {
+    log(req, ip, 'SPÆRRET');
+    return svar(res, 429, { fejl: 'For mange forkerte forsøg. Prøv om 10 minutter.' });
+  }
+  if (!noegleOk(req.headers['x-bridge-token'])) {
+    taelFejl(ip);
+    log(req, ip, 'AFVIST (forkert nøgle)');
     return svar(res, 401, { fejl: 'Forkert eller manglende x-bridge-token' });
   }
+  forsoeg.delete(ip);
+  log(req, ip, 'ok');
   const rute = ruter[noegle];
   if (!rute) return svar(res, 404, { fejl: `Ukendt rute: ${noegle}` });
 
@@ -176,5 +228,7 @@ createServer(async (req, res) => {
 }).listen(PORT, '127.0.0.1', () => {
   console.log(`bro lytter på http://127.0.0.1:${PORT}`);
   console.log(`appen: http://127.0.0.1:${PORT}/app`);
-  if (!TOKEN) console.log('ADVARSEL: BRIDGE_TOKEN er tom — sæt den i .env');
+  if (!TOKEN) {
+    console.log('ADVARSEL: BRIDGE_TOKEN er tom — broen står helt åben');
+  }
 });

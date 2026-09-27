@@ -253,6 +253,16 @@ request to access the loopback address"), og CORS-hoveder er ikke nok.
 Serveres appen af broen, er de samme oprindelse, og spærringen findes
 ikke.
 
+**Vil man bruge vercel-adressen eller telefonen**, åbnes en tunnel med
+`npm run tunnel` (cloudflared). Så får broen en `https://…trycloudflare.com`
+-adresse der kan indsættes under Admin → Automations-bro.
+
+Men dermed står broen på det åbne internet med klubbens logins og en
+databasenøgle der går uden om al adgangskontrol, beskyttet af én streng.
+Den er hærdet med tidskonstant nøgletjek, spærring efter ti forkerte
+forsøg og log af hvert kald — men tunnelen bør lukkes når den ikke bruges,
+og adressen skifter ved hver start.
+
 **Bane-status virker kun på den maskine der kører broen.** Broen lytter på
 127.0.0.1, så telefoner og øvrige medlemmer når den ikke. Det er en
 tilføjelse, ikke en afhængighed: svarer broen ikke, tegner Dashboardet

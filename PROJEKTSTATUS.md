@@ -217,8 +217,12 @@ Ligger på egen branch og er **ikke udrullet**.
 | | Bookli | RankedIn |
 |---|---|---|
 | Login | ✅ | ✅ |
-| Læsning | lokationsvalg klaret | ✅ stilling, pulje, sæson, hjemmeklub |
-| Skrivning | ❌ ikke skrevet | ❌ ikke skrevet |
+| Læsning | ✅ bookinger med dato og bane | ✅ kampe, stilling, pulje, sæson |
+| Banevalidering | ✅ BOOKET / MANGLER_BANE | — |
+| Skrivning | ❌ booking ikke skrevet | ❌ kampflytning ikke skrevet |
+
+Valideringen er bevist begge veje: dagens hjemmekamp gav `BOOKET` med
+banerne D4, D11 og D12, og de seks kommende gav `MANGLER_BANE`.
 
 Selektorerne er aflæst fra de kørende sider, ikke gættet. RankedIn leverer
 fx for T1: sæson "Lunar Ligaen - Efterår 2026", pulje "Vest -

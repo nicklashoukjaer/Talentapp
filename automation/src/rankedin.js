@@ -7,11 +7,29 @@
 // Login ligger på /en/account/login; /da/login giver 404.
 import { config } from './config.js';
 
+/// Lukker samtykke-boksen.
+///
+/// RankedIn viser en cookie-boks der LIGGER OVEN PÅ siden. Uden at lukke
+/// den rammer klik ved siden af, og brødteksten bliver samtykke-teksten i
+/// stedet for indholdet — det kostede en del fejlsøgning at opdage.
+export async function lukSamtykke(side) {
+  for (const t of ['Acceptér alle', 'Accept all', 'Accepter alle', 'Godkend alle']) {
+    const k = side.locator(`button:has-text("${t}")`).first();
+    if (await k.count().catch(() => 0)) {
+      await k.click({ timeout: 4000 }).catch(() => {});
+      await side.waitForTimeout(1200);
+      return true;
+    }
+  }
+  return false;
+}
+
 export async function logInd(side) {
   await side.goto(config.rankedin.loginUrl, {
     waitUntil: 'networkidle',
     timeout: 45000,
   });
+  await lukSamtykke(side);
   await side.fill('input[name="UserName"]', config.rankedin.bruger);
   await side.fill('input[name="Password"]', config.rankedin.kode);
   await side.press('input[name="Password"]', 'Enter');
@@ -37,6 +55,7 @@ export async function logInd(side) {
 export async function hentHold(side, url) {
   if (!url) throw new Error('Holdets RankedIn-adresse mangler');
   await side.goto(url, { waitUntil: 'networkidle', timeout: 45000 });
+  await lukSamtykke(side);
   await side.waitForTimeout(2500);
 
   const titel = await side.title();
@@ -77,35 +96,75 @@ export async function hentHold(side, url) {
   };
 }
 
-/// Henter kampoversigten for et hold eller en turnering.
+/// Henter holdets kampprogram: dato, hjemmehold, udehold og resultat.
 ///
-/// [sti] er den del af adressen der følger efter rankedin.com, fx
-/// '/da/team/12345'. Den skal komme udefra: RankedIn har ingen offentlig
-/// grænseflade, og holdets id kender vi ikke på forhånd.
-export async function hentKampe(side, stiEllerUrl) {
-  if (!stiEllerUrl) throw new Error('Angiv holdets adresse på RankedIn');
-  const url = /^https?:/.test(stiEllerUrl)
-      ? stiEllerUrl
-      : config.rankedin.rodUrl + stiEllerUrl;
-  await side.goto(url, { waitUntil: 'networkidle', timeout: 45000 });
-  await side.waitForTimeout(2500);
+/// Kampene ligger bag fanen "Matches" på holdsiden, i en tabel med
+/// overskrifterne Date · Home · vs · Away · Results.
+export async function hentKampe(side, urlEllerSti) {
+  if (!urlEllerSti) throw new Error('Angiv holdets adresse på RankedIn');
+  const url = /^https?:/.test(urlEllerSti)
+      ? urlEllerSti
+      : config.rankedin.rodUrl + urlEllerSti;
 
-  // Tabelrækker er den mest almindelige form på RankedIn. Der returneres
-  // RÅ rækker frem for et fortolket resultat: uden at have set netop
-  // jeres holdside ville en fortolkning være et gæt.
+  await side.goto(url, { waitUntil: 'networkidle', timeout: 45000 });
+  await lukSamtykke(side);
+  await side.waitForTimeout(1500);
+
+  const fane = side.locator('a,button').filter({ hasText: /^Matches$/ }).first();
+  if (await fane.count().catch(() => 0)) {
+    await fane.click({ timeout: 5000 }).catch(() => {});
+    await side.waitForTimeout(4000);
+  }
+
+  // Kamp-fanen har INGEN <table>. Den er bygget af div'er:
+  //   .matches-table > .matches-body > .match-row
+  // Standings-fanen bruger derimod en rigtig tabel — de to faner er ikke
+  // bygget ens, og det kostede en runde at opdage.
   const raekker = await side
-    .$$eval('table tr', (els) =>
-      els.map((tr) =>
-        [...tr.querySelectorAll('td, th')]
-          .map((c) => (c.innerText || '').trim())
-          .filter(Boolean))
-        .filter((r) => r.length > 1))
+    .$$eval('.match-row', (raekker) =>
+      raekker.map((r) =>
+        (r.innerText || '').split('\n').map((x) => x.trim()).filter(Boolean)))
     .catch(() => []);
-  return raekker;
+
+  const erNiveau = (x) => /^\d+\.\d+$/.test(x);      // spillerens styrketal
+  const erTid = (x) => /^\d{1,2}:\d{2}$/.test(x);
+  const erResultat = (x) => /^\d+\s*-\s*\d+$/.test(x);
+
+  return raekker
+    .filter((l) => l.length && /\d{1,2}\/\d{1,2}\/\d{4}/.test(l[0]))
+    .map((l) => {
+      const dato = l[0];
+      // "vs" deler hjemme fra ude. Styrketallene står mellem navnene og
+      // hører ikke til holdnavnet.
+      const vs = l.indexOf('vs');
+      const foer = l.slice(1, vs < 0 ? 1 : vs).filter((x) => !erNiveau(x));
+      const efter = l.slice(vs < 0 ? 1 : vs + 1).filter((x) => !erNiveau(x));
+      const ude = efter[0] ?? null;
+      const rest = efter.slice(1);
+
+      return {
+        dato,
+        iso: dato.replace(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/,
+            (_, d, m, y) => `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`),
+        tid: rest.find(erTid) ?? null,
+        hjemme: foer[0] ?? null,
+        ude,
+        // "enter results" betyder at kampen ikke er spillet endnu.
+        resultat: rest.find(erResultat) ?? null,
+        spillet: rest.some(erResultat),
+        spillested: rest.find((x) => x.includes(',')) ?? null,
+        raa: l,
+      };
+    });
 }
 
-export async function synkroniser(_side, _opgave) {
+/// Flytter en kamp på RankedIn.
+///
+/// IKKE skrevet. Kampene har en "enter results"-knap og en admin-flade,
+/// men den har jeg ikke haft foran mig. At gætte på formularen ville give
+/// kode der fejler stille — eller værre, ændrer den forkerte kamp.
+export async function flytKamp(_side, _kamp, _nyDato) {
   throw new Error(
-    'Synkronisering tilbage TIL RankedIn er ikke skrevet endnu. ' +
-    'Læsning virker; skrivning kræver at vi har set den rigtige formular.');
+    'Kampflytning på RankedIn er ikke skrevet endnu. Admin-fladen skal ' +
+    'ses først — et gæt kunne ramme den forkerte kamp.');
 }

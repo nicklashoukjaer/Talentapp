@@ -9,6 +9,7 @@ import { config } from './config.js';
 import { medBrowser } from './browser.js';
 import * as bookli from './bookli.js';
 import * as rankedin from './rankedin.js';
+import { holdMedRankedIn } from './hold.js';
 
 const PORT = Number(process.env.BRIDGE_PORT || 8787);
 const TOKEN = process.env.BRIDGE_TOKEN || '';
@@ -43,11 +44,36 @@ const ruter = {
     });
   },
 
-  // Henter kampoversigten fra en RankedIn-side.
+  // Henter kampprogrammet for ét hold, eller for alle hold med et link.
   'POST /rankedin/kampe': async (b) =>
     medBrowser(async (side) => {
       await rankedin.logInd(side);
-      return { raekker: await rankedin.hentKampe(side, b.sti) };
+      if (b.url || b.sti) {
+        return { kampe: await rankedin.hentKampe(side, b.url || b.sti) };
+      }
+      const ud = {};
+      for (const g of await holdMedRankedIn()) {
+        ud[g.navn] = await rankedin.hentKampe(side, g.rankedin_url);
+      }
+      return { hold: ud };
+    }),
+
+  // Stilling, pulje og sæson for hvert hold.
+  'POST /rankedin/stilling': async () =>
+    medBrowser(async (side) => {
+      await rankedin.logInd(side);
+      const ud = {};
+      for (const g of await holdMedRankedIn()) {
+        ud[g.navn] = await rankedin.hentHold(side, g.rankedin_url);
+      }
+      return { hold: ud };
+    }),
+
+  // Booking — findes som rute, men svarer ærligt at den ikke er skrevet.
+  'POST /bookli/book': async (b) =>
+    medBrowser(async (side) => {
+      await bookli.logInd(side);
+      return { resultat: await bookli.bookBane(side, b) };
     }),
 };
 
@@ -65,8 +91,10 @@ createServer(async (req, res) => {
     svar(res, 200, await rute(await krop(req)));
   } catch (e) {
     // Fejlen sendes videre som den er: beskeden fortæller hvad der mangler,
-    // fx at Bookli venter på et lokationsvalg.
-    svar(res, 500, { fejl: e.message });
+    // fx at booking-fladen ikke er skrevet, eller at Bookli venter på et
+    // lokationsvalg. En generisk "noget gik galt" ville skjule netop det
+    // der gør fejlen brugbar.
+    svar(res, 500, { fejl: e.message, status: 'FEJL' });
   }
 }).listen(PORT, '127.0.0.1', () => {
   console.log(`bro lytter på http://127.0.0.1:${PORT}`);

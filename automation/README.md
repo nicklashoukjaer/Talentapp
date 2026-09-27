@@ -65,20 +65,41 @@ afstemning lukkes
 
 ## Hvad der virker, og hvad der ikke gør
 
-Selektorerne er **aflæst fra de kørende sider**, ikke gættet:
+Alt herunder er **aflæst fra de kørende sider**, ikke gættet.
 
 | | Bookli | RankedIn |
 |---|---|---|
-| Login-adresse | `/sign-in` | `/en/account/login` (`/da/login` giver 404) |
-| Brugerfelt | `#signin-email` | `input[name=UserName]` |
-| Kodefelt | `#signin-password` | `input[name=Password]` |
-| Afprøvet | ✅ accepteret | ✅ logger ind |
+| Login | ✅ | ✅ |
+| Læsning | ✅ bookinger med dato og bane | ✅ kampe, stilling, pulje, sæson |
+| Skrivning | ❌ booking ikke skrevet | ❌ kampflytning ikke skrevet |
 
-**Bookli er blokeret af et lokationsvalg.** Kontoen har ingen standard-
-lokation, og Bookli slipper ikke videre før der er valgt en. Robotten
-vælger den ikke selv: det er en varig ændring på brugerens konto, og den
-kan ikke gætte hvilken klub der er den rigtige. Vælg lokationen én gang
-manuelt, så kan resten skrives.
+**Banevalidering virker og er bevist begge veje.** Dagens hjemmekamp mod
+Frejlev Padel 3 gav `BOOKET` med banerne D4, D11 og D12; de seks
+kommende hjemmekampe gav `MANGLER_BANE`. En validator der kun kunne sige
+"mangler" ville se ens ud udefra, så den positive prøve er den vigtige.
+
+**Bookli læses gennem klubbens GraphQL-API**, ikke ved at skrabe tekst.
+Kortene i kalenderen viser kun klokkeslæt — ikke dato eller år — mens
+API'en giver præcise tidsstempler og banenavne.
+
+**Booking er bevidst ikke skrevet.** En booking optager en rigtig bane og
+trækker point på kontoen. Den flade har jeg ikke haft foran mig, og den
+slags skrives ikke på formodning og afprøves ikke "lige for at se".
+Valideringen dækker det meste af behovet: den siger hvilke kampe der
+mangler baner, så et menneske kan booke dem.
+
+**Kampflytning på RankedIn er heller ikke skrevet.** Admin-fladen skal ses
+først — et gæt kunne ramme den forkerte kamp.
+
+### To ting der kostede tid, og som er værd at kende
+
+**RankedIns cookie-boks ligger OVEN PÅ siden.** Uden at lukke den rammer
+klik ved siden af, og brødteksten bliver samtykke-tekst i stedet for
+indhold. `lukSamtykke()` kaldes derfor før alt andet.
+
+**De to faner på RankedIn er ikke bygget ens.** Standings er en rigtig
+`<table>`; Matches er `div.match-row`. En selektor der virker på den ene
+finder ingenting på den anden.
 
 ## Ved sæsonstart: opdatér RankedIn-linket
 
@@ -123,8 +144,14 @@ hverken kunne nås udefra eller af en tilfældig proces på maskinen.
 | Rute | Gør |
 |---|---|
 | `GET /status` | Er broen i live, og er der logins |
-| `POST /bookli/valider` | Sammenholder hjemmekampe med Bookli |
-| `POST /rankedin/kampe` | Henter kampoversigt fra en RankedIn-side |
+| `POST /bookli/valider` | `BOOKET` / `MANGLER_BANE` pr. hjemmekamp |
+| `POST /bookli/book` | Booker — svarer i dag at den ikke er skrevet |
+| `POST /rankedin/kampe` | Kampprogram for ét hold, eller alle med et link |
+| `POST /rankedin/stilling` | Stilling, pulje og sæson pr. hold |
+
+Fejl sendes videre **som de er**, med `status: "FEJL"` og den oprindelige
+besked. En generisk "noget gik galt" ville skjule netop det der gør fejlen
+brugbar — fx at Bookli venter på et lokationsvalg.
 
 ## Databasen
 

@@ -79,47 +79,105 @@ async function vaelgLokation(side, navn) {
   return !/standard lokation|default location/i.test(tekst);
 }
 
-/// Henter brugerens bookinger som de står i Bookli.
+/// Henter brugerens bookinger.
 ///
-/// Returnerer rå linjer indtil strukturen bag lokationsvalget er set. At
-/// gætte på markup vi aldrig har haft foran os ville give selektorer der
-/// fejler stille — og en stille fejl er værre end ingen funktion.
+/// Læser Booklis egen GraphQL-API frem for at skrabe teksten. Kortene i
+/// kalenderen viser hverken dato eller år — kun klokkeslæt — mens API'en
+/// giver præcise tidsstempler og banens navn. At udlede datoen af en
+/// kalendervisning ville være gætværk.
 export async function hentBookinger(side) {
-  await side.goto(config.bookli.hjemUrl, {
-    waitUntil: 'networkidle',
-    timeout: 45000,
-  }).catch(() => {});
-  await side.waitForTimeout(3000);
-  if (/sign-in/.test(side.url())) {
-    throw new Error('Bookli sendte tilbage til login — ingen lokation valgt?');
+  const fundne = new Map();
+
+  const lyt = async (svar) => {
+    if (!/\/graphql/.test(svar.url())) return;
+    let data;
+    try { data = await svar.json(); } catch { return; }
+    // Bookingerne kommer både enkeltvis og i lister.
+    const saml = (o) => {
+      if (!o || typeof o !== 'object') return;
+      if (o.__typename === 'ResourceBooking' && o.startDate) {
+        fundne.set(o.id ?? `${o.startDate}-${o.resource?.name ?? ''}`, {
+          id: o.id ?? null,
+          start: o.startDate,
+          slut: o.endDate ?? null,
+          bane: (o.resource?.name ?? '').replace(/^\[|\].*$/g, '').trim() || null,
+          baneFuld: o.resource?.name ?? null,
+        });
+      }
+      for (const v of Object.values(o)) {
+        if (Array.isArray(v)) v.forEach(saml);
+        else if (v && typeof v === 'object') saml(v);
+      }
+    };
+    saml(data?.data);
+  };
+
+  side.on('response', lyt);
+  try {
+    await side.goto('https://bookli.app/u/calendar',
+      { waitUntil: 'networkidle', timeout: 45000 });
+    await side.waitForTimeout(5000);
+  } finally {
+    side.off('response', lyt);
   }
-  const linjer = await side
-    .$$eval('[class*=booking], [class*=reservation], li, tr', (els) =>
-      els.map((e) => (e.innerText || '').trim())
-         .filter((t) => t && t.length < 200))
-    .catch(() => []);
-  return [...new Set(linjer)];
+
+  if (/sign-in/.test(side.url())) {
+    throw new Error('Bookli sendte tilbage til login — er lokationen valgt?');
+  }
+  return [...fundne.values()].sort((a, b) => a.start.localeCompare(b.start));
 }
 
-/// Sammenholder klubbens hjemmekampe med det der faktisk står i Bookli.
+/// Sammenholder klubbens hjemmekampe med det der faktisk er booket.
 ///
-/// @param {Array<{id:string,titel:string,start:Date}>} hjemmekampe
-/// @returns {Promise<Array<{kamp:object, fundet:boolean}>>}
+/// En kamp regnes som dækket hvis en booking OVERLAPPER dens tidsrum på
+/// samme dag. Der kræves ikke nøjagtigt samme klokkeslæt: en kamp kl.
+/// 11–14 kan sagtens have en bane booket 11–12 og en anden 12–14.
+///
+/// @returns {Array<{kamp, status: 'BOOKET'|'MANGLER_BANE', baner: string[]}>}
 export async function validerBaner(side, hjemmekampe) {
   const bookinger = await hentBookinger(side);
+
   return hjemmekampe.map((k) => {
-    const dag = String(k.start.getDate()).padStart(2, '0');
-    const maaned = String(k.start.getMonth() + 1).padStart(2, '0');
-    // Bookli skriver datoer på flere måder; der ledes bredt og rapporteres
-    // frem for at konkludere. Et falsk "booket" er værre end et spørgsmål.
-    const fundet = bookinger.some(
-      (b) => b.includes(`${dag}.${maaned}`) || b.includes(`${dag}/${maaned}`));
-    return { kamp: k, fundet };
+    const start = new Date(k.start).getTime();
+    const slut = k.slut
+        ? new Date(k.slut).getTime()
+        : start + 2 * 60 * 60 * 1000;
+
+    const traef = bookinger.filter((b) => {
+      const bs = new Date(b.start).getTime();
+      if (b.slut) {
+        return bs < slut && new Date(b.slut).getTime() > start;   // overlap
+      }
+      // Bookli giver kun starttid i listeformen; sluttid og banenavn
+      // følger kun med når en booking hentes enkeltvis. Uden sluttid
+      // tælles en booking med hvis den starter inden for kampens vindue
+      // plus tre timer — hellere det end at kalde en booket bane manglende.
+      return bs >= start - 3 * 3600000 && bs <= slut + 3 * 3600000;
+    });
+
+    return {
+      kamp: k,
+      status: traef.length ? 'BOOKET' : 'MANGLER_BANE',
+      // Tom liste betyder ikke "ingen bane" — kun at Bookli ikke oplyste
+      // navnet i listeformen.
+      baner: traef.map((b) => b.bane).filter(Boolean),
+      baneNavnKendt: traef.some((b) => b.bane),
+      bookinger: traef,
+    };
   });
 }
 
+/// Booker baner.
+///
+/// IKKE gennemført. Flowet bag "Opret booking" har jeg ikke haft foran
+/// mig, og en booking optager en rigtig bane og trækker point på kontoen
+/// — den slags skrives ikke på et gæt og afprøves ikke "lige for at se".
+///
+/// Valideringen ovenfor dækker det meste af behovet: den fortæller hvilke
+/// hjemmekampe der mangler baner, og så kan et menneske booke dem.
 export async function bookBane(_side, _booking) {
   throw new Error(
-    'Banebooking kan først skrives når lokationen er valgt og ' +
-    'booking-fladen har været set. Se README.');
+    'Selve bookingen er ikke skrevet endnu. Booking-fladen skal ses ' +
+    'først — den optager en bane og koster point, så den skrives ikke ' +
+    'på formodning. Brug validerBaner til at finde hvad der mangler.');
 }

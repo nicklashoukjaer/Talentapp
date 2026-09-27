@@ -95,11 +95,20 @@ class _OversigtTabState extends State<OversigtTab>
   //
   // Et kompakt overblik øverst i Oversigten for dem der har et ansvar. En
   // almindelig spiller ser det ikke — deres feed skal være enkelt.
+  //
+  // To visuelle kanaler, bevidst adskilt: HOLDET vises som en farvestribe i
+  // venstre kant, HJEMME/UDE som et mærkat. Holdfarverne fra databasen er
+  // nemlig præcis appens orange og blå (T1 = #E8622C, T2 = #3DA9FC), så
+  // farvede mærkater til begge dele ville gøre "T1 + HJEMME" og
+  // "T2 + UDE" umulige at skelne.
 
   /// Dashboardets fane. Kampe er standard: de er det der kræver
   /// forberedelse — baner, opstilling, transport — hvor en træning kører
   /// af sig selv hver uge.
   bool _dashKampe = true;
+
+  /// Valgt hold i dashboardet. null = alle.
+  String? _dashHold;
 
   /// Modstanderen ud fra titlen. "Hjemmekamp: Gug Padel 7" → "Gug Padel 7".
   /// Uden kolon bruges hele titlen.
@@ -110,6 +119,33 @@ class _OversigtTabState extends State<OversigtTab>
   }
 
   static bool _erKamp(String titel) => _classifyEvent(titel).kamp;
+
+  /// Kort holdnavn til den trange plads: "Talentløse 1" → "T1",
+  /// "Talentløse Damer" → "DA".
+  static String _holdKort(String navn) {
+    final tal = RegExp(r'(\d+)').firstMatch(navn);
+    if (tal != null) return 'T${tal.group(1)}';
+    final ord = navn.trim().split(RegExp(r'\s+'));
+    final sidste = ord.isEmpty ? navn : ord.last;
+    return sidste.length <= 2
+        ? sidste.toUpperCase()
+        : sidste.substring(0, 2).toUpperCase();
+  }
+
+  Map<String, dynamic>? _holdAf(Map<String, dynamic> t) {
+    final gids = _trainingGroupIds(t);
+    for (final g in _groups) {
+      if (gids.contains(g['id'])) return g;
+    }
+    return null;
+  }
+
+  /// Hold jeg har ansvar for. Admin ser alle; øvrige kun egne.
+  List<Map<String, dynamic>> get _mineAnsvarsHold {
+    if (widget.isAdmin) return _groups;
+    final mine = {..._myCaptainGroupIds, ..._myTrainerGroupIds};
+    return _groups.where((g) => mine.contains(g['id'])).toList();
+  }
 
   /// Har jeg et ansvar et sted? Admin og klub-træner gælder overalt;
   /// holdtræner og kaptajn kun på deres egne hold.
@@ -133,7 +169,6 @@ class _OversigtTabState extends State<OversigtTab>
     for (final g in gids) {
       spillere.addAll(_playersPerGroup[g] ?? const <String>{});
     }
-    // Klub-brede begivenheder har intet hold at tælle ud fra.
     final mangler = spillere.isEmpty ? 0 : (spillere.length - ja - nej);
     return (
       ja: ja,
@@ -143,7 +178,8 @@ class _OversigtTabState extends State<OversigtTab>
     );
   }
 
-  /// Begivenhederne jeg har ansvar for, i den valgte fane.
+  /// Begivenhederne jeg har ansvar for, i den valgte fane og for det valgte
+  /// hold.
   ///
   /// Kampe får INTET tidsvindue. De ligger spredt over hele sæsonen — der er
   /// 2 inden for 14 dage, men 14 fremover — så et vindue ville skjule de
@@ -158,6 +194,9 @@ class _OversigtTabState extends State<OversigtTab>
           final titel = t.training['titel'] as String;
           return _dashKampe ? _erKamp(titel) : _showInTrainingTab(titel);
         })
+        .where((t) =>
+            _dashHold == null ||
+            _trainingGroupIds(t.training).contains(_dashHold))
         .where((t) {
           final s = DateTime.parse(t.training['start_tid'] as String).toLocal();
           if (!s.isAfter(nu)) return false;
@@ -186,217 +225,259 @@ class _OversigtTabState extends State<OversigtTab>
     }
   }
 
+  // ── Små byggesten ────────────────────────────────────────────────────────
+
+  /// HJEMME / UDE. Orange og blå, som de eneste farvede mærkater i rækken.
+  Widget _hjemmeUdeBadge(bool hjemme, {bool lille = false}) {
+    final f = hjemme ? _neon : _info;
+    return Container(
+      padding: EdgeInsets.symmetric(
+          horizontal: lille ? 6 : 8, vertical: lille ? 1.5 : 3),
+      decoration: BoxDecoration(
+        color: f.withValues(alpha: 0.18),
+        borderRadius: BorderRadius.circular(5),
+      ),
+      child: Text(hjemme ? 'HJEMME' : 'UDE',
+          style: _body(
+              size: lille ? 8.5 : 9.5,
+              weight: FontWeight.w800,
+              color: f,
+              spacing: 0.3)),
+    );
+  }
+
+  /// Holdets kortnavn i holdets egen farve. Står altid lige efter striben,
+  /// så farve og navn læses sammen.
+  Widget _holdMaerke(Map<String, dynamic>? hold, {bool lille = false}) {
+    if (hold == null) return const SizedBox.shrink();
+    final f = holdFarve(hold['farve']);
+    return Text(_holdKort(hold['navn'] as String),
+        style: _body(
+            size: lille ? 10 : 11, weight: FontWeight.w800, color: f));
+  }
+
+  /// Tallene i fast bredde, så et langt modstandernavn ikke kan skubbe dem
+  /// ud af skærmen. Det var den værste af de gamle fejl på mobil.
+  Widget _taelleBlok(({int ja, int nej, int mangler, int? pladser}) s) {
+    return SizedBox(
+      width: 74,
+      child: Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+        Text('${s.ja}',
+            style: _body(
+                size: 12.5, weight: FontWeight.w800, color: _success)),
+        Text(' / ', style: _body(size: 10.5, color: _textMuted)),
+        Text('${s.nej}',
+            style: _body(
+                size: 12.5, weight: FontWeight.w800, color: _danger)),
+        Text(' / ', style: _body(size: 10.5, color: _textMuted)),
+        Text('${s.mangler}',
+            style: _body(
+                size: 12.5,
+                weight: FontWeight.w800,
+                color: s.mangler > 0 ? _gold : _textMuted)),
+      ]),
+    );
+  }
+
   Widget _tal(String etiket, int v, Color farve) => Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           Text('$v',
-              style: _cond(size: 17, weight: FontWeight.w800, color: farve)),
-          Text(etiket, style: _body(size: 9.5, color: _textMuted)),
+              style: _cond(size: 16, weight: FontWeight.w800, color: farve)),
+          Text(etiket, style: _body(size: 9, color: _textMuted)),
         ],
       );
 
-  /// Det fremhævede kort for den allernæste begivenhed.
+  /// Farvestriben i venstre kant — holdets identitet.
+  Widget _holdStribe(Map<String, dynamic>? hold, {double hoejde = 34}) =>
+      Container(
+        width: 3,
+        height: hoejde,
+        decoration: BoxDecoration(
+          color: hold == null ? _borderSubtle : holdFarve(hold['farve']),
+          borderRadius: BorderRadius.circular(999),
+        ),
+      );
+
+  // ── Det fremhævede kort ──────────────────────────────────────────────────
+
   Widget _naesteKort(_TrainingFeedItem t) {
     final tr = t.training;
     final start = DateTime.parse(tr['start_tid'] as String).toLocal();
     final s = _svarTal(t);
     final fuldt = s.pladser != null && s.ja >= s.pladser!;
-    final statusFarve = fuldt
-        ? _success
-        : (s.mangler > 0 ? _danger : _gold);
+    final statusFarve = fuldt ? _success : (s.mangler > 0 ? _danger : _gold);
     final hjemme = erHjemmekamp(tr['titel'] as String);
     final erKamp = _erKamp(tr['titel'] as String);
     final baneOk = tr['bane_booket'] == true;
+    final hold = _holdAf(tr);
 
     return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.all(14),
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.fromLTRB(10, 10, 10, 10),
       decoration: BoxDecoration(
         color: _surfaceElevated,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(12),
         border: Border.all(color: _borderSubtle),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Row(children: [
-            _dateBlock(start),
-            const SizedBox(width: 11),
+          Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
+            _holdStribe(hold, hoejde: 38),
+            const SizedBox(width: 9),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  // På en kamp er MODSTANDEREN det man leder efter, ikke
-                  // ordet "hjemmekamp". Hjemme/ude siges med et mærkat.
                   Row(children: [
-                    Flexible(
-                      child: Text(
-                          (erKamp
-                                  ? _modstander(tr['titel'] as String)
-                                  : tr['titel'] as String)
-                              .toUpperCase(),
-                          style: _cond(size: 16, weight: FontWeight.w800),
-                          maxLines: 1, overflow: TextOverflow.ellipsis),
-                    ),
-                    if (erKamp) ...[
-                      const SizedBox(width: 7),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 7, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: (hjemme ? _neon : _info)
-                              .withValues(alpha: 0.18),
-                          borderRadius: BorderRadius.circular(999),
-                        ),
-                        child: Text(hjemme ? 'HJEMME' : 'UDE',
-                            style: _body(
-                                size: 9.5,
-                                weight: FontWeight.w800,
-                                color: hjemme ? _neon : _info)),
-                      ),
-                    ],
+                    _holdMaerke(hold),
+                    if (hold != null) const SizedBox(width: 7),
+                    if (erKamp) _hjemmeUdeBadge(hjemme),
+                    const SizedBox(width: 7),
+                    Text(
+                        '${start.day}. ${_shortMonths[start.month - 1]} · '
+                        '${_fmtTime(start)}',
+                        style: _body(size: 10.5, color: _textMuted)),
                   ]),
+                  const SizedBox(height: 3),
+                  // Modstanderen er det man leder efter på en kamp, ikke
+                  // ordet "hjemmekamp".
                   Text(
-                      '${_fmtDatoMedUgedag(start)} · ${_fmtTime(start)}',
-                      style: _body(size: 11.5, color: _textSecondary)),
+                      (erKamp
+                              ? _modstander(tr['titel'] as String)
+                              : tr['titel'] as String)
+                          .toUpperCase(),
+                      style: _cond(size: 17, weight: FontWeight.w800),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis),
                 ],
               ),
             ),
-          ]),
-          const SizedBox(height: 12),
-          Row(children: [
+            const SizedBox(width: 8),
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
               decoration: BoxDecoration(
                 color: statusFarve.withValues(alpha: 0.16),
                 borderRadius: BorderRadius.circular(999),
               ),
               child: Text(
-                  s.pladser == null
-                      ? '${s.ja} tilmeldt'
-                      : '${s.ja}/${s.pladser} tilmeldt',
+                  s.pladser == null ? '${s.ja}' : '${s.ja}/${s.pladser}',
                   style: _body(
                       size: 12, weight: FontWeight.w800, color: statusFarve)),
             ),
-            const SizedBox(width: 8),
-            // Banestatus vises ALTID på en hjemmekamp — også når den er i
-            // orden. Ellers kan man ikke se forskel på "booket" og "vi har
-            // ikke spurgt".
-            if (hjemme)
-              baneOk
-                  ? Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 10, vertical: 5),
-                      decoration: BoxDecoration(
-                        color: _success.withValues(alpha: 0.16),
-                        borderRadius: BorderRadius.circular(999),
-                      ),
-                      child: Text('Baner booket',
-                          style: _body(
-                              size: 12,
-                              weight: FontWeight.w800,
-                              color: _success)),
-                    )
-                  : BookliBadge(
-                      training: tr,
-                      onOpdateret: () => reload(stille: true),
-                    ),
           ]),
-          const SizedBox(height: 12),
+          const SizedBox(height: 10),
           Row(children: [
             _tal('Ja', s.ja, _success),
-            const SizedBox(width: 18),
+            const SizedBox(width: 16),
             _tal('Nej', s.nej, _danger),
-            const SizedBox(width: 18),
+            const SizedBox(width: 16),
             _tal('Mangler', s.mangler, s.mangler > 0 ? _gold : _textMuted),
             const Spacer(),
-            if (s.mangler > 0)
-              OutlinedButton.icon(
-                onPressed: () => _sendRykker(t),
-                icon: const Icon(Icons.campaign_outlined, size: 16),
-                label: const Text('Ryk'),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: _gold,
-                  side: BorderSide(color: _gold.withValues(alpha: 0.5)),
-                  visualDensity: VisualDensity.compact,
+            // Advarslen står HER, ved den kamp den handler om — ikke frit i
+            // toppen hvor man ikke kan se hvilken kamp der mangler baner.
+            if (hjemme && !baneOk)
+              BookliBadge(
+                  training: tr, onOpdateret: () => reload(stille: true))
+            else if (hjemme)
+              Row(children: [
+                const Icon(Icons.check_circle, size: 13, color: _success),
+                const SizedBox(width: 4),
+                Text('Baner booket',
+                    style: _body(
+                        size: 10.5,
+                        weight: FontWeight.w700,
+                        color: _success)),
+              ]),
+            if (s.mangler > 0) ...[
+              const SizedBox(width: 8),
+              InkWell(
+                onTap: () => _sendRykker(t),
+                borderRadius: BorderRadius.circular(999),
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(color: _gold.withValues(alpha: 0.5)),
+                  ),
+                  child: Row(mainAxisSize: MainAxisSize.min, children: [
+                    const Icon(Icons.campaign_outlined,
+                        size: 13, color: _gold),
+                    const SizedBox(width: 4),
+                    Text('Ryk',
+                        style: _body(
+                            size: 11, weight: FontWeight.w700, color: _gold)),
+                  ]),
                 ),
               ),
+            ],
           ]),
         ],
       ),
     );
   }
 
-  /// Én linje i "de næste 14 dage".
+  // ── Listen ───────────────────────────────────────────────────────────────
+
   Widget _programLinje(_TrainingFeedItem t, bool foerste) {
     final tr = t.training;
     final start = DateTime.parse(tr['start_tid'] as String).toLocal();
     final s = _svarTal(t);
-    final hjemmeUdenBane =
-        erHjemmekamp(tr['titel'] as String) && tr['bane_booket'] != true;
+    final erKamp = _erKamp(tr['titel'] as String);
+    final hjemme = erHjemmekamp(tr['titel'] as String);
+    final manglerBane = hjemme && tr['bane_booket'] != true;
+    final hold = _holdAf(tr);
+
     return InkWell(
       onTap: () => Navigator.of(context).push(MaterialPageRoute(
         builder: (_) => EventDetailScreen(
             training: tr, isStaff: widget.isAdmin, canManage: true),
       )).then((_) => reload(stille: true)),
       child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 10),
+        padding: const EdgeInsets.symmetric(vertical: 7),
         decoration: BoxDecoration(
           border: foerste
               ? null
               : const Border(top: BorderSide(color: _borderSubtle)),
         ),
         child: Row(children: [
+          _holdStribe(hold, hoejde: 26),
+          const SizedBox(width: 8),
           SizedBox(
-            width: 52,
+            width: 44,
             child: Text('${start.day}. ${_shortMonths[start.month - 1]}',
                 style: _body(
-                    size: 11.5, weight: FontWeight.w700, color: _textMuted)),
+                    size: 11, weight: FontWeight.w700, color: _textMuted)),
           ),
+          if (erKamp) ...[
+            _hjemmeUdeBadge(hjemme, lille: true),
+            const SizedBox(width: 6),
+          ],
+          // Expanded + ellipsis: et langt holdnavn må aldrig kunne skubbe
+          // tallene ud af skærmen.
           Expanded(
             child: Row(children: [
-              if (_erKamp(tr['titel'] as String))
-                Padding(
-                  padding: const EdgeInsets.only(right: 6),
-                  child: Icon(
-                      erHjemmekamp(tr['titel'] as String)
-                          ? Icons.home_outlined
-                          : Icons.directions_car_outlined,
-                      size: 13,
-                      color: erHjemmekamp(tr['titel'] as String)
-                          ? _neon
-                          : _info),
-                ),
               Flexible(
                 child: Text(
-                    _erKamp(tr['titel'] as String)
+                    erKamp
                         ? _modstander(tr['titel'] as String)
                         : tr['titel'] as String,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: _body(size: 12.5, weight: FontWeight.w600)),
               ),
-              if (hjemmeUdenBane) ...[
-                const SizedBox(width: 6),
-                const Icon(Icons.warning_amber_rounded, size: 13, color: _gold),
+              if (manglerBane) ...[
+                const SizedBox(width: 5),
+                const Icon(Icons.warning_amber_rounded,
+                    size: 12, color: _gold),
               ],
             ]),
           ),
-          const SizedBox(width: 8),
-          Text('${s.ja}',
-              style: _body(
-                  size: 12.5, weight: FontWeight.w800, color: _success)),
-          Text(' / ', style: _body(size: 11, color: _textMuted)),
-          Text('${s.nej}',
-              style: _body(
-                  size: 12.5, weight: FontWeight.w800, color: _danger)),
-          Text(' / ', style: _body(size: 11, color: _textMuted)),
-          Text('${s.mangler}',
-              style: _body(
-                  size: 12.5,
-                  weight: FontWeight.w800,
-                  color: s.mangler > 0 ? _gold : _textMuted)),
+          const SizedBox(width: 6),
+          _taelleBlok(s),
         ]),
       ),
     );
@@ -407,7 +488,7 @@ class _OversigtTabState extends State<OversigtTab>
     return GestureDetector(
       onTap: () => setState(() => _dashKampe = kampe),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 7),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         decoration: BoxDecoration(
           color: aktiv ? _neon : Colors.transparent,
           borderRadius: BorderRadius.circular(999),
@@ -415,9 +496,63 @@ class _OversigtTabState extends State<OversigtTab>
         ),
         child: Text(tekst,
             style: _body(
-                size: 12,
+                size: 11.5,
                 weight: FontWeight.w700,
                 color: aktiv ? Colors.white : _textSecondary)),
+      ),
+    );
+  }
+
+  /// Holdvælgeren. Vises kun når man har mere end ét hold — ellers ville den
+  /// være en række med ét valg.
+  Widget _holdVaelger() {
+    final hold = _mineAnsvarsHold;
+    if (hold.length < 2) return const SizedBox.shrink();
+    Widget pille(String? id, String tekst, Color farve) {
+      final aktiv = _dashHold == id;
+      return Padding(
+        padding: const EdgeInsets.only(right: 6),
+        child: GestureDetector(
+          onTap: () => setState(() => _dashHold = id),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+            decoration: BoxDecoration(
+              color: aktiv ? farve.withValues(alpha: 0.20) : Colors.transparent,
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(
+                  color: aktiv ? farve : _borderSubtle),
+            ),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              if (id != null) ...[
+                Container(
+                  width: 7,
+                  height: 7,
+                  decoration:
+                      BoxDecoration(color: farve, shape: BoxShape.circle),
+                ),
+                const SizedBox(width: 6),
+              ],
+              Text(tekst,
+                  style: _body(
+                      size: 11,
+                      weight: FontWeight.w700,
+                      color: aktiv ? _textPrimary : _textSecondary)),
+            ]),
+          ),
+        ),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(children: [
+          pille(null, 'Alle hold', _neon),
+          for (final g in hold)
+            pille(g['id'] as String, _holdKort(g['navn'] as String),
+                holdFarve(g['farve'])),
+        ]),
       ),
     );
   }
@@ -426,60 +561,39 @@ class _OversigtTabState extends State<OversigtTab>
   Widget _traenerDashboard() {
     if (!_harAnsvar) return const SizedBox.shrink();
     final kommende = _kommendeForMig;
-    final udenBane = kommende
-        .where((t) =>
-            erHjemmekamp(t.training['titel'] as String) &&
-            t.training['bane_booket'] != true)
-        .length;
 
     return Container(
-      margin: const EdgeInsets.only(bottom: 16),
-      padding: const EdgeInsets.fromLTRB(14, 13, 14, 12),
+      margin: const EdgeInsets.only(bottom: 14),
+      padding: const EdgeInsets.fromLTRB(11, 11, 11, 9),
       decoration: BoxDecoration(
         color: _surfaceDark,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(14),
         border: Border.all(color: _borderSubtle),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Row(children: [
-            const Icon(Icons.speed_outlined, size: 17, color: _neon),
-            const SizedBox(width: 9),
-            Text('DIT OVERBLIK',
-                style: _cond(size: 17, weight: FontWeight.w800)),
-            const Spacer(),
-            if (udenBane > 0)
-              TextButton.icon(
-                // Åbnes synkront i trykket, ellers blokerer browseren det.
-                onPressed: () => aabnBookli(context),
-                icon: const Icon(Icons.open_in_new, size: 15),
-                label: Text('$udenBane mangler baner'),
-                style: TextButton.styleFrom(
-                  foregroundColor: _gold,
-                  textStyle: _body(size: 12, weight: FontWeight.w700),
-                  visualDensity: VisualDensity.compact,
-                ),
-              ),
-          ]),
-          const SizedBox(height: 11),
-          // Kampe står først: de kræver forberedelse, hvor en træning kører
-          // af sig selv hver uge.
-          Row(children: [
-            _dashFane('🏆  Kampe', true),
+            const Icon(Icons.speed_outlined, size: 15, color: _neon),
             const SizedBox(width: 8),
-            _dashFane('🏋️  Træninger', false),
+            Text('DIT OVERBLIK',
+                style: _cond(size: 16, weight: FontWeight.w800)),
+            const Spacer(),
+            _dashFane('🏆', true),
+            const SizedBox(width: 6),
+            _dashFane('🏋️', false),
           ]),
-          const SizedBox(height: 12),
+          const SizedBox(height: 10),
+          _holdVaelger(),
           // Tegnes ALTID — også når der ingenting er — så det ikke ligner at
           // dashboardet er gået i stykker.
           if (kommende.isEmpty)
             Padding(
-              padding: const EdgeInsets.symmetric(vertical: 14),
+              padding: const EdgeInsets.symmetric(vertical: 12),
               child: Text(
                   _dashKampe
-                      ? 'Ingen kommende kampe på dine hold'
-                      : 'Ingen træninger på dine hold de næste 14 dage',
+                      ? 'Ingen kommende kampe'
+                      : 'Ingen træninger de næste 14 dage',
                   textAlign: TextAlign.center,
                   style: _body(size: 12.5, color: _textSecondary)),
             )
@@ -487,19 +601,19 @@ class _OversigtTabState extends State<OversigtTab>
             _naesteKort(kommende.first),
             if (kommende.length > 1) ...[
               Padding(
-                padding: const EdgeInsets.only(top: 4, bottom: 2, left: 2),
+                padding: const EdgeInsets.only(top: 2, bottom: 1, left: 2),
                 child: Row(children: [
                   Expanded(
                     child: Text(
                         _dashKampe ? 'KOMMENDE KAMPE' : 'DE NÆSTE 14 DAGE',
                         style: _body(
-                            size: 10,
+                            size: 9.5,
                             weight: FontWeight.w700,
                             spacing: 0.8,
                             color: _textMuted)),
                   ),
                   Text('ja / nej / mangler',
-                      style: _body(size: 9.5, color: _textMuted)),
+                      style: _body(size: 9, color: _textMuted)),
                 ]),
               ),
               for (final (i, t) in kommende.skip(1).take(4).indexed)
@@ -510,6 +624,7 @@ class _OversigtTabState extends State<OversigtTab>
       ),
     );
   }
+
 
   /// Dagens træning — en træning der er i gang eller lige om lidt (±3 timer),
   /// og som man selv må styre. Giver genvejen til tavlen øverst i feedet.

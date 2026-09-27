@@ -265,11 +265,26 @@ function maaneder(fra, til) {
 
 /// Sammenholder klubbens hjemmekampe med det der faktisk er booket.
 ///
-/// En kamp regnes som dækket hvis en booking OVERLAPPER dens tidsrum på
-/// samme dag. Der kræves ikke nøjagtigt samme klokkeslæt: en kamp kl.
-/// 11–14 kan sagtens have en bane booket 11–12 og en anden 12–14.
+/// Spørgsmålet er ikke "findes der en booking der rører kampen", men
+/// "er HELE kampens tidsrum dækket". Forskellen er ikke teoretisk: den
+/// 13. november 2026 lå to hjemmekampe (16.30–19.30 og 19.00–22.00) oven
+/// på én booking 18.00–21.00, og med overlap-reglen blev de begge meldt
+/// booket — selv om den første manglede bane de første halvanden time og
+/// den anden den sidste time.
 ///
-/// @returns {Array<{kamp, status: 'BOOKET'|'MANGLER_BANE', baner: string[]}>}
+/// Tre svar:
+///   BOOKET          hele kampen er dækket
+///   DELVIS_BOOKET   der er baner, men ikke i hele tidsrummet
+///   MANGLER_BANE    ingen booking rører kampen
+///
+/// `mangler` angiver de huller der ikke er dækket, så beskeden kan sige
+/// præcis hvilken tid der skal bookes til.
+///
+/// Antallet af baner efterprøves IKKE. Bookli oplyser ikke hvor mange
+/// baner en kamp kræver, og et gæt ville give falsk alarm på hver eneste
+/// kamp. Kun tiden kontrolleres.
+///
+/// @returns {Array<{kamp, status, baner: string[], mangler: Array<{fra,til}>}>}
 export async function validerBaner(side, hjemmekampe) {
   // Spørg om præcis de måneder kampene ligger i — med en dag i hver ende,
   // så en kamp den 1. eller den 31. ikke falder uden for vinduet.
@@ -286,28 +301,98 @@ export async function validerBaner(side, hjemmekampe) {
         ? new Date(k.slut).getTime()
         : start + 2 * 60 * 60 * 1000;
 
+    // Bookinger uden sluttid kan ikke tidsprøves. Bookli giver kun
+    // starttid i listeformen; sluttiden følger med enkeltkortet, og det
+    // hentes kun for bookinger i det vindue vi spørger om.
+    let usikker = false;
+
     const traef = bookinger.filter((b) => {
       const bs = new Date(b.start).getTime();
-      if (b.slut) {
-        return bs < slut && new Date(b.slut).getTime() > start;   // overlap
-      }
-      // Bookli giver kun starttid i listeformen; sluttid og banenavn
-      // følger kun med når en booking hentes enkeltvis. Uden sluttid
-      // tælles en booking med hvis den starter inden for kampens vindue
-      // plus tre timer — hellere det end at kalde en booket bane manglende.
-      return bs >= start - 3 * 3600000 && bs <= slut + 3 * 3600000;
+      if (b.slut) return bs < slut && new Date(b.slut).getTime() > start;
+      // Samme skøn som før: starter den inden for kampens vindue plus tre
+      // timer, tæller den med — hellere det end at kalde en booket bane
+      // manglende.
+      const naer = bs >= start - 3 * 3600000 && bs <= slut + 3 * 3600000;
+      if (naer) usikker = true;
+      return naer;
     });
 
-    return {
+    if (!traef.length) {
+      return {
+        kamp: k,
+        status: 'MANGLER_BANE',
+        baner: [],
+        baneNavnKendt: false,
+        mangler: [{ fra: new Date(start).toISOString(),
+                    til: new Date(slut).toISOString() }],
+        usikker: false,
+        bookinger: [],
+      };
+    }
+
+    const svar = {
       kamp: k,
-      status: traef.length ? 'BOOKET' : 'MANGLER_BANE',
+      baner: traef.map((b) => b.bane).filter(Boolean),
       // Tom liste betyder ikke "ingen bane" — kun at Bookli ikke oplyste
       // navnet i listeformen.
-      baner: traef.map((b) => b.bane).filter(Boolean),
       baneNavnKendt: traef.some((b) => b.bane),
+      usikker,
       bookinger: traef,
     };
+
+    // Mangler bare én af bookingerne sin sluttid, kan dækningen ikke
+    // regnes ud. Så meldes BOOKET som hidtil frem for at råbe vagt i
+    // gevær på et ufuldstændigt grundlag — men `usikker` siger hvorfor.
+    if (usikker) {
+      return { ...svar, status: 'BOOKET', mangler: [] };
+    }
+
+    const huller = huln(start, slut, traef.map((b) => [
+      new Date(b.start).getTime(), new Date(b.slut).getTime()]));
+
+    return {
+      ...svar,
+      status: huller.length ? 'DELVIS_BOOKET' : 'BOOKET',
+      mangler: huller.map(([f, t]) => ({
+        fra: new Date(f).toISOString(),
+        til: new Date(t).toISOString(),
+      })),
+    };
   });
+}
+
+/// De stykker af [fra, til] som ingen af [intervaller] dækker.
+///
+/// Bookinger på hver sin bane ligger oven på hinanden i tid; de lægges
+/// derfor sammen til ét dækket område før hullerne findes. Ellers ville
+/// tre samtidige baner give to falske huller.
+///
+/// Stumper under fem minutter regnes ikke med. Bookli-tider ligger på
+/// hele kvarter, og et kvarters afrunding i kampens tidsrum skal ikke
+/// udløse en advarsel.
+function huln(fra, til, intervaller) {
+  const STOEJ = 5 * 60 * 1000;
+
+  const klippet = intervaller
+      .map(([a, b]) => [Math.max(a, fra), Math.min(b, til)])
+      .filter(([a, b]) => b > a)
+      .sort((x, y) => x[0] - y[0]);
+
+  const samlet = [];
+  for (const [a, b] of klippet) {
+    const sidste = samlet[samlet.length - 1];
+    if (sidste && a <= sidste[1]) sidste[1] = Math.max(sidste[1], b);
+    else samlet.push([a, b]);
+  }
+
+  const huller = [];
+  let p = fra;
+  for (const [a, b] of samlet) {
+    if (a - p > STOEJ) huller.push([p, a]);
+    p = Math.max(p, b);
+  }
+  if (til - p > STOEJ) huller.push([p, til]);
+  return huller;
 }
 
 /// Booker baner.

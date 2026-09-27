@@ -546,9 +546,16 @@ class _OversigtTabState extends State<OversigtTab>
         .toList();
     if (synlige.isEmpty) return const SizedBox.shrink();
 
-    final mangler = synlige
-        .where((t) => _baneStatus[t.training['id']]!.booket == false)
+    // Delvis dækning tælles for sig. Slås den sammen med "mangler
+    // bane", forsvinder pointen: der ER baner, tiden er bare for kort,
+    // og det rettes et andet sted i Bookli end en ny booking.
+    final udenBane = synlige
+        .where((t) => _baneStatus[t.training['id']]!.status == 'MANGLER_BANE')
         .toList();
+    final delvis = synlige
+        .where((t) => _baneStatus[t.training['id']]!.delvis)
+        .toList();
+    final mangler = [...udenBane, ...delvis];
     final alleOk = mangler.isEmpty;
 
     return _overblikRamme(
@@ -556,7 +563,17 @@ class _OversigtTabState extends State<OversigtTab>
       ikon: alleOk ? Icons.check_circle : Icons.warning_amber_rounded,
       titel: alleOk
           ? 'Baner i orden på alle ${synlige.length} hjemmekampe'
-          : '${mangler.length} af ${synlige.length} hjemmekampe mangler baner',
+          // Er der kun én slags problem, er der plads til at sige hvor
+          // mange kampe det er ud af. Er der to, ville det blive en
+          // sætning ingen læser færdig.
+          : udenBane.isEmpty
+              ? '${delvis.length} af ${synlige.length} hjemmekampe '
+                  'har for kort banetid'
+              : delvis.isEmpty
+                  ? '${udenBane.length} af ${synlige.length} hjemmekampe '
+                      'mangler baner'
+                  : '${udenBane.length} mangler baner · '
+                      '${delvis.length} har for kort tid',
       under: alleOk
           ? 'Hentet fra Bookli'
           : '${mangler.take(3).map((t) => _fmtDate(DateTime.parse(
@@ -2383,6 +2400,20 @@ Future<bool> huskBookliDialog(BuildContext context, String trainingId) async {
   return saetBaneBooket(context, trainingId, booket: true);
 }
 
+/// Skriver de udækkede stykker ud, fx "mangler 16.30–18.00".
+///
+/// Kun de to første nævnes. Flere huller på én kamp er i praksis to
+/// bookinger med et hak imellem, og en liste der løber ud over linjen
+/// hjælper ingen.
+String _hulTekst(List<BaneHul> huller) {
+  if (huller.isEmpty) return '';
+  final vist = huller
+      .take(2)
+      .map((h) => '${_fmtTime(h.fra)}–${_fmtTime(h.til)}')
+      .join(', ');
+  return 'mangler $vist${huller.length > 2 ? ' m.fl.' : ''}';
+}
+
 /// Bane-mærket på en hjemmekamp.
 ///
 /// Sandheden kommer fra Bookli gennem automations-broen. Appens eget
@@ -2417,9 +2448,8 @@ class BookliBadge extends StatelessWidget {
       valueListenable: BaneFacit.lytter,
       builder: (context, _, __) {
         final svar = BaneFacit.af(training['id']);
-        final booket = svar?.booket ?? (training['bane_booket'] == true);
 
-        if (booket) {
+        if (svar?.booket ?? (training['bane_booket'] == true)) {
           // Kun broen kender banenumrene. Er der ikke noget at fortælle,
           // tegnes intet: "alt er som det skal være" behøver ikke mærkat.
           final baner = svar?.baner ?? const <String>[];
@@ -2431,6 +2461,11 @@ class BookliBadge extends StatelessWidget {
           );
         }
 
+        // Delvis dækning er den farligste tilstand: der ER baner, så alt
+        // ser rigtigt ud i Bookli, men kampen løber uden for tiden.
+        // Derfor skal mærket sige HVAD der mangler, ikke bare advare.
+        final delvis = svar?.delvis ?? false;
+
         return GestureDetector(
           // Åbnes synkront i trykket, ellers blokerer browseren vinduet.
           onTap: () => aabnBookli(context),
@@ -2438,7 +2473,12 @@ class BookliBadge extends StatelessWidget {
           child: _maerke(
             farve: _gold,
             ikon: Icons.warning_amber_rounded,
-            tekst: svar == null ? 'Tjek Bookli' : 'Ingen bane',
+            tekst: delvis
+                ? 'Delvis tid: ${svar!.baner.join(', ')}'
+                : svar == null
+                    ? 'Tjek Bookli'
+                    : 'Ingen bane',
+            under: delvis ? _hulTekst(svar!.mangler) : null,
           ),
         );
       },
@@ -2449,17 +2489,20 @@ class BookliBadge extends StatelessWidget {
     required Color farve,
     required IconData ikon,
     required String tekst,
+    String? under,
   }) {
     if (kompakt) {
+      // I listen er der kun plads til én linje. "Ingen bane" klarer sig
+      // med tegnet alene, men delvis dækning SKAL skrives ud — ellers
+      // ligner den en almindelig advarsel man kan ignorere.
+      final medTekst = farve == _success || under != null;
       return Padding(
         padding: const EdgeInsets.symmetric(horizontal: 3),
         child: Row(mainAxisSize: MainAxisSize.min, children: [
           Icon(ikon, size: 12, color: farve),
-          // Banenumrene er hele pointen med det grønne mærke; advarslen
-          // klarer sig med tegnet alene, så linjen ikke bliver lang.
-          if (farve == _success) ...[
+          if (medTekst) ...[
             const SizedBox(width: 3),
-            Text(tekst,
+            Text(under == null ? tekst : '$tekst · $under',
                 style: _body(size: 9, weight: FontWeight.w800, color: farve)),
           ],
         ]),
@@ -2475,8 +2518,19 @@ class BookliBadge extends StatelessWidget {
       child: Row(mainAxisSize: MainAxisSize.min, children: [
         Icon(ikon, size: 12, color: farve),
         const SizedBox(width: 5),
-        Text(tekst,
-            style: _body(size: 10.5, weight: FontWeight.w800, color: farve)),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(tekst,
+                style:
+                    _body(size: 10.5, weight: FontWeight.w800, color: farve)),
+            if (under != null)
+              Text(under,
+                  style: _body(size: 9.5, weight: FontWeight.w600,
+                      color: farve.withValues(alpha: 0.85))),
+          ],
+        ),
       ]),
     );
   }

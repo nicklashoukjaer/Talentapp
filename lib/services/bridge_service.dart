@@ -13,16 +13,39 @@ part of '../main.dart';
 // præcis som før. Ingen fejlskærm, ingen spinner der hænger.
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Et stykke af en kamp der ikke er bane til.
+class BaneHul {
+  final DateTime fra;
+  final DateTime til;
+  const BaneHul(this.fra, this.til);
+}
+
 /// Bane-status for én hjemmekamp, som broen melder den.
+///
+/// Tre tilstande, ikke to. En booking der kun dækker en del af kampen
+/// er hverken i orden eller fraværende, og at putte den i en af de to
+/// kasser var netop fejlen: den 13. november lå to kampe oven på én
+/// booking og blev begge meldt booket.
 class BaneStatus {
   final String trainingId;
-  final bool booket;
+
+  /// Broens ord: `BOOKET`, `DELVIS_BOOKET` eller `MANGLER_BANE`.
+  final String status;
   final List<String> baner;
+
+  /// De stykker af kampen der ikke er dækket. Tom ved `BOOKET`.
+  final List<BaneHul> mangler;
+
   const BaneStatus({
     required this.trainingId,
-    required this.booket,
+    required this.status,
     this.baner = const [],
+    this.mangler = const [],
   });
+
+  bool get booket => status == 'BOOKET';
+  bool get delvis => status == 'DELVIS_BOOKET';
+  bool get iOrden => booket;
 }
 
 /// Broens seneste banesvar, delt på tværs af skærme.
@@ -132,10 +155,23 @@ class BridgeService {
       for (final e in liste.whereType<Map>())
         BaneStatus(
           trainingId: (e['kamp']?['id'] ?? '') as String,
-          booket: e['status'] == 'BOOKET',
+          // Ukendt ord fra en nyere bro må ikke blive til falsk grønt.
+          status: switch (e['status']) {
+            'BOOKET' => 'BOOKET',
+            'DELVIS_BOOKET' => 'DELVIS_BOOKET',
+            _ => 'MANGLER_BANE',
+          },
           baner: ((e['baner'] as List?) ?? const [])
               .map((x) => x.toString())
               .toList(),
+          mangler: [
+            for (final m in (e['mangler'] as List?) ?? const [])
+              if (m is Map &&
+                  m['fra'] is String &&
+                  m['til'] is String)
+                BaneHul(DateTime.parse(m['fra'] as String).toLocal(),
+                    DateTime.parse(m['til'] as String).toLocal()),
+          ],
         )
     ];
   }

@@ -221,7 +221,7 @@ de rigtige tjenester.
 |---|---|---|
 | Login | ✅ | ✅ |
 | Læsning | ✅ bookinger med dato og bane | ✅ kampe, stilling, pulje, sæson |
-| Banevalidering | ✅ `BOOKET` / `MANGLER_BANE` | — |
+| Banevalidering | ✅ fuld tidsdækning | — |
 | Skrivning | ❌ booking ikke skrevet | ❌ kampflytning ikke skrevet |
 
 Valideringen er bevist **begge veje**: en hjemmekamp med baner gav `BOOKET`
@@ -231,6 +231,33 @@ vigtige.
 
 Bookli læses gennem klubbens GraphQL-API, ikke ved at skrabe tekst:
 kalenderkortene viser kun klokkeslæt, hverken dato eller år.
+
+To fælder er ryddet af vejen, begge fundet ved at holde svaret op mod
+den rigtige kalender:
+
+1. **Kalenderen henter kun indeværende måned.** Åbnede man bare siden og
+   lyttede med, manglede alt fra næste måned og frem — og hver kommende
+   hjemmekamp blev meldt `MANGLER_BANE`. Booklis egen forespørgsel
+   opsnappes nu og gentages med det interval kampene dækker.
+2. **Overlap er ikke dækning.** Den 13. november ligger to hjemmekampe
+   (16.30–19.30 og 19.00–22.00) oven på én booking 18.00–21.00. Med
+   overlap-reglen blev begge meldt `BOOKET`. Nu regnes hele kampens
+   tidsrum igennem, og de meldes `DELVIS_BOOKET` med præcis den tid der
+   mangler.
+
+Antallet af baner efterprøves ikke — Bookli oplyser ikke hvor mange en
+kamp kræver, og et gæt ville give falsk alarm hver gang. Kun tiden.
+Mangler en booking sin sluttid i Booklis svar, kan dækningen ikke
+regnes ud; så meldes `BOOKET` som før frem for at råbe vagt i gevær på
+et ufuldstændigt grundlag.
+
+Sidst efterprøvet mod produktion, otte kommende hjemmekampe:
+
+| | |
+|---|---|
+| `BOOKET` | 18. okt, 25. okt, 8. nov, 22. nov |
+| `DELVIS_BOOKET` | 13. nov ×2 — mangler 16.30–18.00 og 21.00–22.00 |
+| `MANGLER_BANE` | 16. okt, 1. nov |
 
 ### Sådan tages den i brug
 
@@ -257,7 +284,8 @@ betjening:
 | Broen siger | Appen viser |
 |---|---|
 | `BOOKET` | grønt mærke med banenumrene |
-| `MANGLER_BANE` | gul advarsel |
+| `DELVIS_BOOKET` | gul advarsel: "Delvis tid: D11, D10, D12 · mangler 16.30–18.00" |
+| `MANGLER_BANE` | gul advarsel: "Ingen bane" |
 | intet svar | `bane_booket` som hidtil |
 
 Mærket markerer ikke længere noget som booket; et tryk åbner Bookli.
@@ -265,11 +293,6 @@ Afkrydsningen findes kun ét sted endnu: påmindelsen når en hjemmekamp
 oprettes eller flyttes, hvor der ikke er andet at gå efter for dem uden
 bro. Feltet bliver i databasen — det bruges stadig som reserve og sættes
 automatisk når en kamp oprettes fra en afstemningsdato.
-
-**Kendt svaghed:** valideringen spørger om der findes en booking der
-OVERLAPPER kampen, ikke om den dækker hele kampen. Den 13. november
-ligger to hjemmekampe (16.30–19.30 og 19.00–22.00) oven på én booking
-18.00–21.00, og begge meldes `BOOKET`. Se afsnit 7b's mangelliste.
 
 Det skal være dén adresse, ikke vercel-adressen: Chrome spærrer for at et
 offentligt websted rører 127.0.0.1 ("Permission was denied for this

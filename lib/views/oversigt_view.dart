@@ -511,7 +511,21 @@ class _OversigtTabState extends State<OversigtTab>
   /// "0 mangler" fordi broen var slukket ville være den værste slags
   /// beroligelse.
   Widget _baneOverblik() {
-    if (!BridgeService.erOpsat) return const SizedBox.shrink();
+    if (!BridgeService.erOpsat) {
+      // Uden bro kan appen ikke vide noget om baner. At tegne INTET var
+      // det der forvirrede: en tom liste uden grønne mærker ligner
+      // "ingenting er booket", selv om appen slet ikke har spurgt.
+      //
+      // Kun til admins — de øvrige holdledere kan ikke sætte broen op,
+      // og en besked de ikke kan handle på er bare støj.
+      if (!widget.isFullAdmin) return const SizedBox.shrink();
+      return _overblikRamme(
+        farve: _textMuted,
+        ikon: Icons.link_off_rounded,
+        titel: 'Banetjek ikke sat op',
+        under: 'Indsæt bro-adresse under Dashboard → Automations-bro',
+      );
+    }
     if (_baneStatus.isEmpty) {
       // Ingen svar. At tegne INTET var det der forvirrede: så ligner en
       // slukket bro og "alt er fint" hinanden. Sig det som det er.

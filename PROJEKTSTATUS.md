@@ -283,10 +283,18 @@ betjening:
 
 | Broen siger | Appen viser |
 |---|---|
-| `BOOKET` | grønt mærke med banenumrene |
-| `DELVIS_BOOKET` | gul advarsel: "Delvis tid: D11, D10, D12 · mangler 16.30–18.00" |
-| `MANGLER_BANE` | gul advarsel: "Ingen bane" |
+| `BOOKET` | grønt: "Baner booket · kl. 11:00–14:00" + banebrikker `D12` `D10` `D11` |
+| `DELVIS_BOOKET` | gult: "Baner booket kl. 18:00–21:00" / "Kampen er kl. 16:30–19:30 i appen · mangler 16:30–18:00" |
+| `MANGLER_BANE` | gult: "Ingen baner booket" / "Kampen er kl. 18:00–21:00 i appen" |
 | intet svar | `bane_booket` som hidtil |
+
+Begge tidsrum skrives ud med kilden på hver. "Mangler 16.30–18.00"
+fortalte kun halvdelen: man kunne ikke se om det var bookingen der lå
+forkert, eller kampen der var oprettet på et andet tidspunkt end
+aftalt — og de to rettes hvert sit sted.
+
+Bane-linjen har sin egen linje i fuld bredde under kampen. Klemt ind
+efter holdnavnet var der kun plads til et advarselstegn på en telefon.
 
 Mærket markerer ikke længere noget som booket; et tryk åbner Bookli.
 Afkrydsningen findes kun ét sted endnu: påmindelsen når en hjemmekamp

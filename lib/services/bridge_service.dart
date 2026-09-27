@@ -36,11 +36,25 @@ class BaneStatus {
   /// De stykker af kampen der ikke er dækket. Tom ved `BOOKET`.
   final List<BaneHul> mangler;
 
+  /// Hvornår banerne står reserveret i Bookli. Null når ingen fandtes,
+  /// og `til` kan være null hvis Bookli ikke oplyste en sluttid.
+  final DateTime? banetidFra;
+  final DateTime? banetidTil;
+
+  /// Kampens eget tidsrum, som det står i appen. Det er forskellen
+  /// mellem de to par der skal forklares — ikke bare at noget mangler.
+  final DateTime? kamptidFra;
+  final DateTime? kamptidTil;
+
   const BaneStatus({
     required this.trainingId,
     required this.status,
     this.baner = const [],
     this.mangler = const [],
+    this.banetidFra,
+    this.banetidTil,
+    this.kamptidFra,
+    this.kamptidTil,
   });
 
   bool get booket => status == 'BOOKET';
@@ -172,8 +186,21 @@ class BridgeService {
                 BaneHul(DateTime.parse(m['fra'] as String).toLocal(),
                     DateTime.parse(m['til'] as String).toLocal()),
           ],
+          banetidFra: _tid(e['banetid'], 'fra'),
+          banetidTil: _tid(e['banetid'], 'til'),
+          kamptidFra: _tid(e['kamptid'], 'fra'),
+          kamptidTil: _tid(e['kamptid'], 'til'),
         )
     ];
+  }
+
+  /// Plukker et tidsstempel ud af broens svar. Alt kan mangle — en
+  /// ældre bro kender ikke felterne — og så skal visningen bare klare
+  /// sig uden.
+  static DateTime? _tid(Object? blok, String felt) {
+    if (blok is! Map) return null;
+    final v = blok[felt];
+    return v is String ? DateTime.tryParse(v)?.toLocal() : null;
   }
 
   /// Kampprogrammet fra RankedIn, holdnavn → kampe.

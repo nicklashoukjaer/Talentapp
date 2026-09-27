@@ -321,6 +321,11 @@ export async function validerBaner(side, hjemmekampe) {
       return {
         kamp: k,
         status: 'MANGLER_BANE',
+        banetid: null,
+        kamptid: {
+          fra: new Date(start).toISOString(),
+          til: new Date(slut).toISOString(),
+        },
         baner: [],
         baneNavnKendt: false,
         mangler: [{ fra: new Date(start).toISOString(),
@@ -330,8 +335,25 @@ export async function validerBaner(side, hjemmekampe) {
       };
     }
 
+    // Hvornår banerne FAKTISK står reserveret. Uden det kan appen kun
+    // sige at noget mangler, ikke hvad der står i Bookli — og så ved
+    // holdlederen stadig ikke om det er kampen eller bookingen der er
+    // sat forkert.
+    const bStart = Math.min(...traef.map((b) => new Date(b.start).getTime()));
+    const bSlut = traef.every((b) => b.slut)
+        ? Math.max(...traef.map((b) => new Date(b.slut).getTime()))
+        : null;
+
     const svar = {
       kamp: k,
+      banetid: {
+        fra: new Date(bStart).toISOString(),
+        til: bSlut == null ? null : new Date(bSlut).toISOString(),
+      },
+      kamptid: {
+        fra: new Date(start).toISOString(),
+        til: new Date(slut).toISOString(),
+      },
       baner: traef.map((b) => b.bane).filter(Boolean),
       // Tom liste betyder ikke "ingen bane" — kun at Bookli ikke oplyste
       // navnet i listeformen.

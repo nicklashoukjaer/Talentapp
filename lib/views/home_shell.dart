@@ -616,6 +616,10 @@ class _HomeShellState extends State<HomeShell> {
                   : null),
         };
     final pages = [for (final t in _faneRaekkefoelge) sideFor(t)];
+    // Hvilken fane man STÅR på, oversat til dens faste id. _selectedIndex
+    // er pladsen i bundmenuen, og den flytter sig når Dashboard-fanen
+    // kommer til. De to må aldrig sammenlignes direkte.
+    final aktivFane = _logisk(_selectedIndex.clamp(0, pages.length - 1));
 
     // PC-visning fra 1100 px og op. Under grænsen er alt herunder uændret —
     // både mobilen og den eksisterende NavigationRail fra 700 px.
@@ -639,15 +643,14 @@ class _HomeShellState extends State<HomeShell> {
         actions: [
           // Tragt = hold-filter (som prototypens header) på Oversigt, Bøder
           // og Afstemninger.
-          if (_logisk(_selectedIndex.clamp(0, pages.length - 1)) == _tabOversigt ||
-              _selectedIndex.clamp(0, pages.length - 1) == _tabBoede ||
-              _selectedIndex.clamp(0, pages.length - 1) == _tabAfstemning)
+          if (aktivFane == _tabOversigt ||
+              aktivFane == _tabBoede ||
+              aktivFane == _tabAfstemning)
             IconButton(
               onPressed: () {
-                final idx = _selectedIndex.clamp(0, pages.length - 1);
-                if (idx == _tabOversigt) {
+                if (aktivFane == _tabOversigt) {
                   _oversigtKey.currentState?.showHoldFilterSheet();
-                } else if (idx == _tabBoede) {
+                } else if (aktivFane == _tabBoede) {
                   _bodekasseKey.currentState?.showHoldFilterSheet();
                 } else {
                   _afstemningerKey.currentState?.showHoldFilterSheet();
@@ -659,10 +662,7 @@ class _HomeShellState extends State<HomeShell> {
           // Genvej til Dashboardet for ledere der ikke har det som fane.
           // Især for kaptajner: de har ikke Admin-fanen, og kunne ellers
           // kun nå det ved at slå det til som fast startskærm.
-          if (_erLeder &&
-              _idx(_tabLederDash) < 0 &&
-              _logisk(_selectedIndex.clamp(0, pages.length - 1)) ==
-                  _tabOversigt)
+          if (_erLeder && _idx(_tabLederDash) < 0 && aktivFane == _tabOversigt)
             IconButton(
               onPressed: _aabnDashboardSkaerm,
               icon: const Icon(Icons.speed_outlined, color: _textPrimary),

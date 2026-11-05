@@ -98,6 +98,67 @@ class FordelingsInput {
     this.laaste = const [],
     this.modtFoer = const {},
   });
+
+  FordelingsInput kopiMed({
+    Set<String>? sammenIDag,
+    Map<String, int>? runderSpillet,
+    Set<String>? modtFoer,
+  }) =>
+      FordelingsInput(
+        spillere: spillere,
+        baner: baner,
+        tilstand: tilstand,
+        holdAf: holdAf,
+        fastePar: fastePar,
+        kemi: kemi,
+        favoritter: favoritter,
+        sammenIDag: sammenIDag ?? this.sammenIDag,
+        historik: historik,
+        runderSpillet: runderSpillet ?? this.runderSpillet,
+        laaste: laaste,
+        modtFoer: modtFoer ?? this.modtFoer,
+      );
+}
+
+/// Danner [antal] runder i træk.
+///
+/// Pointen med at gøre det samlet frem for én ad gangen: hver runde skal
+/// kende de foregående. Har to spillet sammen i runde 1, rammer straffen
+/// på −60 dem i runde 2, og den der sad over kommer ind først. Genererede
+/// man runderne enkeltvis på forhånd, ville de alle sammen tage
+/// udgangspunkt i en tom dag og kunne finde på det samme hver gang.
+///
+/// Låste par følger med i ALLE runderne — en lås er netop en besked om at
+/// de to skal blive stående.
+List<Opstilling> fordelFlere(FordelingsInput start, int antal) {
+  final ud = <Opstilling>[];
+  final sammen = {...start.sammenIDag};
+  final modt = {...start.modtFoer};
+  final spillet = {...start.runderSpillet};
+
+  for (var i = 0; i < antal; i++) {
+    final op = fordel(start.kopiMed(
+      sammenIDag: sammen,
+      runderSpillet: spillet,
+      modtFoer: modt,
+    ));
+    ud.add(op);
+
+    for (final p in op.parrene) {
+      final n = p.noegle;
+      if (n != null) sammen.add(n);
+    }
+    for (final b in op.baner) {
+      final n1 = b.par1.noegle, n2 = b.par2.noegle;
+      if (n1 != null && n2 != null) {
+        modt.add(n1.compareTo(n2) < 0 ? '$n1#$n2' : '$n2#$n1');
+      }
+      for (final sp in b.alle) {
+        spillet[sp.id] = (spillet[sp.id] ?? 0) + 1;
+      }
+    }
+  }
+  return ud;
 }
 
 /// Resultatet: banerne og dem der sidder over.

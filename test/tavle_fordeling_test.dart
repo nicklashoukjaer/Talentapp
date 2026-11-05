@@ -200,6 +200,56 @@ void main() {
     });
   });
 
+  group('fordelFlere', () {
+    test('runde 2 genbruger ikke runde 1s par', () {
+      final otte = [for (var i = 0; i < 8; i++) sp('s$i')];
+      final r = fordelFlere(FordelingsInput(spillere: otte, baner: 2), 3);
+      expect(r.length, 3);
+
+      final set1 = r[0].parrene.map((p) => p.noegle).toSet();
+      final set2 = r[1].parrene.map((p) => p.noegle).toSet();
+      expect(set1.intersection(set2), isEmpty,
+          reason: 'straffen for "spillet sammen i dag" skal bæres videre');
+    });
+
+    test('bænken roterer over runderne', () {
+      final ti = [for (var i = 0; i < 10; i++) sp('s$i')];
+      final r = fordelFlere(FordelingsInput(spillere: ti, baner: 2), 3);
+      // Over tre runder sidder 2 over hver gang = 6 pladser. Ingen må
+      // sidde over alle tre gange når der er ti at tage af.
+      final gange = <String, int>{};
+      for (final op in r) {
+        for (final s in op.baenk) {
+          gange[s.id] = (gange[s.id] ?? 0) + 1;
+        }
+      }
+      expect(gange.values.every((n) => n < 3), isTrue,
+          reason: 'ingen må sidde over hele træningen');
+    });
+
+    test('hver forberedt runde har hele par', () {
+      final elleve = [for (var i = 0; i < 11; i++) sp('s$i')];
+      final r = fordelFlere(FordelingsInput(spillere: elleve, baner: 3), 3);
+      for (final op in r) {
+        for (final b in op.baner) {
+          expect(b.par1.spillere.length, 2);
+          expect(b.par2.spillere.length, 2);
+        }
+        expect(op.alle.length, 11);
+      }
+    });
+
+    test('faste par holdes sammen i alle runder', () {
+      final otte = [for (var i = 0; i < 8; i++) sp('s$i')];
+      final n = parNoegle('s0', 's5');
+      final r = fordelFlere(
+          FordelingsInput(spillere: otte, baner: 2, fastePar: {n}), 3);
+      for (final op in r) {
+        expect(op.parrene.any((p) => p.noegle == n), isTrue);
+      }
+    });
+  });
+
   group('Opstilling', () {
     test('byt flytter begge veje og efterlader ikke en halv ombytning', () {
       final op = Opstilling(baner: [

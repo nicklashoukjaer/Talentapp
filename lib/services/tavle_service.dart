@@ -25,12 +25,16 @@ class TavleOpsaetning {
   /// træning, ikke holdet — derfor står den her og ikke på parret.
   final bool brugFastePar;
 
+  /// Rundenummeret der afvikles lige nu. Null = den højeste.
+  final int? aktivRunde;
+
   const TavleOpsaetning({
     this.tilstand = 'mixet',
     this.afvikling = 'manuel',
     this.minutter = 15,
     this.baner = 2,
     this.brugFastePar = true,
+    this.aktivRunde,
   });
 
   factory TavleOpsaetning.fraRaekke(Map<String, dynamic>? m) => m == null
@@ -41,6 +45,7 @@ class TavleOpsaetning {
           minutter: (m['minutter'] as num?)?.toInt() ?? 15,
           baner: (m['baner'] as num?)?.toInt() ?? 2,
           brugFastePar: m['brug_faste_par'] as bool? ?? true,
+          aktivRunde: (m['aktiv_runde'] as num?)?.toInt(),
         );
 }
 
@@ -106,6 +111,35 @@ class TavleDeltagere {
   final Map<String, String> holdAf;
 
   const TavleDeltagere(this.spillere, this.holdAf);
+}
+
+/// En runde på trænerens tavle, med sin egen opstilling og version.
+///
+/// Flere runder kan være forberedt på forhånd, og de redigeres hver for
+/// sig — derfor bærer hver sin version, så to skærme ikke overskriver
+/// hinandens rettelser i hver sin runde.
+class TavleRunde {
+  final String id;
+  final int nr;
+  final Opstilling opstilling;
+  final int version;
+  final DateTime? slutterAt;
+
+  const TavleRunde({
+    required this.id,
+    required this.nr,
+    required this.opstilling,
+    this.version = 1,
+    this.slutterAt,
+  });
+
+  TavleRunde medOpstilling(Opstilling o, {int? version}) => TavleRunde(
+        id: id,
+        nr: nr,
+        opstilling: o,
+        version: version ?? this.version,
+        slutterAt: slutterAt,
+      );
 }
 
 /// Én runde set fra én spillers stol.
@@ -446,6 +480,101 @@ class TavleService {
   }
 
   /// Opstillingen i en bestemt runde.
+  /// ALLE runder for en træning, med opstilling og version. Sorteret
+  /// efter nummer, så rundevælgeren kan tegne dem i rækkefølge.
+  static Future<List<TavleRunde>> hentAlleRunder(
+      String trainingId, List<TavleSpiller> spillere) async {
+    final runder = List<Map<String, dynamic>>.from(await supabase
+        .from('training_rounds')
+        .select('id, nr, version, slutter_at')
+        .eq('training_id', trainingId)
+        .order('nr', ascending: true) as List);
+    if (runder.isEmpty) return const [];
+
+    final slots = List<Map<String, dynamic>>.from(await supabase
+        .from('training_round_slots')
+        .select('round_id, bane, par, user_id, guest_id, laast')
+        .inFilter('round_id', [for (final r in runder) r['id'] as String])
+        as List);
+
+    final kendte = {for (final s in spillere) s.id: s};
+    return [
+      for (final r in runder)
+        TavleRunde(
+          id: r['id'] as String,
+          nr: (r['nr'] as num).toInt(),
+          version: (r['version'] as num?)?.toInt() ?? 1,
+          slutterAt: r['slutter_at'] == null
+              ? null
+              : DateTime.parse(r['slutter_at'] as String).toLocal(),
+          opstilling: Opstilling.fraRaekker(
+              slots.where((s) => s['round_id'] == r['id']).toList(), kendte),
+        )
+    ];
+  }
+
+  /// Opretter flere runder på én gang og skriver deres opstillinger.
+  ///
+  /// Rækkefølgen betyder noget: runderne nummereres fortløbende fra
+  /// [foersteNr], så "spillet sammen i dag" og bænk-rotationen holder.
+  static Future<List<TavleRunde>> opretFlereRunder({
+    required String trainingId,
+    required int foersteNr,
+    required List<Opstilling> opstillinger,
+  }) async {
+    if (opstillinger.isEmpty) return const [];
+
+    final raekker = [
+      for (final (i, _) in opstillinger.indexed)
+        {
+          'training_id': trainingId,
+          'nr': foersteNr + i,
+          // Kun den FØRSTE får et starttidspunkt. De øvrige er
+          // forberedte, ikke afviklede — uret sættes når træneren
+          // skifter til dem.
+          if (i == 0) 'startet_at': DateTime.now().toUtc().toIso8601String(),
+        }
+    ];
+    final nye = List<Map<String, dynamic>>.from(await supabase
+        .from('training_rounds')
+        .insert(raekker)
+        .select('id, nr, version') as List)
+      ..sort((a, b) => (a['nr'] as num).compareTo(b['nr'] as num));
+
+    final ud = <TavleRunde>[];
+    for (final (i, r) in nye.indexed) {
+      final id = r['id'] as String;
+      await skrivOpstilling(id, opstillinger[i]);
+      ud.add(TavleRunde(
+        id: id,
+        nr: (r['nr'] as num).toInt(),
+        opstilling: opstillinger[i],
+        // skrivOpstilling tæller versionen op fra 1 til 2.
+        version: 2,
+      ));
+    }
+    return ud;
+  }
+
+  /// Peger tavlen på den runde der afvikles nu. Det er DEN spillerne ser.
+  static Future<void> saetAktivRunde(String trainingId, int nr) async {
+    await supabase
+        .from('training_boards')
+        .update({'aktiv_runde': nr}).eq('training_id', trainingId);
+  }
+
+  /// Sætter uret på en runde når træneren skifter til den.
+  static Future<DateTime?> startRunde(String roundId, int? minutter) async {
+    final slut = minutter == null
+        ? null
+        : DateTime.now().add(Duration(minutes: minutter));
+    await supabase.from('training_rounds').update({
+      'startet_at': DateTime.now().toUtc().toIso8601String(),
+      'slutter_at': slut?.toUtc().toIso8601String(),
+    }).eq('id', roundId);
+    return slut;
+  }
+
   static Future<Opstilling> hentRunde(
       String roundId, List<TavleSpiller> spillere) async {
     final rows = List<Map<String, dynamic>>.from(await supabase
@@ -474,6 +603,28 @@ class TavleService {
         .eq('training_id', tid)
         .order('nr', ascending: false) as List);
     if (runder.isEmpty) return const [];
+
+    // Hvilken runde afvikles lige nu? Træneren kan have forberedt flere
+    // på forhånd, og så er den HØJESTE ikke den aktuelle — spilleren
+    // ville få runde 3 at se mens holdet stod i runde 1.
+    final tavle = await supabase
+        .from('training_boards')
+        .select('aktiv_runde')
+        .eq('training_id', tid)
+        .maybeSingle();
+    final aktiv = (tavle?['aktiv_runde'] as num?)?.toInt();
+    if (aktiv != null) {
+      // Den aktive først, resten under som historik.
+      runder.sort((a, b) {
+        final na = (a['nr'] as num).toInt(), nb = (b['nr'] as num).toInt();
+        if (na == aktiv) return -1;
+        if (nb == aktiv) return 1;
+        return nb.compareTo(na);
+      });
+      // Runder der endnu ikke er nået, skal ikke afsløres på forhånd.
+      runder.removeWhere((r) => (r['nr'] as num).toInt() > aktiv);
+      if (runder.isEmpty) return const [];
+    }
 
     final slots = List<Map<String, dynamic>>.from(await supabase
         .from('training_round_slots')
@@ -537,13 +688,24 @@ class TavleService {
           .from('training_rounds')
           .select('training_id, nr')
           .inFilter('training_id', trainingIds) as List);
-      final ud = <String, int>{};
+      final hoejeste = <String, int>{};
       for (final r in rows) {
         final t = r['training_id'] as String;
         final nr = (r['nr'] as num).toInt();
-        if (nr > (ud[t] ?? 0)) ud[t] = nr;
+        if (nr > (hoejeste[t] ?? 0)) hoejeste[t] = nr;
       }
-      return ud;
+
+      // Den aktive runde går forud for den højeste: er tre runder
+      // forberedt men kun den første i gang, skal genvejen sige "Runde 1".
+      final tavler = List<Map<String, dynamic>>.from(await supabase
+          .from('training_boards')
+          .select('training_id, aktiv_runde')
+          .inFilter('training_id', trainingIds) as List);
+      for (final t in tavler) {
+        final nr = (t['aktiv_runde'] as num?)?.toInt();
+        if (nr != null) hoejeste[t['training_id'] as String] = nr;
+      }
+      return hoejeste;
     } catch (_) {
       return const {};
     }
@@ -560,6 +722,7 @@ class TavleService {
       'minutter': o.minutter,
       'baner': o.baner,
       'brug_faste_par': o.brugFastePar,
+      'aktiv_runde': o.aktivRunde,
       'oprettet_af': supabase.auth.currentUser?.id,
     });
   }

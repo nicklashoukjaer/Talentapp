@@ -45,13 +45,35 @@ class _RotationScreenState extends State<RotationScreen> {
   bool _busy = false;
   String? _error;
 
-  int _rundeNr = 0;
-  String? _rundeId;
+  /// Alle runder på tavlen, i rækkefølge. Træneren kan forberede flere
+  /// før træningen og klikke frem og tilbage mellem dem.
+  List<TavleRunde> _runder = [];
 
-  /// Hele den aktuelle runde — baner, par og låse ét sted. Låsen lå før i
-  /// et sideløbende sæt af 'bane-par'-nøgler, der kunne komme ud af trit
-  /// med banerne når de blev nummereret om.
-  Opstilling _op = const Opstilling.tom();
+  /// Hvilken runde man KIGGER på i tavlen.
+  int _valgt = 0;
+
+  /// Hvilken runde der AFVIKLES — den spillerne ser. Ikke nødvendigvis
+  /// den man kigger på: træneren kan forberede runde 3 mens holdet
+  /// stadig spiller runde 1.
+  int _aktivNr = 0;
+
+  /// Hvor mange runder "Generér alle runder" laver.
+  int _antalRunder = 2;
+
+  TavleRunde? get _runde =>
+      (_valgt >= 0 && _valgt < _runder.length) ? _runder[_valgt] : null;
+
+  int get _rundeNr => _runde?.nr ?? 0;
+  String? get _rundeId => _runde?.id;
+
+  /// Opstillingen for den runde man kigger på.
+  Opstilling get _op => _runde?.opstilling ?? const Opstilling.tom();
+
+  set _op(Opstilling v) {
+    final r = _runde;
+    if (r == null) return;
+    _runder[_valgt] = r.medOpstilling(v);
+  }
 
   /// Par der allerede har spillet sammen i DENNE træning — bruges til at
   /// undgå gentagelser når næste runde dannes.
@@ -80,8 +102,6 @@ class _RotationScreenState extends State<RotationScreen> {
   /// Modstanderpar der allerede er mødtes i dag.
   Set<String> _modtFoer = {};
 
-  /// Rundens version, så to trænere ikke overskriver hinanden.
-  int _version = 1;
 
   Timer? _ur;
   Duration _tilbage = Duration.zero;
@@ -131,10 +151,16 @@ class _RotationScreenState extends State<RotationScreen> {
         gruppeIds: _trainingGroupIds(widget.training),
         deltagere: widget.spillere,
       );
-      final op = start.rundeId == null
-          ? const Opstilling.tom()
-          : await TavleService.hentRunde(start.rundeId!, widget.spillere);
+      final runder =
+          await TavleService.hentAlleRunder(_tid, widget.spillere);
       if (!mounted) return;
+
+      // Hvilken runde afvikles? Gemt valg, ellers den højeste — som før.
+      final aktiv = start.opsaetning.aktivRunde ??
+          (runder.isEmpty ? 0 : runder.last.nr);
+      var valgt = runder.indexWhere((r) => r.nr == aktiv);
+      if (valgt < 0) valgt = runder.isEmpty ? 0 : runder.length - 1;
+
       setState(() {
         _tilstand = start.opsaetning.tilstand;
         _afvikling = start.opsaetning.afvikling;
@@ -152,13 +178,13 @@ class _RotationScreenState extends State<RotationScreen> {
         _historik = start.historik;
         _runderSpillet = start.runderSpillet;
         _modtFoer = start.modtFoer;
-        _version = start.version;
-        _rundeNr = start.rundeNr;
-        _rundeId = start.rundeId;
-        _op = op;
+        _runder = runder;
+        _valgt = valgt;
+        _aktivNr = aktiv;
         _loading = false;
       });
-      if (start.slutterAt != null) _startUr(start.slutterAt);
+      final r = _runde;
+      if (r?.slutterAt != null && r!.nr == _aktivNr) _startUr(r.slutterAt);
     } catch (e) {
       if (mounted) setState(() { _loading = false; _error = e.toString(); });
     }
@@ -190,8 +216,10 @@ class _RotationScreenState extends State<RotationScreen> {
 
   /// Danner en ny opstilling. [bevarLaaste] holder de låste par på plads
   /// og fordeler kun resten.
-  Opstilling _genererOpstilling({bool bevarLaaste = true}) => fordel(
-        FordelingsInput(
+  /// Grundlaget for fordelingen. Ét sted, så en enkelt runde og en hel
+  /// serie bygger på præcis de samme forudsætninger.
+  FordelingsInput _fordelingsInput({bool bevarLaaste = true}) =>
+      FordelingsInput(
           spillere: widget.spillere,
           baner: _baner,
           tilstand: _tilstand,
@@ -203,38 +231,75 @@ class _RotationScreenState extends State<RotationScreen> {
           historik: _historik,
           runderSpillet: _runderSpillet,
           laaste: bevarLaaste ? _op.laastePar : const [],
-          modtFoer: _modtFoer,
-        ),
+        modtFoer: _modtFoer,
       );
 
-  Future<void> _nyRunde() async {
-    if (widget.spillere.length < 2) {
-      _snack(context, 'Der skal mindst være 2 tilmeldte', _gold);
+  Opstilling _genererOpstilling({bool bevarLaaste = true}) =>
+      fordel(_fordelingsInput(bevarLaaste: bevarLaaste));
+
+  /// Genererer [antal] runder på én gang og gemmer dem.
+  ///
+  /// Hele pointen med at gøre det samlet: runde 2 kender runde 1. Lavede
+  /// man dem enkeltvis på forhånd, ville de alle tage udgangspunkt i en
+  /// tom dag og kunne finde på det samme hver gang.
+  Future<void> _genererRunder(int antal) async {
+    if (widget.spillere.length < 4) {
+      _snack(context, 'Der skal mindst være 4 tilmeldte', _gold);
       return;
     }
     setState(() => _busy = true);
     if (_brugFastePar) await _genhentFastePar();
-    final ny = _genererOpstilling();
+    if (!mounted) return;
+
+    final opstillinger = fordelFlere(_fordelingsInput(), antal);
     try {
       await TavleService.gemOpsaetning(_tid, _nuvaerendeOpsaetning);
-
-      final nr = _rundeNr + 1;
-      final slut = _afvikling == 'timer'
-          ? DateTime.now().add(Duration(minutes: _minutter))
-          : null;
-      final rid = await TavleService.opretRunde(
+      final foerste = _runder.isEmpty ? 1 : _runder.last.nr + 1;
+      final nye = await TavleService.opretFlereRunder(
         trainingId: _tid,
-        nr: nr,
-        opstilling: ny,
-        slutterAt: slut,
+        foersteNr: foerste,
+        opstillinger: opstillinger,
       );
+      if (nye.isEmpty) {
+        if (mounted) setState(() => _busy = false);
+        return;
+      }
 
-      // Husk hvad runden medførte, så den næste kan tage hensyn til det.
-      for (final par in ny.parrene) {
+      // Første gang sættes uret og tavlen peger på runde 1. Tilføjer man
+      // flere runder senere, rører vi IKKE den der spilles lige nu.
+      final foerstegang = _runder.isEmpty;
+      DateTime? slut;
+      if (foerstegang) {
+        slut = await TavleService.startRunde(
+            nye.first.id, _afvikling == 'timer' ? _minutter : null);
+        await TavleService.saetAktivRunde(_tid, nye.first.nr);
+      }
+      if (!mounted) return;
+      setState(() {
+        _runder = [..._runder, ...nye];
+        if (foerstegang) {
+          _valgt = 0;
+          _aktivNr = nye.first.nr;
+        }
+        _busy = false;
+      });
+      _opdaterEfterRunder(opstillinger);
+      if (slut != null) _startUr(slut);
+    } on PostgrestException catch (e) {
+      if (!mounted) return;
+      setState(() => _busy = false);
+      _snack(context, e.message, _danger);
+    }
+  }
+
+  /// Fører straf og bænk-rotation videre efter at runder er dannet.
+  void _opdaterEfterRunder(List<Opstilling> nye) {
+    for (final op in nye) {
+      for (final par in op.parrene) {
         final n = par.noegle;
         if (n != null) _spilletSammen.add(n);
       }
-      for (final b in ny.baner) {
+      for (final b in op.baner) {
         final n1 = b.par1.noegle, n2 = b.par2.noegle;
         if (n1 != null && n2 != null) {
           _modtFoer.add(n1.compareTo(n2) < 0 ? '$n1#$n2' : '$n2#$n1');
@@ -243,20 +308,46 @@ class _RotationScreenState extends State<RotationScreen> {
           _runderSpillet[sp.id] = (_runderSpillet[sp.id] ?? 0) + 1;
         }
       }
+    }
+  }
 
-      if (!mounted) return;
-      setState(() {
-        _rundeNr = nr;
-        _rundeId = rid;
-        _op = ny;
-        _version = 1;
-        _busy = false;
-      });
-      _startUr(slut);
+  /// Skifter til en runde. Er den allerede forberedt, SLETTES intet — der
+  /// skiftes bare visning, og spillerne følger med.
+  Future<void> _skiftTil(int idx, {bool goerAktiv = false}) async {
+    if (idx < 0 || idx >= _runder.length) return;
+    setState(() {
+      _valgt = idx;
+      _valgtSpiller = null;
+    });
+    if (!goerAktiv) return;
+
+    final r = _runder[idx];
+    setState(() => _aktivNr = r.nr);
+    try {
+      await TavleService.saetAktivRunde(_tid, r.nr);
+      final slut = await TavleService.startRunde(
+          r.id, _afvikling == 'timer' ? _minutter : null);
+      if (mounted) _startUr(slut);
     } on PostgrestException catch (e) {
-      if (!mounted) return;
-      setState(() => _busy = false);
-      _snack(context, e.message, _danger);
+      if (mounted) _snack(context, e.message, _danger);
+    }
+  }
+
+  /// "Næste runde": skift til den næste forberedte, eller lav én mere.
+  Future<void> _naesteRunde() async {
+    if (_runder.isEmpty) {
+      await _genererRunder(_antalRunder);
+      return;
+    }
+    final naeste = _runder.indexWhere((r) => r.nr > _aktivNr);
+    if (naeste >= 0) {
+      await _skiftTil(naeste, goerAktiv: true);
+      return;
+    }
+    // Ingen forberedt runde tilbage — lav én.
+    await _genererRunder(1);
+    if (mounted && _runder.isNotEmpty) {
+      await _skiftTil(_runder.length - 1, goerAktiv: true);
     }
   }
 
@@ -278,12 +369,12 @@ class _RotationScreenState extends State<RotationScreen> {
 
   // ── Bytte om på spillere ─────────────────────────────────────────────────
 
-  TavleSpiller? _valgt;
+  TavleSpiller? _valgtSpiller;
 
   Future<void> _byt(TavleSpiller a, TavleSpiller b) async {
     setState(() {
       _op = _op.byt(a, b);
-      _valgt = null;
+      _valgtSpiller = null;
     });
     await _skrivRunde();
   }
@@ -301,7 +392,7 @@ class _RotationScreenState extends State<RotationScreen> {
     if (!mounted) return;
     setState(() {
       _op = _genererOpstilling();
-      _valgt = null;
+      _valgtSpiller = null;
     });
     await _skrivRunde();
   }
@@ -309,10 +400,17 @@ class _RotationScreenState extends State<RotationScreen> {
   /// Skriver den aktuelle opstilling. Går gennem modellens egen
   /// serialisering, så der kun findes ÉN oversættelse til databasen.
   Future<void> _skrivRunde() async {
-    if (_rundeId == null) return;
+    final r = _runde;
+    if (r == null) return;
     try {
-      _version = await TavleService.skrivOpstilling(_rundeId!, _op,
-          version: _version);
+      // Hver runde har sin egen version, så en rettelse i runde 1 ikke
+      // kan forveksles med en rettelse i runde 2.
+      final ny = await TavleService.skrivOpstilling(r.id, r.opstilling,
+          version: r.version);
+      if (mounted) {
+        setState(() => _runder[_valgt] = r.medOpstilling(r.opstilling,
+            version: ny));
+      }
     } on PostgrestException catch (e) {
       if (!mounted) return;
       // 40001 = en anden har ændret tavlen imens. Hent forfra frem for at
@@ -402,6 +500,28 @@ class _RotationScreenState extends State<RotationScreen> {
           child: Text(_fordelingsTekst,
               style: _body(size: 11.5, color: _textMuted)),
         ),
+        Text('Runder der forberedes',
+            style: _body(size: 12.5, color: _textSecondary)),
+        const SizedBox(height: 8),
+        Row(children: [
+          for (final n in [1, 2, 3, 4]) ...[
+            if (n > 1) const SizedBox(width: 6),
+            Expanded(
+              child: _valgKnap('$n', _antalRunder == n,
+                  () => setState(() => _antalRunder = n), kompakt: true),
+            ),
+          ],
+        ]),
+        Padding(
+          padding: const EdgeInsets.only(top: 6, bottom: 16),
+          child: Text(
+              _antalRunder == 1
+                  ? 'Én runde dannes nu. Du kan altid tilføje flere.'
+                  : 'Alle $_antalRunder runder dannes på én gang. Runde 2 '
+                      'kender runde 1, så ingen får samme makker to gange '
+                      'i træk.',
+              style: _body(size: 11.5, color: _textMuted)),
+        ),
         Text('Afvikling', style: _body(size: 12.5, color: _textSecondary)),
         const SizedBox(height: 8),
         Row(children: [
@@ -435,6 +555,109 @@ class _RotationScreenState extends State<RotationScreen> {
     } on PostgrestException catch (e) {
       if (mounted) _snack(context, e.message, _danger);
     }
+  }
+
+  /// Rundevælgeren. Ét tryk pr. runde — træneren kan klikke frem og
+  /// tilbage og rette i hver enkelt uden at noget slettes.
+  ///
+  /// Den runde der AFVIKLES er markeret med en prik; den man KIGGER på
+  /// er fyldt. De to er ikke nødvendigvis den samme: man kan forberede
+  /// runde 3 mens holdet spiller runde 1.
+  Widget _rundeVaelger() {
+    if (_runder.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(children: [
+          for (final (i, r) in _runder.indexed) ...[
+            if (i > 0) const SizedBox(width: 8),
+            GestureDetector(
+              onTap: _busy ? null : () => _skiftTil(i),
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 15, vertical: 9),
+                decoration: BoxDecoration(
+                  color: i == _valgt
+                      ? _neon.withValues(alpha: 0.18)
+                      : Colors.transparent,
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(
+                      color: i == _valgt ? _neon : _borderSubtle),
+                ),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  if (r.nr == _aktivNr) ...[
+                    Container(
+                      width: 7,
+                      height: 7,
+                      decoration: const BoxDecoration(
+                          color: _success, shape: BoxShape.circle),
+                    ),
+                    const SizedBox(width: 7),
+                  ],
+                  Text('Runde ${r.nr}',
+                      style: _body(
+                          size: 13,
+                          weight: FontWeight.w700,
+                          color: i == _valgt ? _textPrimary : _textSecondary)),
+                ]),
+              ),
+            ),
+          ],
+          const SizedBox(width: 8),
+          GestureDetector(
+            onTap: _busy ? null : () => _genererRunder(1),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 9),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(999),
+                border: Border.all(color: _borderSubtle),
+              ),
+              child: const Icon(Icons.add, size: 17, color: _textMuted),
+            ),
+          ),
+        ]),
+      ),
+    );
+  }
+
+  /// Linjen der fortæller hvad man kigger på, når det ikke er den runde
+  /// holdet spiller. Uden den kunne man komme til at rette i runde 3 og
+  /// undre sig over at der ikke skete noget på banen.
+  Widget _forberedtBesked() {
+    final r = _runde;
+    if (r == null || r.nr == _aktivNr) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: _gold.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: _gold.withValues(alpha: 0.45)),
+        ),
+        child: Row(children: [
+          const Icon(Icons.edit_calendar_outlined, size: 16, color: _gold),
+          const SizedBox(width: 9),
+          Expanded(
+            child: Text(
+                r.nr > _aktivNr
+                    ? 'Forberedt runde — holdet spiller runde $_aktivNr'
+                    : 'Tidligere runde — holdet spiller runde $_aktivNr',
+                style: _body(size: 12, weight: FontWeight.w600, color: _gold)),
+          ),
+          TextButton(
+            onPressed: _busy ? null : () => _skiftTil(_valgt, goerAktiv: true),
+            style: TextButton.styleFrom(
+              foregroundColor: _gold,
+              textStyle: _body(size: 12, weight: FontWeight.w700),
+              visualDensity: VisualDensity.compact,
+            ),
+            child: const Text('Kør denne nu'),
+          ),
+        ]),
+      ),
+    );
   }
 
   /// Tilstandsknapperne mens en runde kører.
@@ -542,7 +765,7 @@ class _RotationScreenState extends State<RotationScreen> {
 
   /// Én spiller på banen. Tryk vælger; tryk på en anden bytter de to om.
   Widget _spillerBrik(TavleSpiller s) {
-    final valgt = _valgt?.id == s.id;
+    final valgt = _valgtSpiller?.id == s.id;
     final info = _sideInfo(s.side);
     return Padding(
       padding: const EdgeInsets.only(bottom: 6),
@@ -551,12 +774,12 @@ class _RotationScreenState extends State<RotationScreen> {
         borderRadius: BorderRadius.circular(10),
         child: InkWell(
           onTap: () {
-            if (_valgt == null) {
-              setState(() => _valgt = s);
-            } else if (_valgt!.id == s.id) {
-              setState(() => _valgt = null);
+            if (_valgtSpiller == null) {
+              setState(() => _valgtSpiller = s);
+            } else if (_valgtSpiller!.id == s.id) {
+              setState(() => _valgtSpiller = null);
             } else {
-              _byt(_valgt!, s);
+              _byt(_valgtSpiller!, s);
             }
           },
           borderRadius: BorderRadius.circular(10),
@@ -945,17 +1168,19 @@ class _RotationScreenState extends State<RotationScreen> {
                                   style: _body(
                                       size: 12.5, color: _textSecondary)),
                             ] else ...[
-                              if (_valgt != null)
+                              if (_valgtSpiller != null)
                                 Padding(
                                   padding: const EdgeInsets.only(bottom: 12),
                                   child: Text(
                                       'Tryk på en anden spiller for at bytte '
-                                      '${_valgt!.navn} om',
+                                      '${_valgtSpiller!.navn} om',
                                       style: _body(
                                           size: 12.5,
                                           weight: FontWeight.w600,
                                           color: _neon)),
                                 ),
+                              _rundeVaelger(),
+                              _forberedtBesked(),
                               _kontrolStribe(),
                               // Faste par kan også oprettes og fjernes
                               // midt i en træning — ellers skulle man
@@ -1015,12 +1240,22 @@ class _RotationScreenState extends State<RotationScreen> {
                 ),
       floatingActionButton: _loading
           ? null
-          : FloatingActionButton.extended(
-              onPressed: _busy ? null : _nyRunde,
-              backgroundColor: _neon,
-              icon: Icon(_rundeNr == 0 ? Icons.play_arrow : Icons.skip_next),
-              label: Text(_rundeNr == 0 ? 'Start runde 1' : 'Næste runde'),
-            ),
+          : Builder(builder: (_) {
+              final tom = _runder.isEmpty;
+              // Er der en forberedt runde forude, SKIFTER knappen bare
+              // til den. Først når der ikke er flere, laves en ny.
+              final harForberedt = _runder.any((r) => r.nr > _aktivNr);
+              return FloatingActionButton.extended(
+                onPressed: _busy ? null : _naesteRunde,
+                backgroundColor: _neon,
+                icon: Icon(tom ? Icons.play_arrow : Icons.skip_next),
+                label: Text(tom
+                    ? 'Generér $_antalRunder runder'
+                    : harForberedt
+                        ? 'Kør næste runde'
+                        : 'Ny runde'),
+              );
+            }),
     );
   }
 }

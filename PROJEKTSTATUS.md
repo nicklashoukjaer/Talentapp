@@ -105,6 +105,14 @@ tilmeldt, springes parret over. **Bænken** er eksplicit: `baner`
 bestemmer hvor mange der spiller, og den der har spillet færrest runder
 kommer ind først.
 
+**Flere runder kan forberedes på forhånd.** Træneren vælger hvor mange
+og trykker generér; de dannes i én omgang, så runde 2 kender runde 1 og
+ingen får samme makker to gange i træk. En rundevælger øverst skifter
+mellem dem, og hver runde redigeres uafhængigt med sin egen version.
+`training_boards.aktiv_runde` peger på den der afvikles — ellers ville
+spillerne se runde 3 mens holdet stod i runde 1. Forberedte runder
+vises ikke for spillerne før de er nået.
+
 **Spillerne** har deres egen skærm — bane, makker og modstandere, med
 træk-ned. Trænerens tavle er et værktøj; spilleren skal kun vide hvor
 hun skal hen.

@@ -147,6 +147,50 @@ void main() {
       expect(r.alle.length, 8);
     });
 
+    // Den fejl der blev set på tavlen: den 11. spiller stod alene i et
+    // par på en bane i stedet for at sidde over.
+    test('11 spillere på 3 baner giver INGEN halve par', () {
+      final elleve = [for (var i = 0; i < 11; i++) sp('s$i')];
+      final r = fordel(FordelingsInput(spillere: elleve, baner: 3));
+      for (final b in r.baner) {
+        expect(b.par1.spillere.length, 2, reason: 'bane ${b.nr} par 1');
+        expect(b.par2.spillere.length, 2, reason: 'bane ${b.nr} par 2');
+      }
+      expect(r.baner.length, 2, reason: 'kun hele baner');
+      expect(r.baenk.length, 3);
+      expect(r.alle.length, 11, reason: 'ingen må forsvinde');
+    });
+
+    test('alle ulige antal fordeles uden halve par', () {
+      for (var n = 1; n <= 23; n++) {
+        final folk = [for (var i = 0; i < n; i++) sp('s$i')];
+        final r = fordel(FordelingsInput(spillere: folk, baner: 4));
+        for (final b in r.baner) {
+          expect(b.par1.spillere.length, 2, reason: '\$n spillere');
+          expect(b.par2.spillere.length, 2, reason: '\$n spillere');
+        }
+        expect(r.alle.length, n, reason: '\$n spillere må ikke forsvinde');
+        expect(r.baner.length, n ~/ 4 > 4 ? 4 : n ~/ 4,
+            reason: '\$n spillere skal give hele baner');
+      }
+    });
+
+    test('opdelt med ulige hold sætter de overskydende på bænken', () {
+      // T1 har 5, T2 har 5 — begge ulige, så én fra hvert hold må vente.
+      final ti = [for (var i = 0; i < 10; i++) sp('s$i')];
+      final r = fordel(FordelingsInput(
+        spillere: ti,
+        baner: 3,
+        tilstand: 'opdelt',
+        holdAf: {for (var i = 0; i < 10; i++) 's$i': i < 5 ? 'T1' : 'T2'},
+      ));
+      for (final b in r.baner) {
+        expect(b.par1.spillere.length, 2);
+        expect(b.par2.spillere.length, 2);
+      }
+      expect(r.alle.length, 10);
+    });
+
     test('ingen spiller optræder to steder', () {
       final tolv = [for (var i = 0; i < 12; i++) sp('s$i')];
       final r = fordel(FordelingsInput(spillere: tolv, baner: 2));

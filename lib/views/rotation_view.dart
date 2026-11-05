@@ -88,6 +88,21 @@ class _RotationScreenState extends State<RotationScreen> {
 
   String get _tid => widget.training['id'] as String;
 
+  /// Hvor mange der faktisk kommer på banen. Samme regnestykke som
+  /// fordelingen: fire pr. bane, rundet NED til hele baner — elleve
+  /// spillere på tre baner giver otte på banen, ikke elleve.
+  int get _paaBaneNu {
+    final plads = _baner * 4;
+    final hele = (widget.spillere.length ~/ 4) * 4;
+    return plads < hele ? plads : hele;
+  }
+
+  int get _overNu => widget.spillere.length - _paaBaneNu;
+
+  String get _fordelingsTekst => _overNu > 0
+      ? '$_paaBaneNu på banen · $_overNu sidder over pr. runde'
+      : '$_paaBaneNu på banen · alle er med';
+
   TavleOpsaetning get _nuvaerendeOpsaetning => TavleOpsaetning(
       tilstand: _tilstand,
       afvikling: _afvikling,
@@ -384,11 +399,7 @@ class _RotationScreenState extends State<RotationScreen> {
         ]),
         Padding(
           padding: const EdgeInsets.only(top: 6, bottom: 16),
-          child: Text(
-              '${_baner * 4} spiller ad gangen'
-              '${widget.spillere.length > _baner * 4
-                  ? ' · ${widget.spillere.length - _baner * 4} sidder over pr. runde'
-                  : ''}',
+          child: Text(_fordelingsTekst,
               style: _body(size: 11.5, color: _textMuted)),
         ),
         Text('Afvikling', style: _body(size: 12.5, color: _textSecondary)),
@@ -493,11 +504,11 @@ class _RotationScreenState extends State<RotationScreen> {
           ]),
           const SizedBox(height: 8),
           Text(
-              _tilstand == 'opdelt'
-                  ? 'Der roteres kun internt på hvert hold. Slår igennem '
-                      'ved næste runde.'
-                  : 'Spillere blandes på tværs af holdene. Slår igennem '
-                      'ved næste runde.',
+              '$_fordelingsTekst · '
+              '${_tilstand == 'opdelt'
+                  ? 'kun internt på hvert hold'
+                  : 'blandet på tværs af holdene'}'
+              ' · slår igennem ved næste runde',
               style: _body(size: 11, color: _textMuted)),
         ],
       ),
@@ -946,6 +957,12 @@ class _RotationScreenState extends State<RotationScreen> {
                                           color: _neon)),
                                 ),
                               _kontrolStribe(),
+                              // Faste par kan også oprettes og fjernes
+                              // midt i en træning — ellers skulle man
+                              // lukke tavlen for at rette en
+                              // konstellation.
+                              _fastePartKort(),
+                              const SizedBox(height: 14),
                               // Tegnes ALTID når en runde er i gang — også
                               // uden låse, hvor den bare blander alle.
                               Padding(

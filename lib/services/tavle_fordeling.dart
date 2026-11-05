@@ -112,14 +112,23 @@ Opstilling fordel(FordelingsInput ind) {
   // Der er plads til fire pr. bane. Er der flere tilmeldte, prioriteres de
   // der har spillet færrest runder — så siddetiden fordeler sig af sig
   // selv over en træning.
+  //
+  // Der rundes NED til hele baner. Elleve spillere på tre baner bliver
+  // altså otte på banen og tre på bænken — ikke fem par hvor det ene
+  // står med én mand. Tre personer kan ikke spille en padelkamp, og en
+  // halv opstilling på tavlen ligner en fejl.
   final plads = ind.baner * 4;
+  final heleBaner = (ind.spillere.length ~/ 4) * 4;
+  final paaBane = plads < heleBaner ? plads : heleBaner;
+
   final kandidater = ind.spillere.where((s) => !laasteIds.contains(s.id)).toList()
     ..shuffle()
     ..sort((a, b) => (ind.runderSpillet[a.id] ?? 0)
         .compareTo(ind.runderSpillet[b.id] ?? 0));
 
-  final tilbage = plads - laasteIds.length;
-  var spiller = kandidater.take(tilbage < 0 ? 0 : tilbage).toList();
+  var tilbage = paaBane - laasteIds.length;
+  if (tilbage < 0) tilbage = 0;
+  var spiller = kandidater.take(tilbage).toList();
   var baenk = kandidater.skip(spiller.length).toList();
 
   // Et fast par må ikke splittes af bænken: er den ene med og den anden
@@ -131,7 +140,21 @@ Opstilling fordel(FordelingsInput ind) {
   final laasteSaet = {for (final p in ind.laaste) if (p.length == 2) _n(p)};
 
   for (final pulje in _puljer(spiller, ind)) {
-    par.addAll(_parDan(pulje, ind, laasteSaet));
+    final (dannet, tilOvers) = _parDan(pulje, ind, laasteSaet);
+    par.addAll(dannet);
+    // En pulje med ulige antal — typisk et hold i "opdelt" — efterlader
+    // én uden makker. Den sidste går på bænken frem for at stå alene på
+    // en bane.
+    baenk.addAll(tilOvers);
+  }
+
+  // Et ULIGE antal par ville give en bane med kun ét par, og to spillere
+  // kan ikke spille en kamp alene. Så ryger det mindst presserende par
+  // på bænken — det hvis spillere har været på banen flest gange.
+  while (par.length.isOdd || par.length > ind.baner * 2) {
+    final idx = _mindstPresserende(par, ind, laasteSaet);
+    if (idx < 0) break; // alt er låst; så står det som det er
+    baenk.addAll(par.removeAt(idx));
   }
 
   // ── 3. Fordel parrene på baner ────────────────────────────────────────
@@ -139,6 +162,25 @@ Opstilling fordel(FordelingsInput ind) {
 }
 
 String _n(List<TavleSpiller> p) => parNoegle(p[0].id, p[1].id);
+
+/// Hvilket par kan bedst undværes? Det hvis spillere har spillet flest
+/// runder. Låste par røres ikke — træneren har sagt at de skal stå.
+/// Returnerer -1 hvis der ikke er noget at fjerne.
+int _mindstPresserende(List<List<TavleSpiller>> par, FordelingsInput ind,
+    Set<String> laaste) {
+  var bedst = -1, flest = -1;
+  for (var i = 0; i < par.length; i++) {
+    final p = par[i];
+    if (p.length == 2 && laaste.contains(_n(p))) continue;
+    final spillet = p.fold<int>(
+        0, (sum, s) => sum + (ind.runderSpillet[s.id] ?? 0));
+    if (spillet > flest) {
+      flest = spillet;
+      bedst = i;
+    }
+  }
+  return bedst;
+}
 
 /// Sikrer at begge halvdele af et fast par enten spiller eller sidder over.
 (List<TavleSpiller>, List<TavleSpiller>) _holdFastePraSamlet(
@@ -225,7 +267,8 @@ int parPoint(TavleSpiller a, TavleSpiller b, FordelingsInput ind) {
 
 /// Danner par i én pulje: bedste karakter først, derefter et forsøg på at
 /// bytte sig til en bedre samlet sum.
-List<List<TavleSpiller>> _parDan(
+/// @returns (de dannede par, dem der blev til overs uden makker)
+(List<List<TavleSpiller>>, List<TavleSpiller>) _parDan(
   List<TavleSpiller> pulje,
   FordelingsInput ind,
   Set<String> alleredeLaast,
@@ -276,12 +319,11 @@ List<List<TavleSpiller>> _parDan(
 
   par.addAll(dannet);
 
-  // Den sidste uden makker, hvis antallet er ulige.
+  // Dem der ikke fik en makker. De sendes RETUR til kalderen og havner
+  // på bænken — før blev de lagt ind som et par med én spiller, og så
+  // stod der en mand alene på en bane.
   final alene = rest.where((s) => !brugt.contains(s.id)).toList();
-  for (final s in alene) {
-    par.add([s]);
-  }
-  return par;
+  return (par, alene);
 }
 
 /// Bytter makkere to par ad gangen så længe det giver flere point.
@@ -321,13 +363,12 @@ List<TavleBane> _paaBaner(
   final laasteSaet = {for (final p in ind.laaste) if (p.length == 2) _n(p)};
 
   var nr = 1;
-  while (rest.isNotEmpty && nr <= ind.baner) {
+  // To par pr. bane. Er der et ulige antal tilbage, bliver det sidste
+  // IKKE sat ud alene — kalderen har allerede flyttet det til bænken, og
+  // skulle noget slippe igennem, er en udeladt bane bedre end en bane
+  // man ikke kan spille på.
+  while (rest.length >= 2 && nr <= ind.baner) {
     final a = rest.removeAt(0);
-    if (rest.isEmpty) {
-      ud.add(TavleBane(nr, TavlePar(a, laast: _erLaastPar(a, laasteSaet)),
-          const TavlePar.tom()));
-      break;
-    }
     // Find en modstander man ikke lige har mødt.
     var idx = rest.indexWhere((b) =>
         a.length == 2 && b.length == 2 && !ind.modtFoer.contains(_vs(a, b)));

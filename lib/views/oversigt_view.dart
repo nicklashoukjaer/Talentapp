@@ -862,6 +862,79 @@ class _OversigtTabState extends State<OversigtTab>
     return bedst;
   }
 
+  /// Spillerens egen genvej: træningen jeg er tilmeldt lige nu, og som jeg
+  /// IKKE selv styrer — dem der styrer har deres egen knap ovenfor.
+  _TrainingFeedItem? get _minTavleTraening {
+    final nu = DateTime.now();
+    for (final t in _items.whereType<_TrainingFeedItem>()) {
+      if (!_showInTrainingTab(t.training['titel'] as String)) continue;
+      if (_canManageTraining(t.training)) continue;
+      if (t.myStatus != 'tilmeldt') continue;
+      final start = DateTime.parse(t.training['start_tid'] as String).toLocal();
+      if (start.difference(nu).abs() > const Duration(hours: 3)) continue;
+      return t;
+    }
+    return null;
+  }
+
+  /// training_id → højeste rundenummer. Tom indtil der er spurgt.
+  Map<String, int> _aktiveTavler = const {};
+  String? _tavleTjekket;
+
+  /// Spørger ÉN gang pr. træning om der er en tavle i gang. Kaldet er
+  /// "fire and forget": kan det ikke lade sig gøre, vises genvejen bare
+  /// ikke — feedet må ikke vente på det.
+  void _tjekAktivTavle() {
+    final t = _minTavleTraening;
+    if (t == null) return;
+    final id = t.training['id'] as String;
+    if (_tavleTjekket == id) return;
+    _tavleTjekket = id;
+    unawaited(() async {
+      final svar = await TavleService.hentAktiveTavler([id]);
+      if (!mounted || svar.isEmpty) return;
+      setState(() => _aktiveTavler = svar);
+    }());
+  }
+
+  /// "Se min bane" — kun når træneren faktisk har sat en runde i gang.
+  Widget _minBaneKnap(_TrainingFeedItem t, int runde) => Padding(
+        padding: const EdgeInsets.only(bottom: 14),
+        child: Material(
+          color: _neon.withValues(alpha: 0.14),
+          borderRadius: BorderRadius.circular(14),
+          child: InkWell(
+            onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                builder: (_) => TavleSpillerSkaerm(training: t.training))),
+            borderRadius: BorderRadius.circular(14),
+            child: Container(
+              padding: const EdgeInsets.fromLTRB(14, 13, 12, 13),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: _neon.withValues(alpha: 0.5)),
+              ),
+              child: Row(children: [
+                const Text('🎾', style: TextStyle(fontSize: 19)),
+                const SizedBox(width: 11),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text('Se min bane',
+                          style: _body(size: 13.5, weight: FontWeight.w700)),
+                      Text('Runde $runde er i gang',
+                          style: _body(size: 11.5, color: _textSecondary)),
+                    ],
+                  ),
+                ),
+                const Icon(Icons.chevron_right, color: _textMuted),
+              ]),
+            ),
+          ),
+        ),
+      );
+
   /// Genvejen. Tegnes kun når der FAKTISK er en træning lige nu — ellers
   /// ville den stå som en død knap 364 dage om året.
   Widget _dagensTavleKnap(_TrainingFeedItem t) {
@@ -2053,6 +2126,20 @@ class _OversigtTabState extends State<OversigtTab>
                       return t == null
                           ? const SizedBox.shrink()
                           : _dagensTavleKnap(t);
+                    }),
+                  // Spillerens egen genvej. Vises kun når træneren har
+                  // sat en runde i gang — ellers ville den love noget
+                  // der ikke er der endnu.
+                  if (showingTrainings && !_showHistory)
+                    Builder(builder: (_) {
+                      _tjekAktivTavle();
+                      final t = _minTavleTraening;
+                      final runde = t == null
+                          ? null
+                          : _aktiveTavler[t.training['id'] as String];
+                      return (t == null || runde == null)
+                          ? const SizedBox.shrink()
+                          : _minBaneKnap(t, runde);
                     }),
                   // Push kan ikke slås til for folk — de skal selv trykke ja.
                   // Banneret tegner sig selv væk når de har gjort det.
@@ -4430,6 +4517,10 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
   String? _error;
   bool _busy = false;
   String? _myId;
+
+  /// Er jeg selv tilmeldt? Afgør om "Se min bane" vises.
+  bool get _erMedSelv =>
+      _myId != null && _tilmeldt.any((p) => p.id == _myId);
   int _tab = 0;          // 0 = Deltagere, 1 = Kommentarer
   int _commentCount = 0; // vist på kommentar-fanen
   bool _showAllMissing = false; // fold lange "mangler svar"-lister ud
@@ -5070,6 +5161,33 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                                   icon: const Icon(Icons.grid_view_rounded,
                                       size: 18),
                                   label: const Text('Tavle / Runder'),
+                                  style: FilledButton.styleFrom(
+                                    backgroundColor: _neon,
+                                    padding: const EdgeInsets.symmetric(
+                                        vertical: 13),
+                                  ),
+                                ),
+                              ),
+                            ],
+                            // Spillerens egen visning. Vises til ALLE der
+                            // er med på træningen, ikke kun dem der må
+                            // styre den — de skal bare vide hvilken bane
+                            // de står på.
+                            if (!widget.canManage &&
+                                _erMedSelv &&
+                                _showInTrainingTab(
+                                    widget.training['titel'] as String)) ...[
+                              const SizedBox(height: 20),
+                              SizedBox(
+                                width: double.infinity,
+                                child: FilledButton.icon(
+                                  onPressed: () => Navigator.of(context).push(
+                                      MaterialPageRoute(
+                                          builder: (_) => TavleSpillerSkaerm(
+                                              training: widget.training))),
+                                  icon: const Icon(Icons.sports_tennis,
+                                      size: 18),
+                                  label: const Text('Se min bane'),
                                   style: FilledButton.styleFrom(
                                     backgroundColor: _neon,
                                     padding: const EdgeInsets.symmetric(

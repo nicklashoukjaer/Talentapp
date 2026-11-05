@@ -91,6 +91,29 @@ kommentarnotifikationer — slås trænere op i `group_members`, ikke via
 
 ## 4. Hvad der er bygget
 
+### Tavlen (opstillinger til træning)
+
+Træneren fordeler de tilmeldte på baner og kører runder. Fordelingen
+giver hvert muligt par en karakter og vælger de bedste først:
+stjernemarkering (+40), spillerens egne makkervalg (+30/+20, +15 hvis
+gensidigt), venstre sammen med højre (+25, −20 hvis to ens), spillet
+sammen i dag (−60) og tidligere (−5 pr. gang, loft −25). Derefter
+byttes makkere to par ad gangen så længe summen stiger.
+
+**Faste par** pr. hold er bindende og kan ikke splittes. Er kun den ene
+tilmeldt, springes parret over. **Bænken** er eksplicit: `baner`
+bestemmer hvor mange der spiller, og den der har spillet færrest runder
+kommer ind først.
+
+**Spillerne** har deres egen skærm — bane, makker og modstandere, med
+træk-ned. Trænerens tavle er et værktøj; spilleren skal kun vide hvor
+hun skal hen.
+
+Fordelingen ligger i `services/tavle_fordeling.dart` uden database og
+uden skærm, og har 15 tests. Kør dem med
+`flutter test --platform chrome` — den almindelige kørsel fejler i
+Xcodes SDK på udviklermaskinen.
+
 ### Begivenheder
 Træninger og kampe, knyttet til ét eller flere hold. Serieoprettelse med
 interval (hver 1.–4. uge). Udgivelsesdato, så en hel sæson kan lægges ind
@@ -203,7 +226,7 @@ og det kan ikke trækkes tilbage.
 **Ingen sæsonarkivering i bødekassen.** Ranglisten viser hele historikken.
 Periodeopgørelsen dækker delvist behovet, men bøder nulstilles aldrig.
 
-**Ingen tests.** Se afsnit 5.
+**Næsten ingen tests.** Kun fordelingen i tavlen er dækket (15 stk.). Resten afprøves manuelt og med rollback-forespørgsler. Se afsnit 5.
 
 ---
 

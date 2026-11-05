@@ -102,6 +102,29 @@ class TavleDeltagere {
   const TavleDeltagere(this.spillere, this.holdAf);
 }
 
+/// Én runde set fra én spillers stol.
+class SpillerRunde {
+  final int nr;
+
+  /// Null når spilleren sad over i runden.
+  final int? bane;
+  final TavleSpiller? makker;
+  final List<TavleSpiller> modstandere;
+
+  /// Hvornår runden slutter, hvis træneren kører med ur.
+  final DateTime? slutterAt;
+
+  const SpillerRunde({
+    required this.nr,
+    this.bane,
+    this.makker,
+    this.modstandere = const [],
+    this.slutterAt,
+  });
+
+  bool get sidderOver => bane == null;
+}
+
 class TavleService {
   static const _kemiNoegle = 'par_kemi';
 
@@ -425,6 +448,99 @@ class TavleService {
         .eq('round_id', roundId)
         .order('bane', ascending: true) as List);
     return Opstilling.fraRaekker(rows, {for (final s in spillere) s.id: s});
+  }
+
+  // ── Spillerens egen visning ────────────────────────────────────────────
+
+  /// Alle runder, set fra [uid]'s stol — nyeste først.
+  ///
+  /// Læseadgangen findes allerede: RLS på runder og pladser tillader alle
+  /// indloggede at se dem. Spilleren skal bare have det vist uden at
+  /// skulle åbne trænerens tavle.
+  static Future<List<SpillerRunde>> hentSpillerRunder(
+    Map<String, dynamic> training,
+    String uid,
+  ) async {
+    final tid = training['id'] as String;
+    final runder = List<Map<String, dynamic>>.from(await supabase
+        .from('training_rounds')
+        .select('id, nr, slutter_at')
+        .eq('training_id', tid)
+        .order('nr', ascending: false) as List);
+    if (runder.isEmpty) return const [];
+
+    final slots = List<Map<String, dynamic>>.from(await supabase
+        .from('training_round_slots')
+        .select('round_id, bane, par, user_id, guest_id')
+        .inFilter('round_id', [for (final r in runder) r['id'] as String])
+        as List);
+
+    final navne = {
+      for (final s in (await hentDeltagere(training)).spillere) s.id: s
+    };
+
+    final ud = <SpillerRunde>[];
+    for (final r in runder) {
+      final rid = r['id'] as String;
+      final mine = slots.where((s) => s['round_id'] == rid).toList();
+      final min = mine.firstWhere((s) => s['user_id'] == uid,
+          orElse: () => const <String, dynamic>{});
+
+      // Ikke med i runden overhovedet — hverken på bane eller bænk.
+      if (min.isEmpty) continue;
+
+      final bane = (min['bane'] as num?)?.toInt();
+      final par = (min['par'] as num?)?.toInt();
+      final nr = (r['nr'] as num).toInt();
+      final slut = r['slutter_at'] == null
+          ? null
+          : DateTime.parse(r['slutter_at'] as String).toLocal();
+
+      if (bane == null) {
+        ud.add(SpillerRunde(nr: nr, slutterAt: slut));
+        continue;
+      }
+
+      TavleSpiller? navnFor(Map<String, dynamic> s) =>
+          navne[(s['user_id'] ?? s['guest_id']) as String? ?? ''];
+
+      final paaBanen = mine.where((s) => s['bane'] == bane);
+      ud.add(SpillerRunde(
+        nr: nr,
+        bane: bane,
+        slutterAt: slut,
+        makker: paaBanen
+            .where((s) => s['par'] == par && s['user_id'] != uid)
+            .map(navnFor)
+            .firstWhere((x) => x != null, orElse: () => null),
+        modstandere: [
+          for (final s in paaBanen.where((s) => s['par'] != par))
+            if (navnFor(s) != null) navnFor(s)!
+        ],
+      ));
+    }
+    return ud;
+  }
+
+  /// Er der en tavle i gang for træningen? Bruges af genvejen i Oversigt.
+  static Future<Map<String, int>> hentAktiveTavler(
+      List<String> trainingIds) async {
+    if (trainingIds.isEmpty) return const {};
+    try {
+      final rows = List<Map<String, dynamic>>.from(await supabase
+          .from('training_rounds')
+          .select('training_id, nr')
+          .inFilter('training_id', trainingIds) as List);
+      final ud = <String, int>{};
+      for (final r in rows) {
+        final t = r['training_id'] as String;
+        final nr = (r['nr'] as num).toInt();
+        if (nr > (ud[t] ?? 0)) ud[t] = nr;
+      }
+      return ud;
+    } catch (_) {
+      return const {};
+    }
   }
 
   // ── Skrivning ──────────────────────────────────────────────────────────

@@ -38,6 +38,7 @@ part 'views/bodekasse_view.dart';
 part 'views/dashboard_view.dart';
 part 'views/polls_view.dart';
 part 'views/rotation_view.dart';
+part 'views/tavle_spiller_view.dart';
 part 'views/par_overblik_view.dart';
 part 'views/common_fields_view.dart';
 

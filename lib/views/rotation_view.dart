@@ -61,6 +61,24 @@ class _RotationScreenState extends State<RotationScreen> {
   /// tidligere træning også vises.
   Set<String> _kemi = {};
 
+  /// Faste par for begivenhedens hold. Bindende — kan ikke splittes.
+  Set<String> _fastePar = {};
+
+  /// Spillernes egne makkervalg.
+  Map<String, List<String>> _favoritter = const {};
+
+  /// Hvor ofte par har spillet sammen tidligere.
+  Map<String, int> _historik = const {};
+
+  /// Runder spillet i denne træning. Styrer hvem der sidder over.
+  Map<String, int> _runderSpillet = const {};
+
+  /// Modstanderpar der allerede er mødtes i dag.
+  Set<String> _modtFoer = {};
+
+  /// Rundens version, så to trænere ikke overskriver hinanden.
+  int _version = 1;
+
   Timer? _ur;
   Duration _tilbage = Duration.zero;
 
@@ -88,7 +106,11 @@ class _RotationScreenState extends State<RotationScreen> {
     // Stjernerne fra cachen først, så tavlen tegner uden spinner.
     _kemi = TavleService.kemiFraCache();
     try {
-      final start = await TavleService.hentStart(_tid);
+      final start = await TavleService.hentStart(
+        _tid,
+        gruppeIds: _trainingGroupIds(widget.training),
+        deltagere: widget.spillere,
+      );
       final op = start.rundeId == null
           ? const Opstilling.tom()
           : await TavleService.hentRunde(start.rundeId!, widget.spillere);
@@ -97,9 +119,19 @@ class _RotationScreenState extends State<RotationScreen> {
         _tilstand = start.opsaetning.tilstand;
         _afvikling = start.opsaetning.afvikling;
         _minutter = start.opsaetning.minutter;
-        _baner = start.opsaetning.baner;
+        // Uden en gemt opsætning gættes antallet ud fra de tilmeldte, så
+        // ingen havner på bænken bare fordi standarden var to baner.
+        _baner = start.harOpsaetning
+            ? start.opsaetning.baner
+            : ((widget.spillere.length + 3) ~/ 4).clamp(1, 6);
         _kemi = start.kemi;
         _spilletSammen = start.spilletSammen;
+        _fastePar = start.fastePar;
+        _favoritter = start.favoritter;
+        _historik = start.historik;
+        _runderSpillet = start.runderSpillet;
+        _modtFoer = start.modtFoer;
+        _version = start.version;
         _rundeNr = start.rundeNr;
         _rundeId = start.rundeId;
         _op = op;
@@ -113,120 +145,27 @@ class _RotationScreenState extends State<RotationScreen> {
 
   // ── Generering ───────────────────────────────────────────────────────────
   //
-  // Prioriteringen er: sæt venstre sammen med højre, undgå par der allerede
-  // har spillet sammen i dag, og fordel jævnt over banerne. Stjernen bruges
-  // IKKE her — den er trænerens notat, ikke et input til fordelingen.
+  // Selve fordelingen ligger i tavle_fordeling.dart. Den kender hverken
+  // database eller skærm og kan derfor prøves af for sig.
 
-  /// Fordeler spillerne. [bevarLaaste] holder de låste par på deres plads og
-  /// blander kun resten — det er det "Bland ulåste" gør, og det næste runde
-  /// gør, så en træner kan fastlåse fx seks spillere og lade appen tage de
-  /// øvrige ti hver gang.
-  List<TavleBane> _generer({bool bevarLaaste = true}) {
-    final fastholdt = <int, Map<int, List<TavleSpiller>>>{};
-    final bundne = <String>{};
-    if (bevarLaaste) {
-      for (final b in _op.baner) {
-        for (final (i, p) in [b.par1, b.par2].indexed) {
-          if (!p.laast || p.erTom) continue;
-          (fastholdt[b.nr] ??= {})[i + 1] = [...p.spillere];
-          bundne.addAll(p.spillere.map((s) => s.id));
-        }
-      }
-    }
-    final frie =
-        widget.spillere.where((s) => !bundne.contains(s.id)).toList();
-    return _fordel(frie, fastholdt);
-  }
-
-  List<TavleBane> _fordel(List<TavleSpiller> frie,
-      Map<int, Map<int, List<TavleSpiller>>> fastholdt) {
-    final puljer = <List<TavleSpiller>>[];
-    if (_tilstand == 'opdelt') {
-      final efterHold = <String, List<TavleSpiller>>{};
-      for (final s in frie) {
-        (efterHold[widget.holdAf[s.id] ?? 'Uden hold'] ??= []).add(s);
-      }
-      puljer.addAll(efterHold.values);
-    } else {
-      puljer.add([...frie]);
-    }
-
-    final ud = <TavleBane>[];
-    var baneNr = 1;
-    for (final pulje in puljer) {
-      final rest = [...pulje]..shuffle();
-      // Venstre- og højrespillere hver for sig, så de kan parres på tværs.
-      final venstre = rest.where((s) => s.side == 'venstre').toList();
-      final hoejre = rest.where((s) => s.side == 'hoejre').toList();
-      final resten = rest
-          .where((s) => s.side != 'venstre' && s.side != 'hoejre')
-          .toList();
-
-      final par = <List<TavleSpiller>>[];
-      while (venstre.isNotEmpty && hoejre.isNotEmpty) {
-        final v = venstre.removeAt(0);
-        // Vælg den højrespiller man IKKE allerede har spillet med i dag.
-        var idx = hoejre.indexWhere(
-            (h) => !_spilletSammen.contains(parNoegle(v.id, h.id)));
-        if (idx < 0) idx = 0;
-        par.add([v, hoejre.removeAt(idx)]);
-      }
-      // Dem der er tilbage (kun ét fortrukket ben, eller "begge"/ukendt)
-      // parres to og to.
-      final tilovers = [...venstre, ...hoejre, ...resten];
-      while (tilovers.length >= 2) {
-        final a = tilovers.removeAt(0);
-        var idx = tilovers.indexWhere(
-            (b) => !_spilletSammen.contains(parNoegle(a.id, b.id)));
-        if (idx < 0) idx = 0;
-        par.add([a, tilovers.removeAt(idx)]);
-      }
-      if (tilovers.isNotEmpty) par.add([tilovers.removeAt(0)]);
-
-      for (var i = 0; i < par.length; i += 2) {
-        ud.add(TavleBane(
-          baneNr++,
-          TavlePar(par[i]),
-          TavlePar(i + 1 < par.length ? par[i + 1] : []),
-        ));
-      }
-    }
-
-    if (fastholdt.isEmpty) return ud;
-
-    // De låste par skal stå præcis hvor de stod. De nye par fylder de
-    // pladser der er tilbage, i rækkefølge.
-    final nye = <List<TavleSpiller>>[
-      for (final b in ud) ...[b.par1.spillere, b.par2.spillere]
-    ]..removeWhere((p) => p.isEmpty);
-
-    final maxBane = [
-      ...fastholdt.keys,
-      if (ud.isNotEmpty) ud.length,
-    ].fold<int>(1, (a, b) => a > b ? a : b);
-
-    final samlet = <TavleBane>[];
-    var k = 0;
-    for (var bane = 1; bane <= maxBane || nye.length > k; bane++) {
-      final pladser = <List<TavleSpiller>>[];
-      for (var par = 1; par <= 2; par++) {
-        final laast = fastholdt[bane]?[par];
-        if (laast != null) {
-          pladser.add(laast);
-        } else {
-          pladser.add(k < nye.length ? nye[k++] : <TavleSpiller>[]);
-        }
-      }
-      if (pladser[0].isEmpty && pladser[1].isEmpty) continue;
-      // Et fastholdt par bliver ved med at være låst i den nye runde.
-      samlet.add(TavleBane(
-        bane,
-        TavlePar(pladser[0], laast: fastholdt[bane]?[1] != null),
-        TavlePar(pladser[1], laast: fastholdt[bane]?[2] != null),
-      ));
-    }
-    return samlet;
-  }
+  /// Danner en ny opstilling. [bevarLaaste] holder de låste par på plads
+  /// og fordeler kun resten.
+  Opstilling _genererOpstilling({bool bevarLaaste = true}) => fordel(
+        FordelingsInput(
+          spillere: widget.spillere,
+          baner: _baner,
+          tilstand: _tilstand,
+          holdAf: widget.holdAf,
+          fastePar: _fastePar,
+          kemi: _kemi,
+          favoritter: _favoritter,
+          sammenIDag: _spilletSammen,
+          historik: _historik,
+          runderSpillet: _runderSpillet,
+          laaste: bevarLaaste ? _op.laastePar : const [],
+          modtFoer: _modtFoer,
+        ),
+      );
 
   Future<void> _nyRunde() async {
     if (widget.spillere.length < 2) {
@@ -234,7 +173,7 @@ class _RotationScreenState extends State<RotationScreen> {
       return;
     }
     setState(() => _busy = true);
-    final ny = Opstilling(baner: _generer());
+    final ny = _genererOpstilling();
     try {
       await TavleService.gemOpsaetning(_tid, _nuvaerendeOpsaetning);
 
@@ -249,10 +188,19 @@ class _RotationScreenState extends State<RotationScreen> {
         slutterAt: slut,
       );
 
-      // Husk parrene, så næste runde undgår dem.
+      // Husk hvad runden medførte, så den næste kan tage hensyn til det.
       for (final par in ny.parrene) {
         final n = par.noegle;
         if (n != null) _spilletSammen.add(n);
+      }
+      for (final b in ny.baner) {
+        final n1 = b.par1.noegle, n2 = b.par2.noegle;
+        if (n1 != null && n2 != null) {
+          _modtFoer.add(n1.compareTo(n2) < 0 ? '$n1#$n2' : '$n2#$n1');
+        }
+        for (final sp in b.alle) {
+          _runderSpillet[sp.id] = (_runderSpillet[sp.id] ?? 0) + 1;
+        }
       }
 
       if (!mounted) return;
@@ -260,6 +208,7 @@ class _RotationScreenState extends State<RotationScreen> {
         _rundeNr = nr;
         _rundeId = rid;
         _op = ny;
+        _version = 1;
         _busy = false;
       });
       _startUr(slut);
@@ -308,7 +257,7 @@ class _RotationScreenState extends State<RotationScreen> {
       return;
     }
     setState(() {
-      _op = _op.medBaner(_generer());
+      _op = _genererOpstilling();
       _valgt = null;
     });
     await _skrivRunde();
@@ -319,9 +268,19 @@ class _RotationScreenState extends State<RotationScreen> {
   Future<void> _skrivRunde() async {
     if (_rundeId == null) return;
     try {
-      await TavleService.skrivOpstilling(_rundeId!, _op);
+      _version = await TavleService.skrivOpstilling(_rundeId!, _op,
+          version: _version);
     } on PostgrestException catch (e) {
-      if (mounted) _snack(context, e.message, _danger);
+      if (!mounted) return;
+      // 40001 = en anden har ændret tavlen imens. Hent forfra frem for at
+      // lade skærmen vise noget andet end databasen.
+      if (e.code == '40001') {
+        _snack(context, 'Tavlen blev ændret af en anden — henter forfra',
+            _gold);
+        await _load();
+      } else {
+        _snack(context, e.message, _danger);
+      }
     }
   }
 
@@ -382,6 +341,26 @@ class _RotationScreenState extends State<RotationScreen> {
               _tilstand == 'mixet'
                   ? 'Spillere blandes på tværs af begivenhedens hold'
                   : 'Der roteres kun internt på hvert hold',
+              style: _body(size: 11.5, color: _textMuted)),
+        ),
+        Text('Antal baner', style: _body(size: 12.5, color: _textSecondary)),
+        const SizedBox(height: 8),
+        Row(children: [
+          for (final n in [1, 2, 3, 4, 5]) ...[
+            if (n > 1) const SizedBox(width: 6),
+            Expanded(
+              child: _valgKnap('$n', _baner == n,
+                  () => setState(() => _baner = n), kompakt: true),
+            ),
+          ],
+        ]),
+        Padding(
+          padding: const EdgeInsets.only(top: 6, bottom: 16),
+          child: Text(
+              '${_baner * 4} spiller ad gangen'
+              '${widget.spillere.length > _baner * 4
+                  ? ' · ${widget.spillere.length - _baner * 4} sidder over pr. runde'
+                  : ''}',
               style: _body(size: 11.5, color: _textMuted)),
         ),
         Text('Afvikling', style: _body(size: 12.5, color: _textSecondary)),
@@ -539,6 +518,199 @@ class _RotationScreenState extends State<RotationScreen> {
     );
   }
 
+  // ── Faste par ────────────────────────────────────────────────────────
+
+  /// Navnet på et fast par, ud fra de tilmeldte.
+  String _parTekst(String noegle) {
+    final dele = noegle.split('|');
+    String navn(String id) => widget.spillere
+        .firstWhere((s) => s.id == id,
+            orElse: () => TavleSpiller(id: id, navn: 'Ikke tilmeldt'))
+        .navn;
+    return '${navn(dele[0])} & ${navn(dele[1])}';
+  }
+
+  /// Er begge halvdele af parret tilmeldt i dag?
+  bool _parErKlar(String noegle) {
+    final ids = widget.spillere.map((s) => s.id).toSet();
+    return noegle.split('|').every(ids.contains);
+  }
+
+  Widget _fastePartKort() {
+    final gids = _trainingGroupIds(widget.training);
+    return _fieldGroup('FASTE PAR', [
+      Text(
+          gids.isEmpty
+              ? 'Begivenheden er ikke knyttet til et hold, så der kan '
+                  'ikke sættes faste par op.'
+              : 'Faste par holdes sammen når runderne dannes. Modstanderne '
+                  'roteres frit. Er kun den ene tilmeldt, springes parret '
+                  'over.',
+          style: _body(size: 11.5, color: _textMuted)),
+      if (gids.isNotEmpty) ...[
+        const SizedBox(height: 10),
+        if (_fastePar.isEmpty)
+          Text('Ingen faste par på holdet endnu',
+              style: _body(size: 12.5, color: _textSecondary)),
+        for (final n in _fastePar)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: Row(children: [
+              Icon(Icons.link,
+                  size: 16, color: _parErKlar(n) ? _neon : _textMuted),
+              const SizedBox(width: 9),
+              Expanded(
+                child: Text(_parTekst(n),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: _body(
+                        size: 13,
+                        weight: FontWeight.w600,
+                        color: _parErKlar(n) ? _textPrimary : _textMuted)),
+              ),
+              if (!_parErKlar(n))
+                Text('springes over',
+                    style: _body(size: 10.5, color: _textMuted)),
+              IconButton(
+                onPressed: () => _fjernFastPar(n),
+                icon: const Icon(Icons.close, size: 17, color: _textMuted),
+                visualDensity: VisualDensity.compact,
+                tooltip: 'Fjern det faste par',
+              ),
+            ]),
+          ),
+        const SizedBox(height: 6),
+        OutlinedButton.icon(
+          onPressed: _busy ? null : _opretFastPar,
+          icon: const Icon(Icons.add_link, size: 17),
+          label: const Text('Opret fast par'),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: _neon,
+            side: BorderSide(color: _neon.withValues(alpha: .5)),
+            padding: const EdgeInsets.symmetric(vertical: 12),
+          ),
+        ),
+      ],
+    ]);
+  }
+
+  Future<void> _opretFastPar() async {
+    final gids = _trainingGroupIds(widget.training);
+    if (gids.isEmpty) return;
+
+    final a = await _vaelgSpiller('Vælg første spiller', const {});
+    if (a == null || !mounted) return;
+    final b = await _vaelgSpiller('Vælg makker', {a.id});
+    if (b == null || !mounted) return;
+
+    try {
+      await TavleService.gemFastPar(gids.first, a.id, b.id);
+      if (!mounted) return;
+      setState(() => _fastePar = {..._fastePar, parNoegle(a.id, b.id)});
+      _snack(context, '${a.navn} & ${b.navn} er nu et fast par', _success);
+    } on PostgrestException catch (e) {
+      if (mounted) _snack(context, e.message, _danger);
+    }
+  }
+
+  Future<void> _fjernFastPar(String noegle) async {
+    final gids = _trainingGroupIds(widget.training);
+    if (gids.isEmpty) return;
+    final dele = noegle.split('|');
+    try {
+      await TavleService.sletFastPar(gids.first, dele[0], dele[1]);
+      if (!mounted) return;
+      setState(() => _fastePar = {..._fastePar}..remove(noegle));
+    } on PostgrestException catch (e) {
+      if (mounted) _snack(context, e.message, _danger);
+    }
+  }
+
+  /// Vælger blandt de tilmeldte. Afløsere uden profil kan ikke indgå i et
+  /// fast par — der er ingen bruger at knytte det til.
+  Future<TavleSpiller?> _vaelgSpiller(String titel, Set<String> undtagen) {
+    final valg = widget.spillere
+        .where((s) => !s.erGaest && !undtagen.contains(s.id))
+        .toList()
+      ..sort((x, y) => x.navn.compareTo(y.navn));
+    return showModalBottomSheet<TavleSpiller>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => SafeArea(
+        top: false,
+        child: Container(
+          margin: const EdgeInsets.all(12),
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+          decoration: BoxDecoration(
+            color: _surfaceDark,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: _borderSubtle),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(titel.toUpperCase(),
+                  style: _cond(size: 19, weight: FontWeight.w800)),
+              const SizedBox(height: 10),
+              Flexible(
+                child: ListView(
+                  shrinkWrap: true,
+                  children: [
+                    for (final s in valg)
+                      ListTile(
+                        onTap: () => Navigator.pop(ctx, s),
+                        leading: _InitialAvatar(navn: s.navn, size: 30),
+                        title: Text(s.navn,
+                            style: _body(size: 14, weight: FontWeight.w600)),
+                      ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 6),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Dem der sidder over i runden.
+  ///
+  /// De står på tavlen som alle andre — man kan bytte dem ind ved at
+  /// trykke på en der spiller. Før endte den overskydende i et par med
+  /// én mand, og så lignede det en fejl frem for en pause.
+  Widget _baenkKort() => Container(
+        margin: const EdgeInsets.only(bottom: 14),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: _surfaceDark,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: _borderSubtle),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(bottom: 10, left: 2),
+              child: Row(children: [
+                const Icon(Icons.airline_seat_recline_normal,
+                    size: 16, color: _textMuted),
+                const SizedBox(width: 7),
+                Text('SIDDER OVER',
+                    style: _cond(
+                        size: 16, weight: FontWeight.w800, color: _textMuted)),
+                const Spacer(),
+                Text('${_op.baenk.length}',
+                    style: _cond(
+                        size: 16, weight: FontWeight.w800, color: _textMuted)),
+              ]),
+            ),
+            for (final sp in _op.baenk) _spillerBrik(sp),
+          ],
+        ),
+      );
+
   Widget _baneKort(TavleBane b) => Container(
         margin: const EdgeInsets.only(bottom: 14),
         padding: const EdgeInsets.all(12),
@@ -618,6 +790,8 @@ class _RotationScreenState extends State<RotationScreen> {
                           children: [
                             if (_rundeNr == 0) ...[
                               _opsaetning(),
+                              const SizedBox(height: 14),
+                              _fastePartKort(),
                               const SizedBox(height: 18),
                               Text(
                                   '${widget.spillere.length} tilmeldte fordeles '
@@ -678,6 +852,7 @@ class _RotationScreenState extends State<RotationScreen> {
                                 Text('Ingen baner i denne runde',
                                     style: _body(
                                         size: 12.5, color: _textSecondary)),
+                              if (_op.baenk.isNotEmpty) _baenkKort(),
                             ],
                           ],
                         ),

@@ -21,6 +21,7 @@ part 'services/supabase_service.dart';
 part 'services/cache_service.dart';
 part 'services/bridge_service.dart';
 part 'services/tavle_service.dart';
+part 'services/tavle_fordeling.dart';
 part 'services/config_service.dart';
 part 'services/calendar_service.dart';
 part 'services/notification_service.dart';

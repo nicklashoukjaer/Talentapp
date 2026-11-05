@@ -51,6 +51,30 @@ class TavleStart {
   /// Par der allerede har spillet sammen i DENNE træning.
   final Set<String> spilletSammen;
 
+  /// Faste par for begivenhedens hold. Bindende i fordelingen.
+  final Set<String> fastePar;
+
+  /// uid → [førstevalg, andetvalg] fra spillernes egne profiler.
+  final Map<String, List<String>> favoritter;
+
+  /// Par → gange de har spillet sammen før, på tværs af træninger.
+  final Map<String, int> historik;
+
+  /// uid → runder spillet i denne træning. Styrer hvem der sidder over.
+  final Map<String, int> runderSpillet;
+
+  /// Modstanderpar der allerede er mødtes i dag.
+  final Set<String> modtFoer;
+
+  /// Versionen af den aktuelle runde, til samtidighedstjek.
+  final int version;
+
+  /// Har træneren gemt en opsætning før? Er den ikke det, vælger tavlen
+  /// et antal baner der passer til de tilmeldte — ellers ville to baner
+  /// sætte halvdelen af en stor træning på bænken uden at nogen bad om
+  /// det.
+  final bool harOpsaetning;
+
   const TavleStart({
     required this.opsaetning,
     required this.rundeNr,
@@ -58,6 +82,13 @@ class TavleStart {
     required this.slutterAt,
     required this.kemi,
     required this.spilletSammen,
+    this.fastePar = const {},
+    this.favoritter = const {},
+    this.historik = const {},
+    this.runderSpillet = const {},
+    this.modtFoer = const {},
+    this.version = 1,
+    this.harOpsaetning = false,
   });
 }
 
@@ -173,7 +204,15 @@ class TavleService {
   }
 
   /// Alt der skal til for at åbne tavlen.
-  static Future<TavleStart> hentStart(String trainingId) async {
+  ///
+  /// [gruppeIds] er begivenhedens hold — faste par hentes kun for dem.
+  /// [deltagere] bruges til at hente favoritter og historik for netop de
+  /// spillere der er med, frem for hele klubben.
+  static Future<TavleStart> hentStart(
+    String trainingId, {
+    List<String> gruppeIds = const [],
+    List<TavleSpiller> deltagere = const [],
+  }) async {
     // Hver for sig: Future.wait over forskellige returtyper kan ikke udlede
     // en fælles type her.
     final board = await supabase
@@ -184,7 +223,7 @@ class TavleService {
 
     final sidste = await supabase
         .from('training_rounds')
-        .select('id, nr, slutter_at')
+        .select('id, nr, slutter_at, version')
         .eq('training_id', trainingId)
         .order('nr', ascending: false)
         .limit(1)
@@ -207,7 +246,149 @@ class TavleService {
           parNoegle(k['spiller_lav'] as String, k['spiller_hoej'] as String)
       },
       spilletSammen: await hentSpilletSammen(trainingId),
+      fastePar: await hentFastePar(gruppeIds),
+      favoritter: await hentFavoritter(
+          [for (final d in deltagere) if (!d.erGaest) d.id]),
+      historik: await hentHistorik(),
+      runderSpillet: await hentRunderSpillet(trainingId),
+      modtFoer: await hentModtFoer(trainingId),
+      version: (sidste?['version'] as num?)?.toInt() ?? 1,
+      harOpsaetning: board != null,
     );
+  }
+
+  // ── Faste par ──────────────────────────────────────────────────────────
+
+  /// Faste par for de angivne hold, som sorterede nøgler.
+  static Future<Set<String>> hentFastePar(List<String> gruppeIds) async {
+    if (gruppeIds.isEmpty) return {};
+    final rows = List<Map<String, dynamic>>.from(await supabase
+        .from('faste_par')
+        .select('spiller_lav, spiller_hoej')
+        .inFilter('group_id', gruppeIds)
+        .eq('aktiv', true) as List);
+    return {
+      for (final r in rows)
+        parNoegle(r['spiller_lav'] as String, r['spiller_hoej'] as String)
+    };
+  }
+
+  /// Faste par med navne, til administrationen.
+  static Future<List<Map<String, dynamic>>> hentFastePerHold(
+      List<String> gruppeIds) async {
+    if (gruppeIds.isEmpty) return const [];
+    return List<Map<String, dynamic>>.from(await supabase
+        .from('faste_par')
+        .select('group_id, spiller_lav, spiller_hoej, navn, aktiv')
+        .inFilter('group_id', gruppeIds) as List);
+  }
+
+  static Future<void> gemFastPar(
+      String groupId, String a, String b, {String? navn}) async {
+    await supabase.from('faste_par').upsert({
+      'group_id': groupId,
+      'spiller_lav': a.compareTo(b) < 0 ? a : b,
+      'spiller_hoej': a.compareTo(b) < 0 ? b : a,
+      if (navn != null && navn.trim().isNotEmpty) 'navn': navn.trim(),
+      'aktiv': true,
+      'oprettet_af': supabase.auth.currentUser?.id,
+    });
+  }
+
+  static Future<void> sletFastPar(String groupId, String a, String b) async {
+    await supabase
+        .from('faste_par')
+        .delete()
+        .eq('group_id', groupId)
+        .eq('spiller_lav', a.compareTo(b) < 0 ? a : b)
+        .eq('spiller_hoej', a.compareTo(b) < 0 ? b : a);
+  }
+
+  // ── Øvrige signaler til fordelingen ────────────────────────────────────
+
+  /// Spillernes egne makkervalg: uid → [førstevalg, andetvalg].
+  static Future<Map<String, List<String>>> hentFavoritter(
+      List<String> uids) async {
+    if (uids.isEmpty) return const {};
+    final rows = List<Map<String, dynamic>>.from(await supabase
+        .from('profiles')
+        .select('id, makker_prio_1, makker_prio_2')
+        .inFilter('id', uids) as List);
+    return {
+      for (final r in rows)
+        r['id'] as String: [
+          if (r['makker_prio_1'] != null) r['makker_prio_1'] as String,
+          if (r['makker_prio_2'] != null) r['makker_prio_2'] as String,
+        ]
+    };
+  }
+
+  /// Hvor mange gange hvert par har spillet sammen før, på tværs af
+  /// træninger. Læses fra par_overblik, som allerede regner det ud.
+  static Future<Map<String, int>> hentHistorik() async {
+    try {
+      final rows = List<Map<String, dynamic>>.from(await supabase
+          .from('par_overblik')
+          .select('spiller_lav, spiller_hoej, runder_sammen') as List);
+      return {
+        for (final r in rows)
+          parNoegle(r['spiller_lav'] as String, r['spiller_hoej'] as String):
+              (r['runder_sammen'] as num?)?.toInt() ?? 0
+      };
+    } catch (_) {
+      // Historik er et blødt signal. Kan den ikke hentes, fordeles der
+      // uden den frem for at tavlen ikke kan åbne.
+      return const {};
+    }
+  }
+
+  /// uid → runder spillet i denne træning. Bænken fordeles efter det.
+  static Future<Map<String, int>> hentRunderSpillet(String trainingId) async {
+    final rows = List<Map<String, dynamic>>.from(await supabase
+        .from('training_round_slots')
+        .select('user_id, guest_id, bane, training_rounds!inner(training_id)')
+        .eq('training_rounds.training_id', trainingId) as List);
+    final ud = <String, int>{};
+    for (final r in rows) {
+      if (r['bane'] == null) continue; // sad over — tæller ikke
+      final id = (r['user_id'] ?? r['guest_id']) as String?;
+      if (id != null) ud[id] = (ud[id] ?? 0) + 1;
+    }
+    return ud;
+  }
+
+  /// Hvilke par der allerede har mødt hinanden i dag.
+  static Future<Set<String>> hentModtFoer(String trainingId) async {
+    final rows = List<Map<String, dynamic>>.from(await supabase
+        .from('training_round_slots')
+        .select('round_id, bane, par, user_id, guest_id, '
+            'training_rounds!inner(training_id)')
+        .eq('training_rounds.training_id', trainingId) as List);
+
+    // Saml spillerne pr. (runde, bane, par) og dan derefter mødepar.
+    final grupper = <String, List<String>>{};
+    for (final r in rows) {
+      if (r['bane'] == null) continue;
+      final id = (r['user_id'] ?? r['guest_id']) as String?;
+      if (id == null) continue;
+      (grupper['${r['round_id']}-${r['bane']}-${r['par']}'] ??= []).add(id);
+    }
+
+    final perBane = <String, List<String>>{};
+    for (final e in grupper.entries) {
+      if (e.value.length != 2) continue;
+      final dele = e.key.split('-');
+      final bane = '${dele[0]}-${dele[1]}';
+      (perBane[bane] ??= []).add(parNoegle(e.value[0], e.value[1]));
+    }
+
+    return {
+      for (final par in perBane.values)
+        if (par.length == 2)
+          par[0].compareTo(par[1]) < 0
+              ? '${par[0]}#${par[1]}'
+              : '${par[1]}#${par[0]}'
+    };
   }
 
   /// Par der allerede har spillet sammen i denne træning.
@@ -286,15 +467,28 @@ class TavleService {
   /// delvis opdatering ville bryde dem undervejs. Fase 2 lægger det ind i
   /// én transaktion med versionstjek, så to trænere ikke kan overskrive
   /// hinanden ubemærket.
-  static Future<void> skrivOpstilling(
-      String roundId, Opstilling opstilling) async {
-    await supabase
-        .from('training_round_slots')
-        .delete()
-        .eq('round_id', roundId);
-    final raekker = opstilling.tilRaekker(roundId);
-    if (raekker.isEmpty) return;
-    await supabase.from('training_round_slots').insert(raekker);
+  /// @returns Den nye version af runden.
+  static Future<int> skrivOpstilling(
+    String roundId,
+    Opstilling opstilling, {
+    int? version,
+  }) async {
+    final raekker = opstilling
+        .tilRaekker(roundId)
+        .map((r) => {
+              'bane': r['bane'],
+              'par': r['par'],
+              'laast': r['laast'],
+              'user_id': r['user_id'],
+              'guest_id': r['guest_id'],
+            })
+        .toList();
+    final ny = await supabase.rpc('gem_runde', params: {
+      'p_round_id': roundId,
+      'p_slots': raekker,
+      'p_version': version,
+    });
+    return (ny as num?)?.toInt() ?? 1;
   }
 
   /// Slår en stjernemarkering til eller fra. Returnerer den nye tilstand.

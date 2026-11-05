@@ -47,6 +47,20 @@ String _fmtOption(DateTime d, {required bool heldags}) => heldags
 /// Læser heldags-flaget af en poll_options-række (mangler på gamle rækker).
 bool _optionHeldags(Map<String, dynamic> o) => o['heldags'] == true;
 
+/// Flytter et tidspunkt et antal KALENDERDAGE, med klokkeslættet i behold.
+///
+/// `DateTime.add(Duration(days: 7))` lægger 168 TIMER til, ikke en uge.
+/// Det er to forskellige ting når sommertiden skifter undervejs: en
+/// træning kl. 19.30 om torsdagen blev til 18.30 fra den sidste søndag i
+/// oktober, fordi det absolutte tidspunkt stod fast mens uret flyttede
+/// sig.
+///
+/// DateTime-konstruktøren regner i kalender: den normaliserer selv
+/// dag-overløb og bruger den NYE datos tidszone-forskydning, så
+/// klokkeslættet står fast hele serien igennem.
+DateTime flytDage(DateTime t, int dage) => DateTime(
+    t.year, t.month, t.day + dage, t.hour, t.minute, t.second);
+
 String _fmtTime(DateTime d) {
   final l = d.toLocal();
   String two(int n) => n.toString().padLeft(2, '0');

@@ -6351,12 +6351,14 @@ class _EditEventSheetState extends State<_EditEventSheet> {
     final slut = _til != null
         ? _combine(DateTime(evStart.year, evStart.month, evStart.day), _til!)
         : evStart.add(const Duration(minutes: 90));
+    // Kalenderdage, ikke timer — ellers rykker fristen sig en time når
+    // sommertiden skifter mellem frist og begivenhed.
     final deadline = _deadlineDays == null
         ? evStart
-        : evStart.subtract(Duration(days: _deadlineDays!));
+        : flytDage(evStart, -_deadlineDays!);
     final synlig = _visibleDays == null
         ? null
-        : evStart.subtract(Duration(days: _visibleDays!));
+        : flytDage(evStart, -_visibleDays!);
     final maxRaw = _maxCtrl.text.trim();
     return {
       'titel': _titel.text.trim(),

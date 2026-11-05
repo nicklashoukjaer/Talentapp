@@ -4866,21 +4866,21 @@ class _CreateTrainingDialogState extends State<CreateTrainingDialog> {
     _seriesId = weeks > 1 ? genUuidV4() : null;
 
     final rows = List<Map<String, dynamic>>.generate(weeks, (i) {
-      final delta = Duration(days: 7 * _intervalWeeks * i);
-      final evStart = start.add(delta);
+      final dage = 7 * _intervalWeeks * i;
+      final evStart = flytDage(start, dage);
       // Fristen er relativ til HVER begivenheds dato: X dage før start.
       // null = ingen frist → åben til begivenheden begynder (= start).
       final deadline = _deadlineDaysBefore == null
           ? evStart
-          : evStart.subtract(Duration(days: _deadlineDaysBefore!));
+          : flytDage(evStart, -_deadlineDaysBefore!);
       // Synlighed: bliver synlig X dage før hver begivenhed.
       // null = straks synlig.
       final synligFra = _visibleDaysBefore == null
           ? null
-          : evStart.subtract(Duration(days: _visibleDaysBefore!));
+          : flytDage(evStart, -_visibleDaysBefore!);
       return _buildRow(
         start:    evStart,
-        slut:     effectiveSlut.add(delta),
+        slut:     flytDage(effectiveSlut, dage),
         deadline: deadline,
         synligFra: synligFra,
         maxVal:   maxVal,

@@ -13,45 +13,13 @@ part of '../main.dart';
 // _InitialAvatar til spillerne og _fieldGroup til opsætningen.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// En spiller på tavlen. Afløsere uden profil har [erGaest] og kan hverken
-/// stjernemarkeres eller tælles med i par-overblikket — der er ingen bruger
-/// at knytte det til.
-class _TavleSpiller {
-  final String id;
-  final String navn;
-  final String? side;
-  final bool erGaest;
-  const _TavleSpiller({
-    required this.id,
-    required this.navn,
-    this.side,
-    this.erGaest = false,
-  });
-}
-
-/// Et par på en bane. Kan stå med én spiller hvis antallet ikke går op.
-class _TavlePar {
-  final List<_TavleSpiller> spillere;
-  _TavlePar(this.spillere);
-}
-
-/// En bane med to par.
-class _TavleBane {
-  final int nr;
-  final _TavlePar par1;
-  final _TavlePar par2;
-  _TavleBane(this.nr, this.par1, this.par2);
-
-  Iterable<_TavleSpiller> get alle => [...par1.spillere, ...par2.spillere];
-}
-
 class RotationScreen extends StatefulWidget {
   final Map<String, dynamic> training;
 
   /// De tilmeldte, som begivenhedsdetaljen allerede har hentet. Sendes med,
   /// så tavlen ikke henter dem igen — og så den viser præcis dem man kigger
   /// på i forvejen.
-  final List<_TavleSpiller> spillere;
+  final List<TavleSpiller> spillere;
 
   /// uid → holdnavn. Bruges i "Opdelt efter hold"-tilstanden.
   final Map<String, String> holdAf;
@@ -79,18 +47,18 @@ class _RotationScreenState extends State<RotationScreen> {
 
   int _rundeNr = 0;
   String? _rundeId;
-  List<_TavleBane> _baneListe = [];
+
+  /// Hele den aktuelle runde — baner, par og låse ét sted. Låsen lå før i
+  /// et sideløbende sæt af 'bane-par'-nøgler, der kunne komme ud af trit
+  /// med banerne når de blev nummereret om.
+  Opstilling _op = const Opstilling.tom();
 
   /// Par der allerede har spillet sammen i DENNE træning — bruges til at
   /// undgå gentagelser når næste runde dannes.
-  final Set<String> _spilletSammen = {};
+  Set<String> _spilletSammen = {};
 
-  /// Låste pladser i den aktuelle runde — nøgle 'bane-par'. Låste spillere
-  /// bliver stående når resten blandes, og føres med over i næste runde.
-  final Set<String> _laaste = {};
-
-  /// Stjernemarkerede par (nøgle som _parNoegle). Hentes for hele klubben,
-  /// så en markering fra en tidligere træning også vises.
+  /// Stjernemarkerede par. Hentes for hele klubben, så en markering fra en
+  /// tidligere træning også vises.
   Set<String> _kemi = {};
 
   Timer? _ur;
@@ -98,16 +66,11 @@ class _RotationScreenState extends State<RotationScreen> {
 
   String get _tid => widget.training['id'] as String;
 
-  static String _parNoegle(String a, String b) =>
-      a.compareTo(b) < 0 ? '$a|$b' : '$b|$a';
-
-  static String _laasNoegle(int bane, int par) => '$bane-$par';
-
-  bool _erLaast(int bane, int par) =>
-      _laaste.contains(_laasNoegle(bane, par));
-
-  /// Er hele banen låst — altså begge par?
-  bool _baneLaast(_TavleBane b) => _erLaast(b.nr, 1) && _erLaast(b.nr, 2);
+  TavleOpsaetning get _nuvaerendeOpsaetning => TavleOpsaetning(
+      tilstand: _tilstand,
+      afvikling: _afvikling,
+      minutter: _minutter,
+      baner: _baner);
 
   @override
   void initState() {
@@ -121,107 +84,31 @@ class _RotationScreenState extends State<RotationScreen> {
     super.dispose();
   }
 
-  static const _kemiNoegle = 'par_kemi';
-
-  /// Fylder stjernemarkeringerne fra cachen med det samme, så tavlen tegner
-  /// uden spinner. Friske data hentes bagefter i _load.
-  void _kemiFraCache() {
-    final raa = CacheService.getList(_kemiNoegle);
-    if (raa == null) return;
-    _kemi = {
-      for (final k in raa)
-        if (k['spiller_lav'] != null && k['spiller_hoej'] != null)
-          _parNoegle(k['spiller_lav'] as String, k['spiller_hoej'] as String)
-    };
-  }
-
   Future<void> _load() async {
-    _kemiFraCache();
+    // Stjernerne fra cachen først, så tavlen tegner uden spinner.
+    _kemi = TavleService.kemiFraCache();
     try {
-      // Hentes hver for sig: Future.wait over forskellige returtyper kan
-      // ikke udlede en fælles type her.
-      final board = await supabase
-          .from('training_boards').select().eq('training_id', _tid).maybeSingle();
-      final sidste = await supabase
-          .from('training_rounds').select('id, nr').eq('training_id', _tid)
-          .order('nr', ascending: false).limit(1).maybeSingle();
-      final kemi = List<Map<String, dynamic>>.from(
-          await supabase.from('par_kemi').select('spiller_lav, spiller_hoej')
-              as List);
-
-      if (board != null) {
-        _tilstand = board['tilstand'] as String? ?? 'mixet';
-        _afvikling = board['afvikling'] as String? ?? 'manuel';
-        _minutter = (board['minutter'] as num?)?.toInt() ?? 15;
-        _baner = (board['baner'] as num?)?.toInt() ?? 2;
-      }
-
-      // Hvem har allerede spillet sammen i denne træning?
-      final tidligere = await supabase
-          .from('training_round_slots')
-          .select('round_id, bane, par, user_id, '
-              'training_rounds!inner(training_id)')
-          .eq('training_rounds.training_id', _tid);
-      final slots = List<Map<String, dynamic>>.from(tidligere as List);
-      final grupper = <String, List<String>>{};
-      for (final s in slots) {
-        final uid = s['user_id'] as String?;
-        if (uid == null) continue;
-        (grupper['${s['round_id']}-${s['bane']}-${s['par']}'] ??= []).add(uid);
-      }
-      for (final g in grupper.values) {
-        for (var i = 0; i < g.length; i++) {
-          for (var j = i + 1; j < g.length; j++) {
-            _spilletSammen.add(_parNoegle(g[i], g[j]));
-          }
-        }
-      }
-
-      CacheService.put(_kemiNoegle, kemi);
+      final start = await TavleService.hentStart(_tid);
+      final op = start.rundeId == null
+          ? const Opstilling.tom()
+          : await TavleService.hentRunde(start.rundeId!, widget.spillere);
       if (!mounted) return;
       setState(() {
-        _kemi = {
-          for (final k in kemi)
-            _parNoegle(k['spiller_lav'] as String, k['spiller_hoej'] as String)
-        };
-        _rundeNr = (sidste?['nr'] as num?)?.toInt() ?? 0;
-        _rundeId = sidste?['id'] as String?;
+        _tilstand = start.opsaetning.tilstand;
+        _afvikling = start.opsaetning.afvikling;
+        _minutter = start.opsaetning.minutter;
+        _baner = start.opsaetning.baner;
+        _kemi = start.kemi;
+        _spilletSammen = start.spilletSammen;
+        _rundeNr = start.rundeNr;
+        _rundeId = start.rundeId;
+        _op = op;
         _loading = false;
       });
-      if (_rundeId != null) await _hentRunde(_rundeId!);
+      if (start.slutterAt != null) _startUr(start.slutterAt);
     } catch (e) {
       if (mounted) setState(() { _loading = false; _error = e.toString(); });
     }
-  }
-
-  Future<void> _hentRunde(String id) async {
-    try {
-      final rows = await supabase
-          .from('training_round_slots')
-          .select('bane, par, user_id, guest_id, laast')
-          .eq('round_id', id)
-          .order('bane', ascending: true);
-      final slots = List<Map<String, dynamic>>.from(rows as List);
-      final byId = {for (final s in widget.spillere) s.id: s};
-
-      final baner = <int, Map<int, List<_TavleSpiller>>>{};
-      for (final s in slots) {
-        final uid = (s['user_id'] ?? s['guest_id']) as String?;
-        final sp = uid == null ? null : byId[uid];
-        if (sp == null) continue;
-        final b = (s['bane'] as num).toInt();
-        final p = (s['par'] as num).toInt();
-        ((baner[b] ??= {})[p] ??= []).add(sp);
-        if (s['laast'] == true) _laaste.add(_laasNoegle(b, p));
-      }
-      if (!mounted) return;
-      setState(() {
-        _baneListe = [
-          for (final b in baner.keys.toList()..sort())
-            _TavleBane(b, _TavlePar(baner[b]?[1] ?? []), _TavlePar(baner[b]?[2] ?? []))
-        ];
-      });
-    } catch (_) {}
   }
 
   // ── Generering ───────────────────────────────────────────────────────────
@@ -234,13 +121,13 @@ class _RotationScreenState extends State<RotationScreen> {
   /// blander kun resten — det er det "Bland ulåste" gør, og det næste runde
   /// gør, så en træner kan fastlåse fx seks spillere og lade appen tage de
   /// øvrige ti hver gang.
-  List<_TavleBane> _generer({bool bevarLaaste = true}) {
-    final fastholdt = <int, Map<int, List<_TavleSpiller>>>{};
+  List<TavleBane> _generer({bool bevarLaaste = true}) {
+    final fastholdt = <int, Map<int, List<TavleSpiller>>>{};
     final bundne = <String>{};
     if (bevarLaaste) {
-      for (final b in _baneListe) {
+      for (final b in _op.baner) {
         for (final (i, p) in [b.par1, b.par2].indexed) {
-          if (!_erLaast(b.nr, i + 1) || p.spillere.isEmpty) continue;
+          if (!p.laast || p.erTom) continue;
           (fastholdt[b.nr] ??= {})[i + 1] = [...p.spillere];
           bundne.addAll(p.spillere.map((s) => s.id));
         }
@@ -251,11 +138,11 @@ class _RotationScreenState extends State<RotationScreen> {
     return _fordel(frie, fastholdt);
   }
 
-  List<_TavleBane> _fordel(List<_TavleSpiller> frie,
-      Map<int, Map<int, List<_TavleSpiller>>> fastholdt) {
-    final puljer = <List<_TavleSpiller>>[];
+  List<TavleBane> _fordel(List<TavleSpiller> frie,
+      Map<int, Map<int, List<TavleSpiller>>> fastholdt) {
+    final puljer = <List<TavleSpiller>>[];
     if (_tilstand == 'opdelt') {
-      final efterHold = <String, List<_TavleSpiller>>{};
+      final efterHold = <String, List<TavleSpiller>>{};
       for (final s in frie) {
         (efterHold[widget.holdAf[s.id] ?? 'Uden hold'] ??= []).add(s);
       }
@@ -264,7 +151,7 @@ class _RotationScreenState extends State<RotationScreen> {
       puljer.add([...frie]);
     }
 
-    final ud = <_TavleBane>[];
+    final ud = <TavleBane>[];
     var baneNr = 1;
     for (final pulje in puljer) {
       final rest = [...pulje]..shuffle();
@@ -275,12 +162,12 @@ class _RotationScreenState extends State<RotationScreen> {
           .where((s) => s.side != 'venstre' && s.side != 'hoejre')
           .toList();
 
-      final par = <List<_TavleSpiller>>[];
+      final par = <List<TavleSpiller>>[];
       while (venstre.isNotEmpty && hoejre.isNotEmpty) {
         final v = venstre.removeAt(0);
         // Vælg den højrespiller man IKKE allerede har spillet med i dag.
         var idx = hoejre.indexWhere(
-            (h) => !_spilletSammen.contains(_parNoegle(v.id, h.id)));
+            (h) => !_spilletSammen.contains(parNoegle(v.id, h.id)));
         if (idx < 0) idx = 0;
         par.add([v, hoejre.removeAt(idx)]);
       }
@@ -290,17 +177,17 @@ class _RotationScreenState extends State<RotationScreen> {
       while (tilovers.length >= 2) {
         final a = tilovers.removeAt(0);
         var idx = tilovers.indexWhere(
-            (b) => !_spilletSammen.contains(_parNoegle(a.id, b.id)));
+            (b) => !_spilletSammen.contains(parNoegle(a.id, b.id)));
         if (idx < 0) idx = 0;
         par.add([a, tilovers.removeAt(idx)]);
       }
       if (tilovers.isNotEmpty) par.add([tilovers.removeAt(0)]);
 
       for (var i = 0; i < par.length; i += 2) {
-        ud.add(_TavleBane(
+        ud.add(TavleBane(
           baneNr++,
-          _TavlePar(par[i]),
-          _TavlePar(i + 1 < par.length ? par[i + 1] : []),
+          TavlePar(par[i]),
+          TavlePar(i + 1 < par.length ? par[i + 1] : []),
         ));
       }
     }
@@ -309,7 +196,7 @@ class _RotationScreenState extends State<RotationScreen> {
 
     // De låste par skal stå præcis hvor de stod. De nye par fylder de
     // pladser der er tilbage, i rækkefølge.
-    final nye = <List<_TavleSpiller>>[
+    final nye = <List<TavleSpiller>>[
       for (final b in ud) ...[b.par1.spillere, b.par2.spillere]
     ]..removeWhere((p) => p.isEmpty);
 
@@ -318,20 +205,25 @@ class _RotationScreenState extends State<RotationScreen> {
       if (ud.isNotEmpty) ud.length,
     ].fold<int>(1, (a, b) => a > b ? a : b);
 
-    final samlet = <_TavleBane>[];
+    final samlet = <TavleBane>[];
     var k = 0;
     for (var bane = 1; bane <= maxBane || nye.length > k; bane++) {
-      final pladser = <List<_TavleSpiller>>[];
+      final pladser = <List<TavleSpiller>>[];
       for (var par = 1; par <= 2; par++) {
         final laast = fastholdt[bane]?[par];
         if (laast != null) {
           pladser.add(laast);
         } else {
-          pladser.add(k < nye.length ? nye[k++] : <_TavleSpiller>[]);
+          pladser.add(k < nye.length ? nye[k++] : <TavleSpiller>[]);
         }
       }
       if (pladser[0].isEmpty && pladser[1].isEmpty) continue;
-      samlet.add(_TavleBane(bane, _TavlePar(pladser[0]), _TavlePar(pladser[1])));
+      // Et fastholdt par bliver ved med at være låst i den nye runde.
+      samlet.add(TavleBane(
+        bane,
+        TavlePar(pladser[0], laast: fastholdt[bane]?[1] != null),
+        TavlePar(pladser[1], laast: fastholdt[bane]?[2] != null),
+      ));
     }
     return samlet;
   }
@@ -342,68 +234,39 @@ class _RotationScreenState extends State<RotationScreen> {
       return;
     }
     setState(() => _busy = true);
-    final baner = _generer();
+    final ny = Opstilling(baner: _generer());
     try {
-      await supabase.from('training_boards').upsert({
-        'training_id': _tid,
-        'tilstand': _tilstand,
-        'afvikling': _afvikling,
-        'minutter': _minutter,
-        'baner': _baner,
-        'oprettet_af': supabase.auth.currentUser?.id,
-      });
+      await TavleService.gemOpsaetning(_tid, _nuvaerendeOpsaetning);
 
       final nr = _rundeNr + 1;
       final slut = _afvikling == 'timer'
-          ? DateTime.now().add(Duration(minutes: _minutter)).toUtc()
+          ? DateTime.now().add(Duration(minutes: _minutter))
           : null;
-      final runde = await supabase.from('training_rounds').insert({
-        'training_id': _tid,
-        'nr': nr,
-        'startet_at': DateTime.now().toUtc().toIso8601String(),
-        'slutter_at': slut?.toIso8601String(),
-      }).select('id').single();
-      final rid = runde['id'] as String;
-
-      final raekker = <Map<String, dynamic>>[];
-      for (final b in baner) {
-        for (final (i, p) in [b.par1, b.par2].indexed) {
-          for (final s in p.spillere) {
-            raekker.add({
-              'round_id': rid,
-              'bane': b.nr,
-              'par': i + 1,
-              'laast': _erLaast(b.nr, i + 1),
-              if (s.erGaest) 'guest_id': s.id else 'user_id': s.id,
-            });
-          }
-        }
-      }
-      if (raekker.isNotEmpty) {
-        await supabase.from('training_round_slots').insert(raekker);
-      }
+      final rid = await TavleService.opretRunde(
+        trainingId: _tid,
+        nr: nr,
+        opstilling: ny,
+        slutterAt: slut,
+      );
 
       // Husk parrene, så næste runde undgår dem.
-      for (final b in baner) {
-        for (final p in [b.par1, b.par2]) {
-          if (p.spillere.length == 2) {
-            _spilletSammen.add(
-                _parNoegle(p.spillere[0].id, p.spillere[1].id));
-          }
-        }
+      for (final par in ny.parrene) {
+        final n = par.noegle;
+        if (n != null) _spilletSammen.add(n);
       }
 
       if (!mounted) return;
       setState(() {
         _rundeNr = nr;
         _rundeId = rid;
-        _baneListe = baner;
+        _op = ny;
         _busy = false;
       });
-      _startUr(slut?.toLocal());
+      _startUr(slut);
     } on PostgrestException catch (e) {
-      if (mounted) setState(() => _busy = false);
-      if (mounted) _snack(context, e.message, _danger);
+      if (!mounted) return;
+      setState(() => _busy = false);
+      _snack(context, e.message, _danger);
     }
   }
 
@@ -425,148 +288,76 @@ class _RotationScreenState extends State<RotationScreen> {
 
   // ── Bytte om på spillere ─────────────────────────────────────────────────
 
-  _TavleSpiller? _valgt;
+  TavleSpiller? _valgt;
 
-  Future<void> _byt(_TavleSpiller a, _TavleSpiller b) async {
-    // Find og ombyt i den lokale opstilling.
+  Future<void> _byt(TavleSpiller a, TavleSpiller b) async {
     setState(() {
-      for (final bane in _baneListe) {
-        for (final p in [bane.par1, bane.par2]) {
-          for (var i = 0; i < p.spillere.length; i++) {
-            if (p.spillere[i].id == a.id) {
-              p.spillere[i] = b;
-            } else if (p.spillere[i].id == b.id) {
-              p.spillere[i] = a;
-            }
-          }
-        }
-      }
+      _op = _op.byt(a, b);
       _valgt = null;
     });
-    if (_rundeId == null) return;
-    // Skriv hele runden om — færre kanter end at flytte enkeltrækker.
-    try {
-      await supabase.from('training_round_slots').delete().eq('round_id', _rundeId!);
-      final raekker = <Map<String, dynamic>>[];
-      for (final bane in _baneListe) {
-        for (final (i, p) in [bane.par1, bane.par2].indexed) {
-          for (final s in p.spillere) {
-            raekker.add({
-              'round_id': _rundeId,
-              'bane': bane.nr,
-              'par': i + 1,
-              'laast': _erLaast(bane.nr, i + 1),
-              if (s.erGaest) 'guest_id': s.id else 'user_id': s.id,
-            });
-          }
-        }
-      }
-      if (raekker.isNotEmpty) {
-        await supabase.from('training_round_slots').insert(raekker);
-      }
-    } on PostgrestException catch (e) {
-      if (mounted) _snack(context, e.message, _danger);
-    }
+    await _skrivRunde();
   }
 
   /// Genblander KUN de ulåste. Bruges når træneren har sat et par fast og
   /// vil have appen til at tage resten.
   Future<void> _blandUlaaste() async {
     if (_rundeId == null) return;
-    final laastAntal = _laaste.length;
-    if (laastAntal > 0 && _baneListe.every((b) => _baneLaast(b))) {
+    final laaste = _op.laastePar.length;
+    if (laaste > 0 && _op.baner.every((b) => b.laast)) {
       _snack(context, 'Alt er låst — lås noget op først', _gold);
       return;
     }
     setState(() {
-      _baneListe = _generer();
+      _op = _op.medBaner(_generer());
       _valgt = null;
     });
     await _skrivRunde();
   }
 
-  /// Skriver den aktuelle opstilling. Hele runden skrives om frem for at
-  /// flytte enkeltrækker — færre kanter at tage fejl af.
+  /// Skriver den aktuelle opstilling. Går gennem modellens egen
+  /// serialisering, så der kun findes ÉN oversættelse til databasen.
   Future<void> _skrivRunde() async {
     if (_rundeId == null) return;
     try {
-      await supabase
-          .from('training_round_slots')
-          .delete()
-          .eq('round_id', _rundeId!);
-      final raekker = <Map<String, dynamic>>[];
-      for (final bane in _baneListe) {
-        for (final (i, p) in [bane.par1, bane.par2].indexed) {
-          for (final s in p.spillere) {
-            raekker.add({
-              'round_id': _rundeId,
-              'bane': bane.nr,
-              'par': i + 1,
-              'laast': _erLaast(bane.nr, i + 1),
-              if (s.erGaest) 'guest_id': s.id else 'user_id': s.id,
-            });
-          }
-        }
-      }
-      if (raekker.isNotEmpty) {
-        await supabase.from('training_round_slots').insert(raekker);
-      }
+      await TavleService.skrivOpstilling(_rundeId!, _op);
     } on PostgrestException catch (e) {
       if (mounted) _snack(context, e.message, _danger);
     }
   }
 
   Future<void> _toggleLaasPar(int bane, int par) async {
-    setState(() {
-      final n = _laasNoegle(bane, par);
-      _laaste.contains(n) ? _laaste.remove(n) : _laaste.add(n);
-    });
+    final nu = _op.baner
+        .firstWhere((b) => b.nr == bane,
+            orElse: () => const TavleBane(0, TavlePar.tom(), TavlePar.tom()));
+    final laast = par == 1 ? nu.par1.laast : nu.par2.laast;
+    setState(() => _op = _op.medLaas(bane, par, !laast));
     await _skrivRunde();
   }
 
-  Future<void> _toggleLaasBane(_TavleBane b) async {
-    final laas = !_baneLaast(b);
-    setState(() {
-      for (var par = 1; par <= 2; par++) {
-        final n = _laasNoegle(b.nr, par);
-        laas ? _laaste.add(n) : _laaste.remove(n);
-      }
-    });
+  Future<void> _toggleLaasBane(TavleBane b) async {
+    setState(() => _op = _op.medBaneLaas(b.nr, !b.laast));
     await _skrivRunde();
   }
 
-  Future<void> _toggleKemi(_TavlePar par) async {
-    if (par.spillere.length != 2) return;
+  Future<void> _toggleKemi(TavlePar par) async {
+    if (!par.erHelt) return;
     final a = par.spillere[0], b = par.spillere[1];
     if (a.erGaest || b.erGaest) {
       _snack(context, 'Afløsere uden profil kan ikke markeres', _gold);
       return;
     }
-    final lav = a.id.compareTo(b.id) < 0 ? a.id : b.id;
-    final hoej = a.id.compareTo(b.id) < 0 ? b.id : a.id;
-    final noegle = _parNoegle(a.id, b.id);
+    final noegle = par.noegle!;
     final harNu = _kemi.contains(noegle);
-    setState(() {
-      harNu ? _kemi.remove(noegle) : _kemi.add(noegle);
-    });
+    setState(() => harNu ? _kemi.remove(noegle) : _kemi.add(noegle));
     try {
-      if (harNu) {
-        await supabase.from('par_kemi').delete()
-            .eq('spiller_lav', lav).eq('spiller_hoej', hoej);
-      } else {
-        await supabase.from('par_kemi').insert({
-          'spiller_lav': lav,
-          'spiller_hoej': hoej,
-          'markeret_af': supabase.auth.currentUser?.id,
-        });
-      }
+      await TavleService.saetKemi(a.id, b.id, !harNu);
     } on PostgrestException catch (e) {
       if (!mounted) return;
+      // Sæt tilbage — markeringen nåede aldrig databasen.
       setState(() => harNu ? _kemi.add(noegle) : _kemi.remove(noegle));
       _snack(context, e.message, _danger);
     }
   }
-
 
   // ── Visning ──────────────────────────────────────────────────────────────
 
@@ -642,7 +433,7 @@ class _RotationScreenState extends State<RotationScreen> {
       );
 
   /// Én spiller på banen. Tryk vælger; tryk på en anden bytter de to om.
-  Widget _spillerBrik(_TavleSpiller s) {
+  Widget _spillerBrik(TavleSpiller s) {
     final valgt = _valgt?.id == s.id;
     final info = _sideInfo(s.side);
     return Padding(
@@ -697,12 +488,12 @@ class _RotationScreenState extends State<RotationScreen> {
     );
   }
 
-  Widget _parBlok(_TavleBane bane, int parNr, _TavlePar par) {
+  Widget _parBlok(TavleBane bane, int parNr, TavlePar par) {
     final kanMarkeres = par.spillere.length == 2 &&
         !par.spillere[0].erGaest && !par.spillere[1].erGaest;
     final markeret = kanMarkeres &&
-        _kemi.contains(_parNoegle(par.spillere[0].id, par.spillere[1].id));
-    final laast = _erLaast(bane.nr, parNr);
+        _kemi.contains(parNoegle(par.spillere[0].id, par.spillere[1].id));
+    final laast = par.laast;
     return Container(
       padding: const EdgeInsets.fromLTRB(8, 8, 4, 4),
       decoration: BoxDecoration(
@@ -748,7 +539,7 @@ class _RotationScreenState extends State<RotationScreen> {
     );
   }
 
-  Widget _baneKort(_TavleBane b) => Container(
+  Widget _baneKort(TavleBane b) => Container(
         margin: const EdgeInsets.only(bottom: 14),
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
@@ -769,11 +560,11 @@ class _RotationScreenState extends State<RotationScreen> {
                 TextButton.icon(
                   onPressed: () => _toggleLaasBane(b),
                   icon: Icon(
-                      _baneLaast(b) ? Icons.lock : Icons.lock_open_outlined,
+                      b.laast ? Icons.lock : Icons.lock_open_outlined,
                       size: 15),
-                  label: Text(_baneLaast(b) ? 'Banen er låst' : 'Lås banen'),
+                  label: Text(b.laast ? 'Banen er låst' : 'Lås banen'),
                   style: TextButton.styleFrom(
-                    foregroundColor: _baneLaast(b) ? _gold : _textMuted,
+                    foregroundColor: b.laast ? _gold : _textMuted,
                     textStyle: _body(size: 12, weight: FontWeight.w700),
                     visualDensity: VisualDensity.compact,
                   ),
@@ -855,7 +646,7 @@ class _RotationScreenState extends State<RotationScreen> {
                                       onPressed:
                                           _busy ? null : _blandUlaaste,
                                       icon: const Icon(Icons.shuffle, size: 17),
-                                      label: Text(_laaste.isEmpty
+                                      label: Text(_op.laastePar.isEmpty
                                           ? 'Bland alle'
                                           : 'Bland ulåste'),
                                       style: OutlinedButton.styleFrom(
@@ -867,13 +658,13 @@ class _RotationScreenState extends State<RotationScreen> {
                                       ),
                                     ),
                                   ),
-                                  if (_laaste.isNotEmpty) ...[
+                                  if (_op.laastePar.isNotEmpty) ...[
                                     const SizedBox(width: 10),
                                     Row(children: [
                                       const Icon(Icons.lock,
                                           size: 14, color: _gold),
                                       const SizedBox(width: 5),
-                                      Text('${_laaste.length} låst',
+                                      Text('${_op.laastePar.length} låst',
                                           style: _body(
                                               size: 12,
                                               weight: FontWeight.w700,
@@ -882,8 +673,8 @@ class _RotationScreenState extends State<RotationScreen> {
                                   ],
                                 ]),
                               ),
-                              for (final b in _baneListe) _baneKort(b),
-                              if (_baneListe.isEmpty)
+                              for (final b in _op.baner) _baneKort(b),
+                              if (_op.baner.isEmpty)
                                 Text('Ingen baner i denne runde',
                                     style: _body(
                                         size: 12.5, color: _textSecondary)),

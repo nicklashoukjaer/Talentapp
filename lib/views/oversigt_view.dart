@@ -907,54 +907,14 @@ class _OversigtTabState extends State<OversigtTab>
     );
   }
 
-  /// Åbner tavlen direkte fra feedet. Deltagerne hentes her, da feedet kun
-  /// kender antallet — men det er ét opslag, og det sker først ved trykket.
+  /// Åbner tavlen direkte fra feedet.
+  ///
+  /// Går gennem den fælles indgang, så dashboardet og begivenhedsdetaljen
+  /// viser PRÆCIS de samme deltagere. Før hentede de hver sit, og kun den
+  /// ene tog afløsere med.
   Future<void> _aabnDagensTavle(_TrainingFeedItem t) async {
-    final tid = t.training['id'] as String;
     try {
-      final parts = List<Map<String, dynamic>>.from(await supabase
-          .from('training_participants')
-          .select('user_id, status')
-          .eq('training_id', tid) as List);
-      final tilmeldte = parts
-          .where((p) => p['status'] != 'afmeldt')
-          .map((p) => p['user_id'] as String)
-          .toSet();
-      if (tilmeldte.isEmpty) {
-        if (mounted) _snack(context, 'Ingen er tilmeldt endnu', _gold);
-        return;
-      }
-      final profiler = List<Map<String, dynamic>>.from(await supabase
-          .from('profiles')
-          .select('id, navn, spiller_side')
-          .inFilter('id', tilmeldte.toList()) as List);
-
-      final holdAf = <String, String>{};
-      final gids = _trainingGroupIds(t.training);
-      if (gids.isNotEmpty) {
-        final rows = List<Map<String, dynamic>>.from(await supabase
-            .from('group_members')
-            .select('user_id, groups!inner(navn)')
-            .inFilter('group_id', gids) as List);
-        for (final r in rows) {
-          final g = r['groups'] as Map<String, dynamic>?;
-          if (g != null) holdAf[r['user_id'] as String] = g['navn'] as String;
-        }
-      }
-      if (!mounted) return;
-      await Navigator.of(context).push(MaterialPageRoute(
-        builder: (_) => RotationScreen(
-          training: t.training,
-          spillere: [
-            for (final p in profiler)
-              _TavleSpiller(
-                  id: p['id'] as String,
-                  navn: p['navn'] as String? ?? '?',
-                  side: p['spiller_side'] as String?)
-          ],
-          holdAf: holdAf,
-        ),
-      ));
+      await aabnTavle(context, t.training);
     } on PostgrestException catch (e) {
       if (mounted) _snack(context, e.message, _danger);
     }
@@ -2373,6 +2333,32 @@ class _PushBannerState extends State<_PushBanner> {
 // En flyttet hjemmekamp betyder at banerne skal flyttes i Bookli, og det er
 // præcis det der bliver glemt. Herunder ligger påmindelsen og genvejen.
 // ─────────────────────────────────────────────────────────────────────────────
+
+/// Åbner roteringstavlen for en træning.
+///
+/// Én indgang. Før fandtes to næsten ens, og de var ikke enige: feedets
+/// hentede kun profiler, mens begivenhedsdetaljens også havde afløserne
+/// med. Samme skærm kunne derfor vise forskellige deltagere alt efter
+/// hvor man kom fra.
+Future<void> aabnTavle(
+  BuildContext context,
+  Map<String, dynamic> training, {
+  List<TavleSpiller>? kendte,
+}) async {
+  final d = await TavleService.hentDeltagere(training, kendte: kendte);
+  if (!context.mounted) return;
+  if (d.spillere.isEmpty) {
+    _snack(context, 'Ingen er tilmeldt endnu', _gold);
+    return;
+  }
+  await Navigator.of(context).push(MaterialPageRoute(
+    builder: (_) => RotationScreen(
+      training: training,
+      spillere: d.spillere,
+      holdAf: d.holdAf,
+    ),
+  ));
+}
 
 /// Er det en hjemmekamp? Kun dem har vi baner til — en udekamp spilles hos
 /// modstanderen, og en træning er en fast ugentlig tid.
@@ -5161,40 +5147,21 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
   /// Afløsere kommer med på banerne, men kan ikke stjernemarkeres — der er
   /// ingen profil at knytte kemien til.
   Future<void> _aabnTavle() async {
-    final spillere = <_TavleSpiller>[
-      for (final p in _tilmeldt)
-        _TavleSpiller(id: p.id, navn: p.navn, side: p.side),
-      for (final g in _guests)
-        _TavleSpiller(
-            id: g['id'] as String,
-            navn: (g['navn'] as String? ?? 'Gæst'),
-            erGaest: true),
-    ];
-
-    // Hvem hører til hvilket hold — bruges af "Opdelt efter hold".
-    final holdAf = <String, String>{};
-    final gids = _trainingGroupIds(widget.training);
-    if (gids.isNotEmpty) {
-      try {
-        final rows = await supabase
-            .from('group_members')
-            .select('user_id, groups!inner(navn)')
-            .inFilter('group_id', gids);
-        for (final r in List<Map<String, dynamic>>.from(rows as List)) {
-          final g = r['groups'] as Map<String, dynamic>?;
-          if (g != null) holdAf[r['user_id'] as String] = g['navn'] as String;
-        }
-      } catch (_) {}
-    }
-
-    if (!mounted) return;
-    await Navigator.of(context).push(MaterialPageRoute(
-      builder: (_) => RotationScreen(
-        training: widget.training,
-        spillere: spillere,
-        holdAf: holdAf,
-      ),
-    ));
+    // Genbruger det skærmen allerede har hentet, så tavlen ikke spørger om
+    // noget den ved — men går gennem samme indgang som dashboardet.
+    await aabnTavle(
+      context,
+      widget.training,
+      kendte: [
+        for (final p in _tilmeldt)
+          TavleSpiller(id: p.id, navn: p.navn, side: p.side),
+        for (final g in _guests)
+          TavleSpiller(
+              id: g['id'] as String,
+              navn: g['navn'] as String? ?? 'Gæst',
+              erGaest: true),
+      ],
+    );
   }
 
   Widget _sideBadge(_AttPerson p) {

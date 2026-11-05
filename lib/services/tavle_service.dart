@@ -21,11 +21,16 @@ class TavleOpsaetning {
   final int minutter;
   final int baner;
 
+  /// Skal holdets faste par holdes sammen i denne træning? Gælder én
+  /// træning, ikke holdet — derfor står den her og ikke på parret.
+  final bool brugFastePar;
+
   const TavleOpsaetning({
     this.tilstand = 'mixet',
     this.afvikling = 'manuel',
     this.minutter = 15,
     this.baner = 2,
+    this.brugFastePar = true,
   });
 
   factory TavleOpsaetning.fraRaekke(Map<String, dynamic>? m) => m == null
@@ -35,6 +40,7 @@ class TavleOpsaetning {
           afvikling: m['afvikling'] as String? ?? 'manuel',
           minutter: (m['minutter'] as num?)?.toInt() ?? 15,
           baner: (m['baner'] as num?)?.toInt() ?? 2,
+          brugFastePar: m['brug_faste_par'] as bool? ?? true,
         );
 }
 
@@ -553,6 +559,7 @@ class TavleService {
       'afvikling': o.afvikling,
       'minutter': o.minutter,
       'baner': o.baner,
+      'brug_faste_par': o.brugFastePar,
       'oprettet_af': supabase.auth.currentUser?.id,
     });
   }

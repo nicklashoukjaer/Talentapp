@@ -122,6 +122,31 @@ void main() {
       }
     });
 
+    test('opdelt holder holdene for sig', () {
+      final r = fordel(FordelingsInput(
+        spillere: otte,
+        baner: 2,
+        tilstand: 'opdelt',
+        holdAf: {
+          for (var i = 0; i < 8; i++) 's$i': i < 4 ? 'T1' : 'T2',
+        },
+      ));
+      for (final p in r.parrene) {
+        if (!p.erHelt) continue;
+        final a = int.parse(p.spillere[0].id.substring(1));
+        final b = int.parse(p.spillere[1].id.substring(1));
+        expect(a < 4, b < 4,
+            reason: 'et par må ikke gå på tværs af hold i opdelt tilstand');
+      }
+    });
+
+    test('faste par ignoreres når kontakten er slået fra', () {
+      // Sådan kalder skærmen når _brugFastePar er false: tom mængde.
+      final r = fordel(FordelingsInput(
+          spillere: otte, baner: 2, fastePar: const {}));
+      expect(r.alle.length, 8);
+    });
+
     test('ingen spiller optræder to steder', () {
       final tolv = [for (var i = 0; i < 12; i++) sp('s$i')];
       final r = fordel(FordelingsInput(spillere: tolv, baner: 2));

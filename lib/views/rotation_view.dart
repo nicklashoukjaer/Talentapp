@@ -64,6 +64,10 @@ class _RotationScreenState extends State<RotationScreen> {
   /// Faste par for begivenhedens hold. Bindende — kan ikke splittes.
   Set<String> _fastePar = {};
 
+  /// Skal de faste par bruges i dag? Gemmes på tavlen, så valget
+  /// overlever at skærmen lukkes midt i en træning.
+  bool _brugFastePar = true;
+
   /// Spillernes egne makkervalg.
   Map<String, List<String>> _favoritter = const {};
 
@@ -88,7 +92,8 @@ class _RotationScreenState extends State<RotationScreen> {
       tilstand: _tilstand,
       afvikling: _afvikling,
       minutter: _minutter,
-      baner: _baner);
+      baner: _baner,
+      brugFastePar: _brugFastePar);
 
   @override
   void initState() {
@@ -127,6 +132,7 @@ class _RotationScreenState extends State<RotationScreen> {
         _kemi = start.kemi;
         _spilletSammen = start.spilletSammen;
         _fastePar = start.fastePar;
+        _brugFastePar = start.opsaetning.brugFastePar;
         _favoritter = start.favoritter;
         _historik = start.historik;
         _runderSpillet = start.runderSpillet;
@@ -148,6 +154,25 @@ class _RotationScreenState extends State<RotationScreen> {
   // Selve fordelingen ligger i tavle_fordeling.dart. Den kender hverken
   // database eller skærm og kan derfor prøves af for sig.
 
+  /// Henter de faste par forfra fra databasen.
+  ///
+  /// Kaldes lige inden en runde dannes. Træneren kan have oprettet eller
+  /// fjernet en konstellation fra en anden skærm — eller slået kontakten
+  /// til igen midt i træningen — og så skal den næste runde bruge det der
+  /// står NU, ikke det der stod da tavlen blev åbnet.
+  Future<void> _genhentFastePar() async {
+    final gids = _trainingGroupIds(widget.training);
+    if (gids.isEmpty) return;
+    try {
+      final friske = await TavleService.hentFastePar(gids);
+      if (!mounted) return;
+      setState(() => _fastePar = friske);
+    } catch (_) {
+      // Et mislykket opslag må ikke spærre for at køre videre; så
+      // bruges de par tavlen allerede kender.
+    }
+  }
+
   /// Danner en ny opstilling. [bevarLaaste] holder de låste par på plads
   /// og fordeler kun resten.
   Opstilling _genererOpstilling({bool bevarLaaste = true}) => fordel(
@@ -156,7 +181,7 @@ class _RotationScreenState extends State<RotationScreen> {
           baner: _baner,
           tilstand: _tilstand,
           holdAf: widget.holdAf,
-          fastePar: _fastePar,
+          fastePar: _brugFastePar ? _fastePar : const {},
           kemi: _kemi,
           favoritter: _favoritter,
           sammenIDag: _spilletSammen,
@@ -173,6 +198,7 @@ class _RotationScreenState extends State<RotationScreen> {
       return;
     }
     setState(() => _busy = true);
+    if (_brugFastePar) await _genhentFastePar();
     final ny = _genererOpstilling();
     try {
       await TavleService.gemOpsaetning(_tid, _nuvaerendeOpsaetning);
@@ -256,6 +282,8 @@ class _RotationScreenState extends State<RotationScreen> {
       _snack(context, 'Alt er låst — lås noget op først', _gold);
       return;
     }
+    if (_brugFastePar) await _genhentFastePar();
+    if (!mounted) return;
     setState(() {
       _op = _genererOpstilling();
       _valgt = null;
@@ -385,6 +413,96 @@ class _RotationScreenState extends State<RotationScreen> {
           ]),
         ],
       ]);
+
+  /// Gemmer opsætningen med det samme når en kontakt skiftes.
+  ///
+  /// Den ændrer IKKE den runde der kører — det ville flytte folk midt i
+  /// et spil. Valget slår igennem ved næste "Bland" eller "Næste runde".
+  Future<void> _gemOpsaetning() async {
+    try {
+      await TavleService.gemOpsaetning(_tid, _nuvaerendeOpsaetning);
+    } on PostgrestException catch (e) {
+      if (mounted) _snack(context, e.message, _danger);
+    }
+  }
+
+  /// Tilstandsknapperne mens en runde kører.
+  ///
+  /// Hele opsætningen blev før gemt væk så snart første runde var sat i
+  /// gang, og så kunne man ikke skifte mellem mixet og opdelt uden at
+  /// lukke tavlen. Her står det der hele vejen — kompakt, men fuldt
+  /// betjenbart.
+  Widget _kontrolStribe() {
+    final harFaste = _fastePar.isNotEmpty;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 14),
+      padding: const EdgeInsets.fromLTRB(12, 11, 12, 12),
+      decoration: BoxDecoration(
+        color: _surfaceDark,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: _borderSubtle),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(children: [
+            Expanded(
+              child: _valgKnap('🔀  Mixet', _tilstand == 'mixet', () {
+                setState(() => _tilstand = 'mixet');
+                unawaited(_gemOpsaetning());
+              }, kompakt: true),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: _valgKnap('🛡️  Opdelt', _tilstand == 'opdelt', () {
+                setState(() => _tilstand = 'opdelt');
+                unawaited(_gemOpsaetning());
+              }, kompakt: true),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: _valgKnap(
+                  harFaste ? 'Faste par' : 'Ingen faste',
+                  harFaste && _brugFastePar,
+                  harFaste
+                      ? () {
+                          setState(() => _brugFastePar = !_brugFastePar);
+                          unawaited(_gemOpsaetning());
+                        }
+                      : () => _snack(
+                          context,
+                          'Holdet har ingen faste par endnu — opret dem '
+                          'før første runde',
+                          _gold),
+                  kompakt: true),
+            ),
+          ]),
+          const SizedBox(height: 8),
+          Row(children: [
+            Text('Baner', style: _body(size: 11.5, color: _textMuted)),
+            const SizedBox(width: 10),
+            for (final n in [1, 2, 3, 4, 5]) ...[
+              if (n > 1) const SizedBox(width: 6),
+              Expanded(
+                child: _valgKnap('$n', _baner == n, () {
+                  setState(() => _baner = n);
+                  unawaited(_gemOpsaetning());
+                }, kompakt: true),
+              ),
+            ],
+          ]),
+          const SizedBox(height: 8),
+          Text(
+              _tilstand == 'opdelt'
+                  ? 'Der roteres kun internt på hvert hold. Slår igennem '
+                      'ved næste runde.'
+                  : 'Spillere blandes på tværs af holdene. Slår igennem '
+                      'ved næste runde.',
+              style: _body(size: 11, color: _textMuted)),
+        ],
+      ),
+    );
+  }
 
   Widget _valgKnap(String tekst, bool aktiv, VoidCallback onTap,
           {bool kompakt = false}) =>
@@ -548,6 +666,23 @@ class _RotationScreenState extends State<RotationScreen> {
                   'over.',
           style: _body(size: 11.5, color: _textMuted)),
       if (gids.isNotEmpty) ...[
+        if (_fastePar.isNotEmpty) ...[
+          const SizedBox(height: 10),
+          Row(children: [
+            Expanded(
+              child: Text('Brug dem i denne træning',
+                  style: _body(size: 12.5, weight: FontWeight.w600)),
+            ),
+            Switch(
+              value: _brugFastePar,
+              activeThumbColor: _neon,
+              onChanged: (v) {
+                setState(() => _brugFastePar = v);
+                unawaited(_gemOpsaetning());
+              },
+            ),
+          ]),
+        ],
         const SizedBox(height: 10),
         if (_fastePar.isEmpty)
           Text('Ingen faste par på holdet endnu',
@@ -810,6 +945,7 @@ class _RotationScreenState extends State<RotationScreen> {
                                           weight: FontWeight.w600,
                                           color: _neon)),
                                 ),
+                              _kontrolStribe(),
                               // Tegnes ALTID når en runde er i gang — også
                               // uden låse, hvor den bare blander alle.
                               Padding(
